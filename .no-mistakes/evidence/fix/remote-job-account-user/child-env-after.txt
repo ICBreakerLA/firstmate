@@ -1,0 +1,11 @@
+ENV FM_HOME=/tmp/fm-remote-job.yZSHNK/remote-home
+ENV FM_REMOTE_JOB_ACTIVE=1
+ENV FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux
+ENV FM_ROOT_OVERRIDE=/tmp/fm-remote-job.yZSHNK/remote-root
+ENV HOME=/tmp/fm-remote-job.yZSHNK/account
+ENV LOGNAME=lionel
+ENV PATH=/tmp/fm-remote-job.yZSHNK/remote-root/bin:/tmp/fm-remote-job.yZSHNK/account/.local/bin:/tmp/fm-remote-job.yZSHNK/account/.nvm/versions/node/v20.18.0/bin:/tmp/fm-remote-job.yZSHNK/nix-profile-bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+ENV PWD=/home/lionel/.no-mistakes/worktrees/3f9cd35615c1/01M3FT9NKNWXF1WRGV5B759ZKN
+ENV SHLVL=1
+ENV USER=lionel
+ENV _=/usr/bin/env

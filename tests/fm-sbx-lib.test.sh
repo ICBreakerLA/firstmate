@@ -53,12 +53,17 @@ test_sbx_defaults_and_options() {
   assert_equals "" "$FM_SBX_ALLOW" "no extra hosts by default"
   load 'sbx allow=registry.npmjs.org,*.example.org cpus=2\n' || fail "allow= should be accepted"
   assert_equals "registry.npmjs.org,*.example.org 2" "$FM_SBX_ALLOW $FM_SBX_CPUS" "allow hosts are parsed"
-  pass "sbx resolves its defaults and honours cpus, memory and allow"
+  assert_equals "" "$FM_SBX_NM_PIN" "no version pin by default"
+  load 'sbx nm=v1.79.0\n' || fail "nm= should be accepted"
+  assert_equals "v1.79.0" "$FM_SBX_NM_PIN" "the no-mistakes pin is parsed"
+  assert_equals "v1.79.0" "$(fm_sbx_nm_version 'no-mistakes version v1.79.0 (abc)')" "the version token is read from a version line"
+  assert_equals "" "$(fm_sbx_nm_version 'no version here')" "a line with no version yields nothing"
+  pass "sbx resolves its defaults and honours cpus, memory, allow and nm"
 }
 
 test_malformed_values_are_refused() {
   local bad err
-  for bad in 'docker\n' 'sbx cpus=0\n' 'sbx cpus=65\n' 'sbx memory=4\n' 'sbx memory=0g\n' 'sbx gpus=1\n' 'off cpus=2\n' 'sbx allow=\n' 'sbx allow=a b;c\n' 'sbx allow=a,,b\n' 'sbx allow=host/path\n'; do
+  for bad in 'docker\n' 'sbx cpus=0\n' 'sbx cpus=65\n' 'sbx memory=4\n' 'sbx memory=0g\n' 'sbx gpus=1\n' 'off cpus=2\n' 'sbx allow=\n' 'sbx allow=a b;c\n' 'sbx allow=a,,b\n' 'sbx allow=host/path\n' 'sbx nm=latest\n' 'sbx nm=v1.2\n' 'sbx nm=v1.2.3;x\n'; do
     err=$(load "$bad" 2>&1) && fail "'$bad' should be refused"
     assert_contains "$err" "config/worker-sandbox" "the refusal names the file for '$bad'"
   done

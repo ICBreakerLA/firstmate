@@ -45,6 +45,12 @@ ls) cat "$LIVE" ;;
 create) printf '%s\\n' "\$3" >>"$LIVE" ;;
 rm) grep -Fxv -- "\$3" "$LIVE" >"$LIVE.new"; mv "$LIVE.new" "$LIVE" ;;
 secret) cat >"$W/secret.stdin" ;;
+exec)
+  case "\$*" in
+  *"no-mistakes version"*) cat "$W/vm.nmver" 2>/dev/null; exit 0 ;;
+  *"no-mistakes init"*) [ ! -f "$W/init.fail" ] || exit 1 ;;
+  esac
+  ;;
 run)
   printf '%s\\n' "ENV-AT-RUN: \$(env | grep -c -F "$SECRET")" >>"$LOG"
   if [ -f "$W/run.hang" ]; then : >"$W/run.started"; sleep 30 & wait \$!; fi
@@ -54,6 +60,15 @@ esac
 exit 0
 SH
   chmod +x "$FAKE/sbx"
+}
+
+# fake_nm <world> <version>: a host no-mistakes reporting <version>, with the
+# copy in the VM reporting the same.
+fake_nm() {
+  # shellcheck disable=SC2016 # the script text expands when the fake runs
+  printf '#!/usr/bin/env bash\n[ "$1" != version ] || echo "no-mistakes version %s"\nexit 0\n' "$2" >"$FAKE/no-mistakes"
+  chmod +x "$FAKE/no-mistakes"
+  printf 'no-mistakes version %s\n' "$2" >"$1/vm.nmver"
 }
 
 # wrap [extra wrapper args] -- run the wrapper with the standard world.
@@ -146,8 +161,7 @@ test_a_symlinked_token_file_is_ignored() {
 test_nm_ship_gets_the_pipeline_environment_and_network() {
   local out create
   new_world nm
-  printf '#!/usr/bin/env bash\nexit 0\n' >"$FAKE/no-mistakes"
-  chmod +x "$FAKE/no-mistakes"
+  fake_nm "$W" v1.79.0
   printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
   out=$(wrap --nm -- claude 2>&1) || fail "nm ship run failed: $out"
   create=$(grep '^create ' "$LOG")
@@ -158,6 +172,53 @@ test_nm_ship_gets_the_pipeline_environment_and_network() {
   assert_contains "$(log)" "policy allow network --sandbox $NAME github.com,api.github.com" "GitHub is allowed for this sandbox"
   assert_contains "$(log)" "exec -w $CLONE -e NM_HOME=/home/agent/nm $NAME no-mistakes axi sync" "the pipeline is synced to the clone before the sandbox is removed"
   pass "a no-mistakes ship gets the in-VM pipeline, its network, and a final sync"
+}
+
+test_nm_ship_clone_is_prepared_before_the_worker_starts() {
+  local out lines
+  new_world nmprep
+  fake_nm "$W" v1.79.0
+  out=$(wrap --nm -- claude 2>&1) || fail "nm ship run failed: $out"
+  lines=$(grep -n -e 'exec -w' -e '^run ' -e 'policy allow' "$LOG" | grep -v 'axi sync' | sed 's/^[0-9]*://')
+  assert_contains "$lines" "policy allow network" "the network is opened first"
+  assert_contains "$lines" "$NAME git remote get-url origin" "the clone's origin is checked inside the VM"
+  assert_contains "$lines" "$NAME git fetch -q origin" "origin is fetched inside the VM"
+  assert_contains "$lines" "$NAME git remote set-head origin -a" "origin/HEAD is set to the real default branch"
+  assert_contains "$lines" "$NAME no-mistakes init" "the pipeline is initialised in the clone"
+  [ "$(printf '%s\n' "$lines" | sed -n '1p')" = "$(printf '%s\n' "$lines" | grep -m1 'policy allow')" ] || fail "policy must precede the setup: $lines"
+  [ "$(printf '%s\n' "$lines" | grep -n 'no-mistakes init' | cut -d: -f1)" -lt "$(printf '%s\n' "$lines" | grep -n '^run ' | cut -d: -f1)" ] || fail "init must precede the worker: $lines"
+  pass "origin is fetched, its default branch set and the pipeline initialised before claude starts"
+}
+
+test_nm_version_mismatch_and_pin_refuse() {
+  local out rc
+  new_world nmver
+  fake_nm "$W" v1.79.0
+  printf 'no-mistakes version v1.80.1\n' >"$W/vm.nmver"
+  out=$(wrap --nm -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "a VM binary of another version must refuse: $out"
+  assert_contains "$out" "refusing to run a different pipeline" "the refusal names the mismatch"
+  assert_not_contains "$(log)" "run --name" "claude never starts"
+  [ ! -s "$LIVE" ] || fail "the sandbox must be removed: $(cat "$LIVE")"
+  fake_nm "$W" v1.79.0
+  out=$(wrap --nm --nm-pin v1.78.0 -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "a host version other than the pin must refuse: $out"
+  assert_contains "$out" "pins no-mistakes v1.78.0 but the host runs v1.79.0" "the refusal names both versions"
+  out=$(wrap --nm --nm-pin v1.79.0 -- claude 2>&1) || fail "a matching pin must launch: $out"
+  pass "a VM copy that differs from the host, or a host that differs from the pin, refuses before the worker starts"
+}
+
+test_nm_init_failure_refuses_and_removes() {
+  local out rc
+  new_world nminit
+  fake_nm "$W" v1.79.0
+  : >"$W/init.fail"
+  out=$(wrap --nm -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "a failed init must refuse: $out"
+  assert_contains "$out" "no-mistakes init failed" "the refusal names the step"
+  assert_not_contains "$(log)" "run --name" "claude never starts"
+  [ ! -s "$LIVE" ] || fail "the sandbox must be removed: $(cat "$LIVE")"
+  pass "a failed in-VM init stops the launch and removes the sandbox"
 }
 
 test_nm_without_a_host_binary_refuses_and_still_removes() {
@@ -302,6 +363,9 @@ test_the_token_enters_only_through_the_sandbox_secret_store
 test_no_token_means_no_secret_and_no_network_rule
 test_a_symlinked_token_file_is_ignored
 test_nm_ship_gets_the_pipeline_environment_and_network
+test_nm_ship_clone_is_prepared_before_the_worker_starts
+test_nm_version_mismatch_and_pin_refuse
+test_nm_init_failure_refuses_and_removes
 test_nm_without_a_host_binary_refuses_and_still_removes
 test_npm_cache_is_mounted_read_only_with_offline_settings
 test_hooks_path_mount_requires_the_homes_own_state

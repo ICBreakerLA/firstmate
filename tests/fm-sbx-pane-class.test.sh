@@ -47,6 +47,7 @@ SH
   [ -S "$sockdir/default" ] || fail "the private tmux server must live under the test's own TMUX_TMPDIR"
   for i in $(seq 1 100); do [ -s "$tmp/running" ] && break; sleep 0.1; done
   [ -s "$tmp/running" ] || { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$tmp/tmux" tmux kill-session -t sess 2>/dev/null; fail "the wrapper never reached sbx run"; }
+  # shellcheck disable=SC2016 # the single-quoted script expands in the child bash, by design
   out=$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$tmp/tmux" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:win' "$ROOT")
   env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$tmp/tmux" tmux kill-session -t sess 2>/dev/null
   kill "$(cat "$tmp/running")" 2>/dev/null

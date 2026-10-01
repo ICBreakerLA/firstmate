@@ -5121,6 +5121,7 @@ if [ "$SBX_ACTIVE" -eq 1 ]; then
   [ -z "${BUSY_GEN:-}" ] || CLAUDE_BIN="$CLAUDE_BIN --busy-gen $(shell_quote "$BUSY_GEN")"
   [ "$KIND" != scout ] || CLAUDE_BIN="$CLAUDE_BIN --kind scout"
   [ "$KIND" != ship ] || [ "$MODE" != no-mistakes ] || CLAUDE_BIN="$CLAUDE_BIN --nm"
+  [ "$KIND" != ship ] || [ "$MODE" != no-mistakes ] || [ -z "$FM_SBX_NM_PIN" ] || CLAUDE_BIN="$CLAUDE_BIN --nm-pin $(shell_quote "$FM_SBX_NM_PIN")"
   [ -z "$FM_SBX_ALLOW" ] || CLAUDE_BIN="$CLAUDE_BIN --allow $(shell_quote "$FM_SBX_ALLOW")"
   [ ! -d "$DATA/sbx-npm-cache" ] || CLAUDE_BIN="$CLAUDE_BIN --npm-cache $(shell_quote "$DATA/sbx-npm-cache")"
   CLAUDE_BIN="$CLAUDE_BIN --"

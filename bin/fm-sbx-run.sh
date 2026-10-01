@@ -11,8 +11,8 @@
 # Usage:
 #   claude-sbx --id ID --config DIR --state DIR --data DIR
 #       --root DIR --wt DIR --clone DIR --name SANDBOX [--cpus N] [--memory Ng]
-#       [--busy-gen GEN] [--kind ship|scout] [--nm] [--allow HOSTS]
-#       [--npm-cache DIR] -- CLAUDE_ARGS...
+#       [--busy-gen GEN] [--kind ship|scout] [--nm] [--nm-pin VERSION]
+#       [--allow HOSTS] [--npm-cache DIR] -- CLAUDE_ARGS...
 #
 #   --wt, --clone   the host worktree and the standalone clone bin/fm-sbx-bridge.sh
 #                   made of it; only the clone is mounted, and the VM sees a
@@ -22,6 +22,10 @@
 #   --nm            a no-mistakes ship: the host's no-mistakes binary is copied
 #                   into the VM and github.com and api.github.com are allowed
 #                   for this one sandbox.
+#                   The copy must report the host's version (and --nm-pin's
+#                   when given), and before the worker starts the clone's origin
+#                   HEAD is set to the real default branch and `no-mistakes
+#                   init` runs in it, inside the VM.
 #   --allow HOSTS   further per-sandbox allowed hosts (comma separated).
 #   --npm-cache DIR a read-only npm seed cache (bin/fm-sbx-npm-seed.sh).
 #   CLAUDE_ARGS     the claude command line, exactly as the launch built it.
@@ -61,7 +65,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-operational-input.sh"
 
 ID='' CONFIG='' STATE='' DATA='' ROOT='' WT='' CLONE='' NAME=''
-CPUS=4 MEMORY=4g BUSY_GEN='' KIND=ship NM=0 ALLOW='' NPM_CACHE=''
+CPUS=4 MEMORY=4g BUSY_GEN='' KIND=ship NM=0 NM_PIN='' ALLOW='' NPM_CACHE=''
 RELAY_PID='' CLEANED=0
 CLAUDE_USER_HOME=/home/agent
 
@@ -85,6 +89,7 @@ while [ "$#" -gt 0 ]; do
   --busy-gen) BUSY_GEN=${2:-}; shift 2 ;;
   --kind) KIND=${2:-}; shift 2 ;;
   --nm) NM=1; shift ;;
+  --nm-pin) NM_PIN=${2:-}; shift 2 ;;
   --allow) ALLOW=${2:-}; shift 2 ;;
   --npm-cache) NPM_CACHE=${2:-}; shift 2 ;;
   --) shift; break ;;
@@ -222,8 +227,15 @@ if [ "$NM" = 1 ]; then
   nm_bin=$(command -v no-mistakes 2>/dev/null || true)
   [ -n "$nm_bin" ] || die "this is a no-mistakes ship but no-mistakes is not installed on the host"
   nm_bin=$(readlink -f "$nm_bin" 2>/dev/null || printf '%s' "$nm_bin")
+  host_nm_ver=$(fm_sbx_nm_version "$("$nm_bin" version 2>/dev/null || true)")
+  [ -n "$host_nm_ver" ] || die "could not read the host no-mistakes version"
+  [ -z "$NM_PIN" ] || [ "$NM_PIN" = "$host_nm_ver" ] ||
+    die "config/worker-sandbox pins no-mistakes $NM_PIN but the host runs $host_nm_ver; install the pinned version or change the pin"
   sbx cp "$nm_bin" "$NAME:/tmp/fm-no-mistakes" >/dev/null 2>&1 || die "could not copy no-mistakes into $NAME"
   vm_root install -m 755 /tmp/fm-no-mistakes /usr/local/bin/no-mistakes >/dev/null 2>&1 || die "could not install no-mistakes into $NAME"
+  vm_nm_ver=$(fm_sbx_nm_version "$(sbx exec "$NAME" no-mistakes version 2>/dev/null || true)")
+  [ "$vm_nm_ver" = "$host_nm_ver" ] ||
+    die "the no-mistakes in $NAME reports '${vm_nm_ver:-nothing}' but the host runs $host_nm_ver; refusing to run a different pipeline than the host's"
   sbx exec "$NAME" mkdir -p "$CLAUDE_USER_HOME/nm" >/dev/null 2>&1 || true
   ALLOW="github.com,api.github.com${ALLOW:+,$ALLOW}"
 fi
@@ -241,6 +253,25 @@ fi
 if [ -n "$ALLOW" ]; then
   sbx policy allow network --sandbox "$NAME" "$ALLOW" >/dev/null 2>&1 ||
     die "could not add the per-sandbox network rules ($ALLOW) for $NAME"
+fi
+
+# A sandboxed validation ship needs its clone to look like a real checkout to
+# the in-VM pipeline: origin is the project's real URL (the bridge set it),
+# origin/HEAD names the real default branch (a clone whose origin/HEAD points at
+# the feature branch makes the pipeline refuse to validate it, and keeps
+# refusing until init runs again), and `no-mistakes init` has registered the
+# clone.
+# All of it happens before the worker starts and runs as the VM's own user.
+if [ "$NM" = 1 ] && [ "$KIND" = ship ]; then
+  vm_clone() { sbx exec -w "$CLONE" -e "NM_HOME=$CLAUDE_USER_HOME/nm" -e NO_MISTAKES_NO_UPDATE_CHECK=1 -e NO_MISTAKES_TELEMETRY=off "$NAME" "$@"; }
+  vm_clone git remote get-url origin >/dev/null 2>&1 ||
+    die "the clone of this ship has no origin remote, so its sandboxed pipeline has nothing to push to"
+  vm_clone git fetch -q origin >/dev/null 2>&1 ||
+    die "could not fetch origin inside $NAME (is a GitHub token set in config/sbx-github-token and github.com allowed?)"
+  vm_clone git remote set-head origin -a >/dev/null 2>&1 ||
+    die "could not set the default branch of origin inside $NAME"
+  vm_clone no-mistakes init >/dev/null 2>&1 ||
+    die "no-mistakes init failed inside $NAME"
 fi
 
 relay_args=(--id "$ID" --state "$STATE" --config "$CONFIG" --channel "$CHANNEL" --relay "$RELAY")

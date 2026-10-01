@@ -79,13 +79,14 @@ test_explicit_off_is_the_same_as_absent() {
 
 test_sbx_rewrites_the_launch_and_records_the_sandbox() {
   local out rc
-  new_case on 'sbx cpus=2 memory=3g allow=example.org'
+  new_case on 'sbx cpus=2 memory=3g allow=example.org nm=v1.79.0'
   out=$(spawn_task sbx-on); rc=$?
   expect_code 0 "$rc" "sbx should spawn: $out"
   assert_grep "bin/claude-sbx" "$CASE/launch.log" "the launch goes through the wrapper"
   assert_grep "--nm" "$CASE/launch.log" "a no-mistakes ship asks for the in-VM pipeline"
   assert_grep "--cpus 2 --memory 3g" "$CASE/launch.log" "the resources reach the wrapper"
   assert_grep "--allow 'example.org'" "$CASE/launch.log" "the extra host reaches the wrapper"
+  assert_grep "--nm-pin 'v1.79.0'" "$CASE/launch.log" "the version pin reaches the wrapper"
   assert_grep "sandbox=sbx" "$HOME_DIR/state/sbx-on.meta" "the task record names the sandbox"
   assert_grep "sandbox_name=fm-sbx-" "$HOME_DIR/state/sbx-on.meta" "the task record names the sandbox instance"
   assert_present "$HOME_DIR/state/sbx-on.sbx-clone/.git" "the standalone clone exists"

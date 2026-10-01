@@ -15,11 +15,15 @@
 #
 # Value grammar of config/worker-sandbox, one line:
 #   off                      the default; also an absent file
-#   sbx [cpus=N] [memory=Ng] [allow=HOSTS]
+#   sbx [cpus=N] [memory=Ng] [allow=HOSTS] [nm=VERSION]
 #                            run Claude workers in an sbx microVM
 # cpus defaults to 4 (1-64) and memory to 4g (a whole number of gigabytes).
 # allow= is a comma-separated list of further host names every sandbox of this
 # home may reach, added per sandbox and never to the global sbx policy.
+# nm=VERSION (for example v1.79.0) pins the no-mistakes version a sandboxed
+# validation ship may use, and a host binary of any other version refuses the
+# launch; without it the host's own version is used and only has to match the
+# copy installed in the VM.
 #
 # Every sandbox this tree creates is named fm-sbx-<home-hash>-<id>-<id-hash>,
 # so a sweep, a removal, or an operator listing can tell fleet sandboxes from
@@ -30,17 +34,19 @@ FM_SBX_MODE=off
 FM_SBX_CPUS=4
 FM_SBX_MEMORY=4g
 FM_SBX_ALLOW=
+FM_SBX_NM_PIN=
 
 # fm_sbx_load_config <file>
-# Parse the file into FM_SBX_MODE, FM_SBX_CPUS, FM_SBX_MEMORY and FM_SBX_ALLOW.
+# Parse the file into FM_SBX_MODE, FM_SBX_CPUS, FM_SBX_MEMORY, FM_SBX_ALLOW and
+# FM_SBX_NM_PIN.
 # An absent file is the default (off); a malformed value prints the refusal to
 # stderr and returns 1 so the caller can stop before any mutation.
 fm_sbx_load_config() {
   local file=$1 raw tok first rest
-  FM_SBX_MODE=off FM_SBX_CPUS=4 FM_SBX_MEMORY=4g FM_SBX_ALLOW=
+  FM_SBX_MODE=off FM_SBX_CPUS=4 FM_SBX_MEMORY=4g FM_SBX_ALLOW='' FM_SBX_NM_PIN=''
   [ -e "$file" ] || [ -L "$file" ] || return 0
   if [ ! -f "$file" ] || [ ! -r "$file" ]; then
-    echo "error: config/worker-sandbox must be a readable regular file holding: off, or sbx with optional cpus=N memory=Ng allow=HOSTS" >&2
+    echo "error: config/worker-sandbox must be a readable regular file holding: off, or sbx with optional cpus=N memory=Ng allow=HOSTS nm=VERSION" >&2
     return 1
   fi
   raw=$(tr '\n\t' '  ' <"$file" || true)
@@ -77,8 +83,17 @@ fm_sbx_load_config() {
       esac
       FM_SBX_ALLOW=${tok#allow=}
       ;;
+    nm=v[0-9]*.[0-9]*.[0-9]*)
+      case "${tok#nm=}" in
+      *[!A-Za-z0-9.+-]*)
+        echo "error: config/worker-sandbox nm= takes a version such as v1.79.0, got '${tok#nm=}'" >&2
+        return 1
+        ;;
+      esac
+      FM_SBX_NM_PIN=${tok#nm=}
+      ;;
     *)
-      echo "error: config/worker-sandbox holds the option '$tok'; accepted options are cpus=N (1-64), memory=Ng and allow=HOSTS" >&2
+      echo "error: config/worker-sandbox holds the option '$tok'; accepted options are cpus=N (1-64), memory=Ng, allow=HOSTS and nm=VERSION" >&2
       return 1
       ;;
     esac
@@ -124,6 +139,12 @@ fm_sbx_preflight() {
     echo "error: config/worker-sandbox is sbx but the sbx daemon is not running; start it with the user unit in docs/configuration.md \"Worker sandbox\" (sbx daemon start --policy deny-all), then spawn again" >&2
     return 1
   fi
+}
+
+# fm_sbx_nm_version <text>: the version token (v1.79.0) of a `no-mistakes
+# version` line, empty when the text carries none.
+fm_sbx_nm_version() {
+  printf '%s\n' "$1" | grep -Eo 'v?[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9.+-]*' | head -n 1
 }
 
 # fm_sbx_exists <name>: true when sbx lists the sandbox.

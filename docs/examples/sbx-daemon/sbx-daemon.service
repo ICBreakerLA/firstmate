@@ -1,0 +1,17 @@
+[Unit]
+Description=Docker Sandboxes daemon for Firstmate sandboxed workers
+Documentation=file://%h/firstmate/docs/configuration.md
+
+[Service]
+Type=simple
+# deny-all initializes the global network policy to the strictest baseline when
+# the daemon first starts; Firstmate only ever adds per-sandbox allow rules.
+ExecStart=/usr/bin/sbx daemon start --policy deny-all
+Restart=always
+RestartSec=5
+# A clean environment: the daemon must not inherit a GitHub token or an agent
+# socket from the login session that happened to start it.
+UnsetEnvironment=GH_TOKEN GITHUB_TOKEN SSH_AUTH_SOCK ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
+
+[Install]
+WantedBy=default.target

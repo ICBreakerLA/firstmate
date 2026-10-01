@@ -1036,6 +1036,35 @@ test_scout_and_secondmate_scaffold() {
 # Contract: a waiting worker spends no turns. A decision wait ends the turn, an
 # external wait sleeps in one bounded blocking shell command sized per harness,
 # and a waiting worker neither polls its inbox nor polls a pipeline between holds.
+# config/worker-sandbox=sbx adds the sandbox boundaries to ship and scout briefs
+# and nothing to a home that leaves it off; a no-mistakes ship is also told the
+# pipeline runs in the sandbox.
+test_sandboxed_home_briefs_name_the_sandbox_boundaries() {
+  local home id brief
+  home="$TMP_ROOT/sbx-home"
+  mkdir -p "$home/data" "$home/config"
+  printf 'sbx cpus=2\n' > "$home/config/worker-sandbox"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-sbx-ship some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "sandboxed ship scaffold exited non-zero"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-sbx-direct some-proj --mode direct-PR >/dev/null 2>&1 \
+    || fail "sandboxed direct-PR scaffold exited non-zero"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-sbx-scout some-proj --scout >/dev/null 2>&1 \
+    || fail "sandboxed scout scaffold exited non-zero"
+  for id in brief-sbx-ship brief-sbx-direct brief-sbx-scout; do
+    brief="$home/data/$id/brief.md"
+    assert_grep "# Sandbox" "$brief" "$id: the sandbox section is missing"
+    assert_grep "never ask for a wider policy" "$brief" "$id: the no-widening rule is missing"
+  done
+  assert_grep "The no-mistakes pipeline also runs inside this sandbox" "$home/data/brief-sbx-ship/brief.md" "a no-mistakes ship is told where the pipeline runs"
+  assert_no_grep "pipeline also runs inside this sandbox" "$home/data/brief-sbx-direct/brief.md" "a direct-PR ship has no pipeline note"
+  assert_grep "no-mistakes doctor" "$home/data/brief-sbx-ship/brief.md" "the doctor/init step stays"
+  printf 'off\n' > "$home/config/worker-sandbox"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-sbx-off some-proj --mode no-mistakes >/dev/null 2>&1 \
+    || fail "unsandboxed scaffold exited non-zero"
+  assert_no_grep "# Sandbox" "$home/data/brief-sbx-off/brief.md" "an unsandboxed brief is unchanged"
+  pass "fm-brief.sh: a sandboxed home's ship and scout briefs state the sandbox boundaries, an unsandboxed one does not"
+}
+
 test_workers_wait_without_spending_turns() {
   local home id brief
   home="$TMP_ROOT/wait-home"
@@ -1422,6 +1451,7 @@ test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_scout_lavish_line_follows_presentation_floor
 test_workers_wait_without_spending_turns
+test_sandboxed_home_briefs_name_the_sandbox_boundaries
 test_wait_no_turns_absent_keeps_the_previous_brief
 test_home_brief_include_is_appended_last
 test_ship_branch_prefix_defaults_to_legacy_fm

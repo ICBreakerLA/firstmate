@@ -142,6 +142,8 @@ esac
 . "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
+# shellcheck source=bin/fm-sbx-lib.sh
+. "$SCRIPT_DIR/fm-sbx-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 IFS= read -r -d '' CREWMATE_PAUSE_INSTRUCTIONS <<EOF || true
    Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - when deliberately waiting for work or an external condition expected to clear on its own, including your own validation round.
@@ -566,6 +568,23 @@ IFS= read -r -d '' SHARED_INFRA_RULE <<'EOF' || true
 EOF
 SHARED_INFRA_RULE=${SHARED_INFRA_RULE%$'\n'}
 
+# A home that runs its workers in a microVM (config/worker-sandbox, docs/
+# configuration.md "Worker sandbox") tells ship and scout workers what that
+# changes for them. The paths in this brief resolve unchanged inside the VM, so
+# only the boundaries are new.
+SANDBOX_SECTION=
+if [ "$KIND" != secondmate ] && (fm_sbx_load_config "$CONFIG/worker-sandbox" >/dev/null 2>&1 && [ "$FM_SBX_MODE" = sbx ]); then
+  SANDBOX_SECTION="# Sandbox
+You run inside an isolated sandbox, and your working copy at the worktree path is a standalone clone of it: commit on your branch as usual, and firstmate brings the commits back on the host side.
+The sandbox's network allowlist and credentials are fixed by the host.
+Never try to widen them, never look for host credentials, and never ask for a wider policy; if the allowlist blocks something you need, append \`blocked [at=<epoch>]: {what is blocked}\` and stop.
+Every path named in this brief, including the status file, works unchanged from inside the sandbox."
+  if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
+    SANDBOX_SECTION="$SANDBOX_SECTION
+The no-mistakes pipeline also runs inside this sandbox, and it pushes your branch and opens the pull request from there under the rules below."
+  fi
+fi
+
 if [ "$KIND" = scout ]; then
 if "$SCRIPT_DIR/fm-bootstrap.sh" lavish-compatible >/dev/null 2>&1; then
   LAVISH_LINE='If your deliverable is a visual artifact the captain will review and iterate on, use the lavish-axi rule: arm your board with bin/fm-procevent-lavish.sh arm <artifact.html> --for <task-id>; never run lavish-axi poll yourself. Re-arm with the reply after each nonterminal round to acknowledge it, route the board feedback through your steering inbox, write needs-decision [key=board-review] with the live board URL when the captain owes a decision, and stop at session_ended or an empty End without re-arming - acknowledge that final round with bin/fm-procevent.sh handled <source-id> <sequence> to conclude and retire your board.'
@@ -578,6 +597,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 $TASK_SECTION
 
 $HERDR_SECTION
+
+$SANDBOX_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
@@ -649,6 +670,8 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 $TASK_SECTION
 
 $HERDR_SECTION
+
+$SANDBOX_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.

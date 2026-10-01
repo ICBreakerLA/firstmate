@@ -101,6 +101,11 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-supervise-daemon.sh` | Presence-gated away-mode sub-supervisor: self-handle routine wakes, guard injection by the detected primary harness, escalate batched digests, alert on failed delivery |
 | `fm-crew-state.sh`       | Print one deterministic current-state line for a crew                                |
 | `fm-nm-run-lib.sh`       | Single owner of shared no-mistakes run-attribution primitives and rules             |
+| `fm-sbx-lib.sh`          | Single owner of the `config/worker-sandbox` grammar, sandbox names, the sbx preflight, and idempotent sandbox removal |
+| `fm-sbx-run.sh`          | Run a Claude worker in its own sbx microVM (also reached as `claude-sbx`), with traps that remove the sandbox and bring its commits back |
+| `fm-sbx-bridge.sh`       | Create a sandboxed task's standalone clone and bring its branches back with a fast-forward-only fetch, treating the clone as untrusted |
+| `fm-sbx-relay.sh`        | Mirror a sandboxed worker's channel into the task's real status and busy-state records |
+| `fm-sbx-npm-seed.sh`     | Seed the read-only npm cache that sandboxed workers install from offline |
 | `fm-tangle-lib.sh`       | Shared default-branch resolution and primary-checkout tangle classification          |
 | `fm-timeout-lib.sh`      | Single owner of hard-bounded command execution and its fallback watchdog |
 | `fm-timing-lib.sh`       | Single owner of the deferred network stage's per-step elapsed-time records, inert unless a run asks for them |

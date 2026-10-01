@@ -9,6 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Firstmate's code, private files, or project location | [FM_HOME](#fm_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend) and [harness support](#harness-support) |
+| Running Claude workers in a microVM | [Worker sandbox](#worker-sandbox-configworker-sandbox) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
@@ -839,6 +840,99 @@ The diagnostic names the accepted values; Firstmate never falls back to a permis
 The file is a captain-wide safety preference, so it is inherited into secondmate homes under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract; a secondmate's own Claude crewmates then launch on the same posture.
 
 The [Claude adapter reference](../.agents/skills/harness-adapters/references/harness/claude.md) records the permission-mode observations and the distinct startup dialogs.
+
+## Worker sandbox (config/worker-sandbox)
+
+The optional local, gitignored `config/worker-sandbox` runs Claude ship and scout workers inside a Docker Sandboxes (`sbx`) microVM instead of directly on the host.
+It is a separate axis from the harness and the runtime backend: it changes where the worker's process runs, not how it is launched, supervised, or torn down.
+The default is off, and an absent file means off, so an unconfigured home launches every worker exactly as before.
+
+### Accepted values
+
+The file holds one line.
+
+| Value | Meaning |
+| --- | --- |
+| `off` | Workers run on the host. This is the default. |
+| `sbx [cpus=N] [memory=Ng] [allow=HOSTS] [nm=VERSION]` | Claude ship and scout workers run in one `sbx` microVM each. |
+
+`cpus` is 1 to 64 and defaults to 4, and `memory` is a whole number of gigabytes and defaults to `4g`.
+`allow` is a comma-separated list of further host names that every sandbox of this home may reach, and it is added to each sandbox's own network policy, never to the global one.
+`nm` pins the no-mistakes version a sandboxed validation ship may use, such as `nm=v1.79.0`, and a host binary of any other version refuses the launch.
+Without `nm`, the host's own no-mistakes version is used, and the copy installed in the VM must report that same version or the launch refuses.
+
+Any other value, or an unreadable file, refuses every spawn from that home before any endpoint, worktree, or task record exists.
+Under `sbx`, only the canonical Claude launch on the tmux backend is supported, with no worker account pin.
+A Claude launch with a pin, a raw launch command, another harness, or another backend refuses rather than starting a worker outside the sandbox the captain asked for.
+A persistent secondmate is never sandboxed, but its own Claude ship and scout workers follow the file, which is inherited into the secondmate home under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract.
+
+### What a sandboxed worker can see and do
+
+Each task gets its own sandbox, named `fm-sbx-<home-hash>-<id>-<id-hash>` so a listing tells fleet sandboxes from any other and two homes never collide.
+The sandbox mounts only these paths:
+
+- The task's standalone clone of its worktree, under `state/<id>.sbx-clone`.
+- The task's `data/<id>` directory.
+- The task's channel directory `state/<id>.sbx` and its steering inbox `state/<id>.inbox`.
+- The task's own launch record, read-only, and the code root's `.agents/skills`, read-only.
+- The home's own git-hooks directory and trailer-strip script, read-only, so commits in the VM honor the same trailer rule.
+- The home's read-only npm cache, when one exists.
+
+The firstmate home as a whole, `projects/`, the project's own repository, the host home directory, and every host credential are never mounted or copied.
+Only an explicit allowlist of environment variables reaches the VM.
+The worker's status lines and hook events arrive through the channel, and a host-side relay (`bin/fm-sbx-relay.sh`) is the only thing that turns those bytes into the task's real status and busy-state records.
+
+### Git isolation
+
+The worker commits in a standalone clone made with `git clone --local --no-hardlinks`, so nothing in the VM shares objects, hooks, or configuration with the project repository.
+The host treats that clone as untrusted: before any host git read it regenerates the clone's `.git/config` from host values, and the only way work comes back is `git fetch` of the clone's branches into the worktree repository followed by a fast-forward-only merge (`bin/fm-sbx-bridge.sh fetch-back`).
+A `done` line is mirrored to the task's status only after that fetch-back succeeded, and a failure becomes a `blocked` line.
+Teardown repeats the fetch-back and refuses while the clone holds commits or uncommitted work that are not in the worktree repository, keeping the clone and the sandbox until the captain resolves it or explicitly discards it.
+
+### Network and credentials
+
+The global `sbx` policy stays deny-all and Firstmate never changes it.
+A sandbox gets no network access beyond the hosts added to its own policy: GitHub's `github.com` and `api.github.com` when it has a GitHub token or is a no-mistakes ship, plus the hosts in `allow=`.
+Claude's own sign-in is the one-time account step below, and the host's Claude credentials are never copied into a VM.
+
+An optional GitHub token lives in `config/sbx-github-token` (or `FM_SBX_GH_TOKEN` in the launching environment) and should be fine-grained to the repositories the sandboxed work needs.
+The wrapper stores it as a per-sandbox `sbx` secret, so the VM sees only a placeholder value and the sandbox proxy injects the real token on the allowed GitHub hosts.
+The token is never an argument, a mount, or an environment variable of the worker.
+A symlinked token file is never read.
+
+### No-mistakes ships
+
+A no-mistakes ship runs its pipeline inside its own sandbox, because the pipeline would otherwise need the host's daemon, credentials, and project.
+The host's static `no-mistakes` binary is copied into the VM with its own `NM_HOME` under the VM user's home, update checks, telemetry, and auto-update are off, and nothing under the host's no-mistakes home is mounted.
+Before the worker starts, the launch checks the VM binary's version against the host's (and against `nm=`), sets the clone's `origin` to the project's real remote URL without credentials, runs `git fetch origin` and `git remote set-head origin -a` so the clone knows the real default branch, and runs `no-mistakes init` in the clone.
+Before the clone is brought back, and again at teardown, the pipeline's own fix commits are synced to the clone's branch with `no-mistakes axi sync` inside the VM.
+
+Host supervision reads the pipeline through `sbx exec` into the task's sandbox only, never through a host daemon, and a task whose sandbox is gone reads as unavailable rather than from a host record.
+The VM holds the run record, so the verdict a sandboxed worker's pipeline reports is a worker-attested one, and `bin/fm-crew-state.sh` labels it that way instead of presenting it as an independently verified result.
+
+### Lifecycle
+
+`bin/fm-sbx-run.sh` (reached as `bin/claude-sbx`, so the pane's foreground command classifies as a Claude launch) runs as a child of the pane shell, and its exit, hangup, terminate, and interrupt traps remove the sandbox, stop the relay after a final drain, and bring the clone's commits back.
+A relaunch follows the task's recorded `sandbox=` value, not the current file, so a config edit never moves a live task between the two worlds, and it removes the old sandbox and starts a fresh one on the same clone.
+Teardown follows the same record, removes only a sandbox whose name this tree would have created, and keeps the never-discard-unlanded-work order described above.
+
+### Operator setup
+
+These steps are the owner's and are not automated.
+
+1. Install the `sbx` CLI and run `sbx login` plus the one-time Claude sign-in so `sbx secret ls` shows a global Anthropic entry.
+   Firstmate never signs in for you and never copies host credentials into a VM.
+2. Keep the `sbx` daemon running under the user unit [`docs/examples/sbx-daemon/sbx-daemon.service`](examples/sbx-daemon/sbx-daemon.service), which starts it with `--policy deny-all` and an environment stripped of tokens.
+   Copy it to `~/.config/systemd/user/`, then run `systemctl --user daemon-reload` and `systemctl --user enable --now sbx-daemon`.
+   Every sandboxed spawn checks `sbx daemon status` first and refuses with this pointer when the daemon is not running.
+3. Optionally seed the offline npm cache with `bin/fm-sbx-npm-seed.sh <project-dir>` and rerun it when a lockfile changes.
+   Sandboxed workers install with `npm ci --offline` against that cache, which is mounted read-only, because the registry is not reachable by default.
+4. Optionally create `config/sbx-github-token` (mode 600) for the GitHub access described above.
+5. Write `sbx` to `config/worker-sandbox`.
+
+### Failures
+
+A missing `sbx` CLI, a stopped daemon, a failed create, a version mismatch, or a failed in-VM setup step is a blocker that names the missing requirement; no spawn silently falls back to running on the host.
 
 ## Worker account pin (config/claude-account, config/pi-account)
 

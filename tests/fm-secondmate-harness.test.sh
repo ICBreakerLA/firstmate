@@ -1072,7 +1072,7 @@ new_world() {
     [ "$dispatch_ignore" = no ] || printf 'config/crew-dispatch.json\n'
     printf 'config/crew-harness\nconfig/secondmate-harness\nconfig/backlog-backend\n'
     printf 'config/backend\nconfig/herdr-presentation-spaces\nconfig/startup-memory-budget\n'
-    printf 'config/claude-permission-mode\n'
+    printf 'config/claude-permission-mode\nconfig/worker-sandbox\n'
   } > "$w/main/.gitignore"
   printf 'v1\n' > "$w/main/AGENTS.md"
   printf 'r1\n' > "$w/main/README.md"
@@ -1545,6 +1545,30 @@ test_claude_permission_mode_inheritance_present_and_absent() {
   expect_code 0 "$status" "claude-permission-mode absence push should succeed"
   [ -e "$w/sm/config/claude-permission-mode" ] && fail "claude-permission-mode not removed on primary absence"
   pass "B12c claude-permission-mode inheritance: present values and primary absence converge exactly"
+}
+
+# The sandbox choice is a captain-wide safety preference that a secondmate's own
+# crewmates must follow, while the token file beside it stays host-private.
+test_worker_sandbox_inheritance_present_and_absent() {
+  local w head out err status
+  w=$(new_world sandbox-inherit)
+  head=$(git -C "$w/main" rev-parse HEAD)
+  add_sm_worktree "$w" sm "$head"
+
+  printf 'sbx cpus=2\n' > "$w/home/config/worker-sandbox"
+  printf 'secret\n' > "$w/home/config/sbx-github-token"
+  err="$w/sandbox-inherit.err"
+  out=$(run_config_push "$w" 2>"$err"); status=$?
+  expect_code 0 "$status" "worker-sandbox present push should succeed"
+  assert_contains "$out" "worker-sandbox: pushed" "present value should report pushed"
+  [ "$(cat "$w/sm/config/worker-sandbox")" = 'sbx cpus=2' ] || fail "worker-sandbox present value not pushed"
+  [ ! -e "$w/sm/config/sbx-github-token" ] || fail "the sandbox GitHub token must never be inherited"
+
+  rm -f "$w/home/config/worker-sandbox"
+  out=$(run_config_push "$w" 2>"$err"); status=$?
+  expect_code 0 "$status" "worker-sandbox absence push should succeed"
+  [ -e "$w/sm/config/worker-sandbox" ] && fail "worker-sandbox not removed on primary absence"
+  pass "B12c worker-sandbox inheritance: present values and primary absence converge, and the token stays on the host"
 }
 
 test_backend_inheritance_present_and_absent() {
@@ -2749,6 +2773,7 @@ test_backend_inheritance_present_and_absent
 test_spawn_secondmate_claude_permission_mode_auto
 test_spawn_secondmate_claude_grants_parent_inbox_dir
 test_claude_permission_mode_inheritance_present_and_absent
+test_worker_sandbox_inheritance_present_and_absent
 test_presentation_inheritance_default_on_and_opt_out
 test_bootstrap_sweep_surfaces_config_propagation_failure
 test_bootstrap_rereads_after_partial_propagation

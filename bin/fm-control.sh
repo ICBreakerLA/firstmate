@@ -72,6 +72,11 @@
 #              already recorded for it.
 #              A prefixed raw-command basename cannot reconstruct its launch
 #              command, so relaunch requires an explicit --harness for it.
+#              A task recorded as sandboxed (sandbox=sbx, docs/configuration.md
+#              "Worker sandbox") relaunches into a NEW microVM on the same
+#              standalone clone: once the agent has stopped, the old VM must be
+#              gone and a ship's clone commits must be on the host, or the
+#              relaunch refuses and keeps the clone.
 #              A replacement Claude or Pi profile must also pass this home's
 #              worker account pin (bin/fm-worker-account-lib.sh) here, so a pin
 #              that no longer resolves or is signed out refuses before the old
@@ -172,6 +177,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-control-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-sbx-lib.sh
+. "$SCRIPT_DIR/fm-sbx-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-worker-account-lib.sh
@@ -959,6 +966,28 @@ record_note() {
   esac
 }
 
+# settle_sandbox_exit: a sandboxed task's agent runs inside a microVM that its
+# launch wrapper (bin/fm-sbx-run.sh) removes, after bridging the work back, when
+# the agent exits. A relaunch starts a NEW VM from the same standalone clone, so
+# before launching it re-proves the two things the wrapper is trusted to have
+# done: the old VM is gone, and (for a ship) every commit in the clone is on the
+# host. A failure refuses the relaunch and keeps the clone, so nothing is lost
+# and no second VM ever runs against the same clone.
+settle_sandbox_exit() {
+  local name clone
+  [ "$(fm_meta_get "$META" sandbox)" = sbx ] || return 0
+  name=$(fm_meta_get "$META" sandbox_name)
+  clone=$(fm_sbx_clone_dir "$STATE" "$ID")
+  fm_sbx_rm "$name" >&2 \
+    || die "task $ID's sandbox $name could not be removed after the agent stopped; refusing to launch a second VM against the same clone"
+  if [ "$KIND" = ship ] && [ -d "$clone" ]; then
+    if ! "$SCRIPT_DIR/fm-sbx-bridge.sh" fetch-back "$WT" "$clone" >&2 \
+       || ! "$SCRIPT_DIR/fm-sbx-bridge.sh" check "$WT" "$clone" >&2; then
+      die "task $ID's sandbox clone holds work that is not in the worktree repository (see above); refusing to relaunch. The clone $clone is kept"
+    fi
+  fi
+}
+
 do_relaunch() {
   local exit_result state note_line
   local -a spawn_args
@@ -999,6 +1028,7 @@ do_relaunch() {
 
   journal_write stopping "${CHECKPOINT_LINES[@]}" "$note_line"
   exit_result=$(do_exit)
+  settle_sandbox_exit
   journal_write exited "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
 
   # The launch owner (fm-spawn --relaunch) clears the previous incarnation's

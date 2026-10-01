@@ -341,6 +341,7 @@ for _teardown_source in \
   fm-composer-lib.sh \
   fm-cursor-lib.sh \
   fm-nm-run-lib.sh \
+  fm-sbx-lib.sh \
   fm-wake-lib.sh \
   fm-path-lib.sh \
   fm-lease-lib.sh
@@ -374,6 +375,8 @@ unset _teardown_source
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-sbx-lib.sh
+. "$SCRIPT_DIR/fm-sbx-lib.sh"
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
   exit 2
@@ -2019,6 +2022,48 @@ task_status_is_run_not_found() {  # <status-error> <run-id>
   [ "$actual" = "$expected" ]
 }
 
+# A task spawned under config/worker-sandbox=sbx records sandbox=sbx, and its
+# work lives in a standalone clone (state/<id>.sbx-clone) the worker's microVM
+# mounted. Teardown follows that record, never the current config.
+# TD_SBX is the recorded sandbox name, empty for an ordinary task.
+# Order for a sandboxed ship, preserving never-discard-unlanded-work:
+#   1. before the landed-work test, sync the in-VM pipeline's fix commits to the
+#      clone, bring the clone's branches to the worktree repository, and check
+#      the clone has no uncommitted work, so the host-side test sees the
+#      worker's real result;
+#   2. only after every refusal passed, abort the task's own parked pipeline run
+#      through the sandbox seam and remove the sandbox;
+#   3. bring the clone back once more and check it again, since the worker may
+#      have committed in between; the clone stays on disk until this passes.
+# A scout or --force skips the bridge, as the scratch-worktree and discard
+# rules already allow.
+TD_SBX=
+TD_SBX_CLONE=
+teardown_sbx_load() {
+  [ "$KIND" != secondmate ] || return 0
+  [ "$(fm_meta_get "$META" sandbox)" = sbx ] || return 0
+  TD_SBX=$(fm_meta_get "$META" sandbox_name)
+  TD_SBX_CLONE=$(fm_sbx_clone_dir "$STATE" "$ID")
+  if ! fm_sbx_is_fleet_name "$TD_SBX"; then
+    echo "REFUSED: task $ID records sandbox '$TD_SBX', which is not a fleet sandbox name; nothing was removed." >&2
+    return 1
+  fi
+}
+
+teardown_sbx_bring_back() {  # <sync: 1 runs the pipeline sync in the sandbox first>
+  [ -n "$TD_SBX" ] && [ "$KIND" = ship ] && [ "$FORCE" != "--force" ] || return 0
+  [ -d "$TD_SBX_CLONE" ] || return 0
+  if [ "$1" = 1 ] && fm_nm_sandbox_bind "$WT" "$TD_SBX" "$TD_SBX_CLONE"; then
+    fm_nm_run_bounded "$WT" "$NM_TEARDOWN_TIMEOUT" axi sync >/dev/null 2>&1 || true
+  fi
+  fm_nm_sandbox_unbind
+  if ! "$SCRIPT_DIR/fm-sbx-bridge.sh" fetch-back "$WT" "$TD_SBX_CLONE" >&2 \
+     || ! "$SCRIPT_DIR/fm-sbx-bridge.sh" check "$WT" "$TD_SBX_CLONE" >&2; then
+    echo "REFUSED: the sandbox clone of $ID holds work that is not in the worktree repository (see above); the clone and sandbox are kept. Resolve it, or get explicit OK to discard, then --force." >&2
+    return 1
+  fi
+}
+
 # Abort THIS task's own parked no-mistakes run before the worker that would
 # have answered its gate is removed, so no run is left orphaned holding a
 # fleet slot. Only KIND=ship drives a no-mistakes validation of its own
@@ -3443,6 +3488,9 @@ if [ "$BACKEND" = orca ] && [ "$KIND" != scout ] && [ "$KIND" != secondmate ] &&
   ORCA_PATH_MATCH_VERIFIED=1
 fi
 
+teardown_sbx_load || exit 1
+teardown_sbx_bring_back 1 || exit 1
+
 if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   if validate_worktree_teardown_safety; then
     :
@@ -3559,10 +3607,18 @@ fi
 # dedicated process-event and firstmate-home removal machinery further below,
 # not by task-worktree cleanup.
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
-  conclude_task_no_mistakes_run "$WT"
+  # A sandboxed ship's pipeline runs inside its sandbox, so the abort reaches it
+  # there, before the sandbox is removed below.
+  [ -z "$TD_SBX" ] || fm_nm_sandbox_bind "$WT" "$TD_SBX" "$TD_SBX_CLONE" || true
+  conclude_task_no_mistakes_run "$WT" || { fm_nm_sandbox_unbind; exit 1; }
+  fm_nm_sandbox_unbind
   reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
 elif [ "$KIND" != secondmate ]; then
   reap_task_worktree_processes tasktmp "$TASK_TMP"
+fi
+if [ -n "$TD_SBX" ]; then
+  fm_sbx_rm "$TD_SBX" || exit 1
+  teardown_sbx_bring_back 0 || exit 1
 fi
 
 # Fix 3 (see script header): sweep remote job workers abandoned by an already
@@ -3793,6 +3849,12 @@ rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
 # read-only by its installer.
 chmod u+w "$STATE/$ID.git-hooks" 2>/dev/null || true
 rm -rf "$STATE/$ID.inbox" "$STATE/$ID.git-hooks"
+# A sandboxed task's channel, relay offsets and standalone clone go with it; the
+# sandbox itself was removed and the clone's work brought back before this point.
+if [ -n "$TD_SBX" ]; then
+  rm -rf "$STATE/$ID.sbx" "$STATE/$ID.sbx-relay" "$TD_SBX_CLONE" \
+    || echo "warning: could not remove the sandbox files of $ID under $STATE" >&2
+fi
 # A presentation journal the close path left behind is orphaned once the
 # recorded pane is proven gone (the Herdr gate above) unless it still names a
 # live projected workspace - a version 2 binding of some other pane, or a

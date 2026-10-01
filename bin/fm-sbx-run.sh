@@ -227,13 +227,13 @@ if [ "$NM" = 1 ]; then
   nm_bin=$(command -v no-mistakes 2>/dev/null || true)
   [ -n "$nm_bin" ] || die "this is a no-mistakes ship but no-mistakes is not installed on the host"
   nm_bin=$(readlink -f "$nm_bin" 2>/dev/null || printf '%s' "$nm_bin")
-  host_nm_ver=$(fm_sbx_nm_version "$("$nm_bin" version 2>/dev/null || true)")
+  host_nm_ver=$(fm_sbx_nm_version "$(NO_MISTAKES_NO_UPDATE_CHECK=1 "$nm_bin" --version 2>/dev/null || true)")
   [ -n "$host_nm_ver" ] || die "could not read the host no-mistakes version"
   [ -z "$NM_PIN" ] || [ "$NM_PIN" = "$host_nm_ver" ] ||
     die "config/worker-sandbox pins no-mistakes $NM_PIN but the host runs $host_nm_ver; install the pinned version or change the pin"
   sbx cp "$nm_bin" "$NAME:/tmp/fm-no-mistakes" >/dev/null 2>&1 || die "could not copy no-mistakes into $NAME"
   vm_root install -m 755 /tmp/fm-no-mistakes /usr/local/bin/no-mistakes >/dev/null 2>&1 || die "could not install no-mistakes into $NAME"
-  vm_nm_ver=$(fm_sbx_nm_version "$(sbx exec "$NAME" no-mistakes version 2>/dev/null || true)")
+  vm_nm_ver=$(fm_sbx_nm_version "$(sbx exec -e NO_MISTAKES_NO_UPDATE_CHECK=1 "$NAME" no-mistakes --version 2>/dev/null || true)")
   [ "$vm_nm_ver" = "$host_nm_ver" ] ||
     die "the no-mistakes in $NAME reports '${vm_nm_ver:-nothing}' but the host runs $host_nm_ver; refusing to run a different pipeline than the host's"
   sbx exec "$NAME" mkdir -p "$CLAUDE_USER_HOME/nm" >/dev/null 2>&1 || true
@@ -255,23 +255,10 @@ if [ -n "$ALLOW" ]; then
     die "could not add the per-sandbox network rules ($ALLOW) for $NAME"
 fi
 
-# A sandboxed validation ship needs its clone to look like a real checkout to
-# the in-VM pipeline: origin is the project's real URL (the bridge set it),
-# origin/HEAD names the real default branch (a clone whose origin/HEAD points at
-# the feature branch makes the pipeline refuse to validate it, and keeps
-# refusing until init runs again), and `no-mistakes init` has registered the
-# clone.
-# All of it happens before the worker starts and runs as the VM's own user.
+# A sandboxed validation ship needs its clone prepared for the in-VM pipeline
+# (fm_sbx_nm_prepare) before the worker starts.
 if [ "$NM" = 1 ] && [ "$KIND" = ship ]; then
-  vm_clone() { sbx exec -w "$CLONE" -e "NM_HOME=$CLAUDE_USER_HOME/nm" -e NO_MISTAKES_NO_UPDATE_CHECK=1 -e NO_MISTAKES_TELEMETRY=off "$NAME" "$@"; }
-  vm_clone git remote get-url origin >/dev/null 2>&1 ||
-    die "the clone of this ship has no origin remote, so its sandboxed pipeline has nothing to push to"
-  vm_clone git fetch -q origin >/dev/null 2>&1 ||
-    die "could not fetch origin inside $NAME (is a GitHub token set in config/sbx-github-token and github.com allowed?)"
-  vm_clone git remote set-head origin -a >/dev/null 2>&1 ||
-    die "could not set the default branch of origin inside $NAME"
-  vm_clone no-mistakes init >/dev/null 2>&1 ||
-    die "no-mistakes init failed inside $NAME"
+  fm_sbx_nm_prepare "$NAME" "$CLONE" "$CLAUDE_USER_HOME/nm" || die "the sandbox clone could not be prepared for the pipeline"
 fi
 
 relay_args=(--id "$ID" --state "$STATE" --config "$CONFIG" --channel "$CHANNEL" --relay "$RELAY")

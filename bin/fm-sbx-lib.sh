@@ -141,10 +141,46 @@ fm_sbx_preflight() {
   fi
 }
 
-# fm_sbx_nm_version <text>: the version token (v1.79.0) of a `no-mistakes
-# version` line, empty when the text carries none.
+# fm_sbx_nm_version <text>: the version token (v1.79.0) of the `no-mistakes
+# --version` line ("no-mistakes version v1.79.0 (<commit>) <date>"), empty when
+# the text carries none.
+# Only that line counts, so an update banner that names two other versions
+# cannot be mistaken for the binary's own.
 fm_sbx_nm_version() {
-  printf '%s\n' "$1" | grep -Eo 'v?[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9.+-]*' | head -n 1
+  printf '%s\n' "$1" | grep -E '^no-mistakes version v?[0-9]' | head -n 1 |
+    grep -Eo 'v?[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9.+-]*' | head -n 1
+}
+
+# fm_sbx_nm_prepare <name> <clone> <nm-home>
+# Make a sandboxed no-mistakes ship's clone look like a real checkout to the
+# pipeline that runs in the VM: origin is present, the remote's default branch
+# is fetched and recorded as origin/HEAD (a clone whose origin/HEAD names the
+# feature branch makes the pipeline refuse to validate it, and it keeps
+# refusing until init has run again), and `no-mistakes init` has registered the
+# clone.
+# Everything runs as the VM's own user, and each failure prints the step that
+# failed to stderr and returns 1.
+fm_sbx_nm_prepare() {
+  local name=$1 clone=$2 nmhome=$3
+  _fm_sbx_vm_clone() {
+    sbx exec -w "$clone" -e "NM_HOME=$nmhome" -e NO_MISTAKES_NO_UPDATE_CHECK=1 -e NO_MISTAKES_TELEMETRY=off "$name" "$@"
+  }
+  _fm_sbx_vm_clone git remote get-url origin >/dev/null 2>&1 || {
+    echo "error: the clone of this ship has no origin remote, so its sandboxed pipeline has nothing to push to" >&2
+    return 1
+  }
+  _fm_sbx_vm_clone git fetch -q origin >/dev/null 2>&1 || {
+    echo "error: could not fetch origin inside $name (is a GitHub token set in config/sbx-github-token and github.com allowed?)" >&2
+    return 1
+  }
+  _fm_sbx_vm_clone git remote set-head origin -a >/dev/null 2>&1 || {
+    echo "error: could not set the default branch of origin inside $name" >&2
+    return 1
+  }
+  _fm_sbx_vm_clone no-mistakes init >/dev/null 2>&1 || {
+    echo "error: no-mistakes init failed inside $name" >&2
+    return 1
+  }
 }
 
 # fm_sbx_exists <name>: true when sbx lists the sandbox.

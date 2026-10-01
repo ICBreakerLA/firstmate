@@ -47,7 +47,7 @@ rm) grep -Fxv -- "\$3" "$LIVE" >"$LIVE.new"; mv "$LIVE.new" "$LIVE" ;;
 secret) cat >"$W/secret.stdin" ;;
 exec)
   case "\$*" in
-  *"no-mistakes version"*) cat "$W/vm.nmver" 2>/dev/null; exit 0 ;;
+  *"no-mistakes --version"*) cat "$W/vm.nmver" 2>/dev/null; exit 0 ;;
   *"no-mistakes init"*) [ ! -f "$W/init.fail" ] || exit 1 ;;
   esac
   ;;
@@ -66,7 +66,7 @@ SH
 # copy in the VM reporting the same.
 fake_nm() {
   # shellcheck disable=SC2016 # the script text expands when the fake runs
-  printf '#!/usr/bin/env bash\n[ "$1" != version ] || echo "no-mistakes version %s"\nexit 0\n' "$2" >"$FAKE/no-mistakes"
+  printf '#!/usr/bin/env bash\n[ "$1" != --version ] || echo "no-mistakes version %s"\nexit 0\n' "$2" >"$FAKE/no-mistakes"
   chmod +x "$FAKE/no-mistakes"
   printf 'no-mistakes version %s\n' "$2" >"$1/vm.nmver"
 }

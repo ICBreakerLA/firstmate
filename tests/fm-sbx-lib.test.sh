@@ -57,6 +57,7 @@ test_sbx_defaults_and_options() {
   load 'sbx nm=v1.79.0\n' || fail "nm= should be accepted"
   assert_equals "v1.79.0" "$FM_SBX_NM_PIN" "the no-mistakes pin is parsed"
   assert_equals "v1.79.0" "$(fm_sbx_nm_version 'no-mistakes version v1.79.0 (abc)')" "the version token is read from a version line"
+  assert_equals "v1.79.0" "$(fm_sbx_nm_version "$(printf 'A new version of no-mistakes is available: v1.79.0 -> v1.84.0\nno-mistakes version v1.79.0 (fc540ac) 2026-09-19T09:34:32Z\n')")" "an update banner is never read as the version"
   assert_equals "" "$(fm_sbx_nm_version 'no version here')" "a line with no version yields nothing"
   pass "sbx resolves its defaults and honours cpus, memory, allow and nm"
 }

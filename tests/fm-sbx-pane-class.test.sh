@@ -24,7 +24,7 @@ test_the_wrapper_name_classifies_as_an_agent() {
 # whose `run` stays in the foreground. A script's process is named after its
 # interpreter, so the wrapper's own argv[0] is what the backend must read.
 test_a_live_pane_running_the_wrapper_reads_alive() {
-  local tmp fake out i sockdir
+  local tmp fake out sockdir
   command -v tmux >/dev/null 2>&1 || { pass "skipped: tmux is not installed"; return; }
   tmp=$(fm_test_tmproot fm-sbx-pane-live)
   fake=$(fm_fakebin "$tmp")
@@ -45,7 +45,7 @@ SH
     "$ROOT/bin/claude-sbx" --id t1 --config "$tmp/config" --state "$tmp/state" --data "$tmp/data" --root "$tmp" \
     --wt "$tmp/wt" --clone "$tmp/state/t1.sbx-clone" --name fm-sbx-0123abcd-t1-9999 --kind scout -- claude
   [ -S "$sockdir/default" ] || fail "the private tmux server must live under the test's own TMUX_TMPDIR"
-  for i in $(seq 1 100); do [ -s "$tmp/running" ] && break; sleep 0.1; done
+  for _ in $(seq 1 100); do [ -s "$tmp/running" ] && break; sleep 0.1; done
   [ -s "$tmp/running" ] || { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$tmp/tmux" tmux kill-session -t sess 2>/dev/null; fail "the wrapper never reached sbx run"; }
   # shellcheck disable=SC2016 # the single-quoted script expands in the child bash, by design
   out=$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$tmp/tmux" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_state tmux sess:win' "$ROOT")

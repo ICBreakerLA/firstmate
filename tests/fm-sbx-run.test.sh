@@ -49,6 +49,7 @@ exec)
   case "\$*" in
   *"no-mistakes --version"*) cat "$W/vm.nmver" 2>/dev/null; exit 0 ;;
   *"no-mistakes init"*) [ ! -f "$W/init.fail" ] || exit 1 ;;
+  *"gh --version"*) [ ! -f "$W/gh.fail" ] || exit 1 ;;
   esac
   ;;
 run)
@@ -188,6 +189,24 @@ test_nm_ship_clone_is_prepared_before_the_worker_starts() {
   [ "$(printf '%s\n' "$lines" | sed -n '1p')" = "$(printf '%s\n' "$lines" | grep -m1 'policy allow')" ] || fail "policy must precede the setup: $lines"
   [ "$(printf '%s\n' "$lines" | grep -n 'no-mistakes init' | cut -d: -f1)" -lt "$(printf '%s\n' "$lines" | grep -n '^run ' | cut -d: -f1)" ] || fail "init must precede the worker: $lines"
   pass "origin is fetched, its default branch set and the pipeline initialised before claude starts"
+}
+
+test_nm_ship_gets_the_host_gh_and_survives_one_that_does_not_run() {
+  local out
+  new_world nmgh
+  fake_nm "$W" v1.79.0
+  printf '#!/bin/sh\nexit 0\n' >"$FAKE/gh"
+  chmod +x "$FAKE/gh"
+  out=$(wrap --nm -- claude 2>&1) || fail "nm ship run failed: $out"
+  assert_contains "$(log)" "/tmp/fm-gh" "the host gh is copied in"
+  assert_contains "$(log)" "install -m 755 /tmp/fm-gh /usr/local/bin/gh" "it is installed ahead of the image's gh"
+  : >"$LOG"
+  : >"$W/gh.fail"
+  out=$(wrap --nm -- claude 2>&1) || fail "a gh that does not run must not stop the worker: $out"
+  assert_contains "$out" "does not run inside" "the operator is told CI monitoring keeps the image's gh"
+  assert_contains "$(log)" "rm -f /usr/local/bin/gh" "the unusable copy is removed"
+  assert_contains "$(log)" "run --name" "claude still starts"
+  pass "the host gh is installed for a no-mistakes ship and an unusable copy is dropped"
 }
 
 test_nm_version_mismatch_and_pin_refuse() {
@@ -364,6 +383,7 @@ test_no_token_means_no_secret_and_no_network_rule
 test_a_symlinked_token_file_is_ignored
 test_nm_ship_gets_the_pipeline_environment_and_network
 test_nm_ship_clone_is_prepared_before_the_worker_starts
+test_nm_ship_gets_the_host_gh_and_survives_one_that_does_not_run
 test_nm_version_mismatch_and_pin_refuse
 test_nm_init_failure_refuses_and_removes
 test_nm_without_a_host_binary_refuses_and_still_removes

@@ -20,8 +20,9 @@
 #                   brief's paths resolve unchanged.
 #   --kind scout    no fetch-back; a scout's deliverable is its report.
 #   --nm            a no-mistakes ship: the host's no-mistakes binary is copied
-#                   into the VM and github.com and api.github.com are allowed
-#                   for this one sandbox.
+#                   into the VM, along with the host's gh (the image's is too old
+#                   for the pipeline's CI step), and github.com and
+#                   api.github.com are allowed for this one sandbox.
 #                   The copy must report the host's version (and --nm-pin's
 #                   when given), and before the worker starts the clone's origin
 #                   HEAD is set to the real default branch and `no-mistakes
@@ -237,6 +238,22 @@ if [ "$NM" = 1 ]; then
   [ "$vm_nm_ver" = "$host_nm_ver" ] ||
     die "the no-mistakes in $NAME reports '${vm_nm_ver:-nothing}' but the host runs $host_nm_ver; refusing to run a different pipeline than the host's"
   sbx exec "$NAME" mkdir -p "$CLAUDE_USER_HOME/nm" >/dev/null 2>&1 || true
+  # The pipeline's CI step reads workflow runs with `gh api --slurp`, which the
+  # image's packaged gh predates, so the host's gh goes in beside no-mistakes.
+  # A copy that does not run in the VM is removed again and CI monitoring
+  # stays at the image's gh.
+  gh_bin=$(command -v gh 2>/dev/null || true)
+  if [ -n "$gh_bin" ]; then
+    gh_bin=$(readlink -f "$gh_bin" 2>/dev/null || printf '%s' "$gh_bin")
+    if sbx cp "$gh_bin" "$NAME:/tmp/fm-gh" >/dev/null 2>&1 &&
+      vm_root install -m 755 /tmp/fm-gh /usr/local/bin/gh >/dev/null 2>&1 &&
+      sbx exec "$NAME" gh --version >/dev/null 2>&1; then
+      :
+    else
+      vm_root rm -f /usr/local/bin/gh >/dev/null 2>&1 || true
+      echo "notice: the host gh does not run inside $NAME, so the pipeline's CI step uses the image's older gh" >&2
+    fi
+  fi
   ALLOW="github.com,api.github.com${ALLOW:+,$ALLOW}"
 fi
 GH_TOKEN_VALUE=${FM_SBX_GH_TOKEN:-}

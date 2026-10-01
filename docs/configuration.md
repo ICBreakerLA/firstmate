@@ -905,7 +905,10 @@ A symlinked token file is never read.
 A no-mistakes ship runs its pipeline inside its own sandbox, because the pipeline would otherwise need the host's daemon, credentials, and project.
 The host's static `no-mistakes` binary is copied into the VM with its own `NM_HOME` under the VM user's home, update checks, telemetry, and auto-update are off, and nothing under the host's no-mistakes home is mounted.
 Before the worker starts, the launch checks the VM binary's version against the host's (and against `nm=`), sets the clone's `origin` to the project's real remote URL without credentials, runs `git fetch origin` and `git remote set-head origin -a` so the clone knows the real default branch, and runs `no-mistakes init` in the clone.
-Before the clone is brought back, and again at teardown, the pipeline's own fix commits are synced to the clone's branch with `no-mistakes axi sync` inside the VM.
+The host's `gh` is copied in beside it, because the image's packaged `gh` is too old for the pipeline's CI step, and a copy that does not run in the VM is removed again with a notice.
+Against a real repository, `github.com` and `api.github.com` were enough for the clone, the push over https with the proxy-injected token, pull request creation, and CI polling through `gh`.
+Pull request media attachments were not exercised, so a project that needs them may need an `allow=` entry.
+Before the clone is brought back, and again at teardown, the pipeline's own fix commits are synced to the clone's branch with `no-mistakes axi sync` inside the VM, which only has anything to bring back once the run has pushed.
 
 Host supervision reads the pipeline through `sbx exec` into the task's sandbox only, never through a host daemon, and a task whose sandbox is gone reads as unavailable rather than from a host record.
 The VM holds the run record, so the verdict a sandboxed worker's pipeline reports is a worker-attested one, and `bin/fm-crew-state.sh` labels it that way instead of presenting it as an independently verified result.

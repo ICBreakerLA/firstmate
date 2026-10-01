@@ -43,6 +43,15 @@
 # This script never changes the global sbx policy and never signs in to Claude.
 set -u
 
+# Pane liveness reads the foreground process's name and argv[0]
+# (bin/backends/tmux.sh fm_backend_tmux_agent_state), and a script's process is
+# named after its interpreter, so the wrapper re-executes itself once under the
+# argv[0] `claude-sbx`, which the shared classifier accepts as a Claude launch.
+if [ -z "${FM_SBX_RUN_REEXEC:-}" ]; then
+  FM_SBX_RUN_REEXEC=1 exec -a claude-sbx "${BASH:-bash}" "$0" "$@"
+fi
+unset FM_SBX_RUN_REEXEC
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-sbx-lib.sh
 . "$SCRIPT_DIR/fm-sbx-lib.sh"

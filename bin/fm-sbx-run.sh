@@ -37,8 +37,8 @@
 # final drain, and bring the clone's commits back to the worktree.
 #
 # Credentials: the host's credentials are never mounted or copied.
-# The only secret is FM_SBX_GH_TOKEN, when set in the launch environment, which
-# is stored as a per-sandbox sbx secret that the sbx proxy injects on allowed
+# The only secret is a GitHub token read on the host, from FM_SBX_GH_TOKEN or
+# else the file config/sbx-github-token, which is stored as a per-sandbox sbx secret that the sbx proxy injects on allowed
 # GitHub hosts; the token never enters the VM.
 # This script never changes the global sbx policy and never signs in to Claude.
 set -u
@@ -46,6 +46,8 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-sbx-lib.sh
 . "$SCRIPT_DIR/fm-sbx-lib.sh"
+# shellcheck source=bin/fm-nm-run-lib.sh
+. "$SCRIPT_DIR/fm-nm-run-lib.sh"
 # shellcheck source=bin/fm-operational-input.sh
 . "$SCRIPT_DIR/fm-operational-input.sh"
 
@@ -120,6 +122,11 @@ cleanup() {
   [ "$CLEANED" = 0 ] || return 0
   CLEANED=1
   trap - EXIT HUP TERM INT
+  # The in-VM pipeline's fix commits live in its own gate repository until a
+  # sync lands them on the clone's branch, and removing the sandbox ends them.
+  if [ "$NM" = 1 ] && [ "$KIND" = ship ] && fm_nm_sandbox_bind "$WT" "$NAME" "$CLONE"; then
+    fm_nm_run_bounded "$WT" 120 axi sync >/dev/null 2>&1 || true
+  fi
   fm_sbx_rm "$NAME" || echo "notice: sandbox $NAME could not be removed; run: sbx rm --force $NAME" >&2
   if [ -n "$RELAY_PID" ]; then
     kill -TERM "$RELAY_PID" 2>/dev/null || true
@@ -211,12 +218,16 @@ if [ "$NM" = 1 ]; then
   sbx exec "$NAME" mkdir -p "$CLAUDE_USER_HOME/nm" >/dev/null 2>&1 || true
   ALLOW="github.com,api.github.com${ALLOW:+,$ALLOW}"
 fi
-if [ -n "${FM_SBX_GH_TOKEN:-}" ]; then
-  printf '%s' "$FM_SBX_GH_TOKEN" | sbx secret set github --sandbox "$NAME" >/dev/null 2>&1 ||
+GH_TOKEN_VALUE=${FM_SBX_GH_TOKEN:-}
+if [ -z "$GH_TOKEN_VALUE" ] && [ -f "$CONFIG/sbx-github-token" ] && [ ! -L "$CONFIG/sbx-github-token" ]; then
+  GH_TOKEN_VALUE=$(tr -d '[:space:]' <"$CONFIG/sbx-github-token" 2>/dev/null || true)
+fi
+if [ -n "$GH_TOKEN_VALUE" ]; then
+  printf '%s' "$GH_TOKEN_VALUE" | sbx secret set github --sandbox "$NAME" >/dev/null 2>&1 ||
     die "could not store the per-sandbox GitHub secret for $NAME"
   case ",$ALLOW," in *,github.com,*) ;; *) ALLOW="github.com,api.github.com${ALLOW:+,$ALLOW}" ;; esac
 elif [ "$NM" = 1 ]; then
-  echo "notice: FM_SBX_GH_TOKEN is not set, so the in-sandbox pipeline cannot push or open the pull request" >&2
+  echo "notice: no GitHub token (FM_SBX_GH_TOKEN or config/sbx-github-token) is set, so the in-sandbox pipeline cannot push or open the pull request" >&2
 fi
 if [ -n "$ALLOW" ]; then
   sbx policy allow network --sandbox "$NAME" "$ALLOW" >/dev/null 2>&1 ||
@@ -226,6 +237,7 @@ fi
 relay_args=(--id "$ID" --state "$STATE" --config "$CONFIG" --channel "$CHANNEL" --relay "$RELAY")
 [ -z "$BUSY_GEN" ] || relay_args+=(--busy-gen "$BUSY_GEN")
 [ "$KIND" != ship ] || relay_args+=(--wt "$WT" --clone "$CLONE")
+[ "$NM" != 1 ] || [ "$KIND" != ship ] || relay_args+=(--sandbox "$NAME")
 "$SCRIPT_DIR/fm-sbx-relay.sh" "${relay_args[@]}" &
 RELAY_PID=$!
 

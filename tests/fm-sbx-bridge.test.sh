@@ -41,6 +41,17 @@ test_clone_is_standalone_and_has_no_host_credentials() {
   pass "the clone is standalone, points at the real remote, and carries no credential"
 }
 
+test_clone_origin_refs_mirror_the_hosts_remote_default_branch() {
+  new_world originrefs
+  git -C "$REPO" fetch -q origin 2>/dev/null || true
+  git -C "$REPO" update-ref refs/remotes/origin/trunk "$(git -C "$REPO" rev-parse main)"
+  git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk
+  "$BRIDGE" clone "$WT" "$CLONE" || fail "clone"
+  assert_equals refs/remotes/origin/trunk "$(git -C "$CLONE" symbolic-ref refs/remotes/origin/HEAD)" "origin/HEAD names the host's default branch"
+  git -C "$CLONE" rev-parse -q --verify refs/remotes/origin/base-branch >/dev/null && fail "the host's local branch must not masquerade as a remote branch"
+  pass "the clone's origin refs and default branch are the host's, not its local branches"
+}
+
 test_clone_without_a_remote_has_no_origin() {
   new_world noremote
   git -C "$REPO" remote remove origin
@@ -164,6 +175,7 @@ test_exclude_hides_the_channel_hooks_file() {
 }
 
 test_clone_is_standalone_and_has_no_host_credentials
+test_clone_origin_refs_mirror_the_hosts_remote_default_branch
 test_clone_without_a_remote_has_no_origin
 test_clone_is_idempotent_for_a_relaunch
 test_fetch_back_fast_forwards_the_host_branch

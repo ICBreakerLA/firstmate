@@ -15,8 +15,11 @@
 #
 # Value grammar of config/worker-sandbox, one line:
 #   off                      the default; also an absent file
-#   sbx [cpus=N] [memory=Ng] run Claude workers in an sbx microVM
+#   sbx [cpus=N] [memory=Ng] [allow=HOSTS]
+#                            run Claude workers in an sbx microVM
 # cpus defaults to 4 (1-64) and memory to 4g (a whole number of gigabytes).
+# allow= is a comma-separated list of further host names every sandbox of this
+# home may reach, added per sandbox and never to the global sbx policy.
 #
 # Every sandbox this tree creates is named fm-sbx-<home-hash>-<id>-<id-hash>,
 # so a sweep, a removal, or an operator listing can tell fleet sandboxes from
@@ -26,17 +29,18 @@
 FM_SBX_MODE=off
 FM_SBX_CPUS=4
 FM_SBX_MEMORY=4g
+FM_SBX_ALLOW=
 
 # fm_sbx_load_config <file>
-# Parse the file into FM_SBX_MODE, FM_SBX_CPUS and FM_SBX_MEMORY.
+# Parse the file into FM_SBX_MODE, FM_SBX_CPUS, FM_SBX_MEMORY and FM_SBX_ALLOW.
 # An absent file is the default (off); a malformed value prints the refusal to
 # stderr and returns 1 so the caller can stop before any mutation.
 fm_sbx_load_config() {
   local file=$1 raw tok first rest
-  FM_SBX_MODE=off FM_SBX_CPUS=4 FM_SBX_MEMORY=4g
+  FM_SBX_MODE=off FM_SBX_CPUS=4 FM_SBX_MEMORY=4g FM_SBX_ALLOW=
   [ -e "$file" ] || [ -L "$file" ] || return 0
   if [ ! -f "$file" ] || [ ! -r "$file" ]; then
-    echo "error: config/worker-sandbox must be a readable regular file holding: off, or sbx with optional cpus=N memory=Ng" >&2
+    echo "error: config/worker-sandbox must be a readable regular file holding: off, or sbx with optional cpus=N memory=Ng allow=HOSTS" >&2
     return 1
   fi
   raw=$(tr '\n\t' '  ' <"$file" || true)
@@ -64,8 +68,17 @@ fm_sbx_load_config() {
     case "$tok" in
     cpus=[1-9] | cpus=[1-5][0-9] | cpus=6[0-4]) FM_SBX_CPUS=${tok#cpus=} ;;
     memory=[1-9]g | memory=[1-9][0-9]g | memory=[1-9][0-9][0-9]g) FM_SBX_MEMORY=${tok#memory=} ;;
+    allow=?*)
+      case "${tok#allow=}" in
+      *[!A-Za-z0-9.,*-]* | ,* | *, | *,,*)
+        echo "error: config/worker-sandbox allow= takes comma-separated host names (letters, digits, dot, dash, star), got '${tok#allow=}'" >&2
+        return 1
+        ;;
+      esac
+      FM_SBX_ALLOW=${tok#allow=}
+      ;;
     *)
-      echo "error: config/worker-sandbox holds the option '$tok'; accepted options are cpus=N (1-64) and memory=Ng" >&2
+      echo "error: config/worker-sandbox holds the option '$tok'; accepted options are cpus=N (1-64), memory=Ng and allow=HOSTS" >&2
       return 1
       ;;
     esac

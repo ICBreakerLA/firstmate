@@ -71,6 +71,25 @@ scrub_clone() { # <wt> <clone>
   mv -f "$cfg" "$clone/.git/config"
 }
 
+# mirror_origin_refs <wt> <clone>
+# `git clone` of a local path records the host's LOCAL branches as the clone's
+# origin/*, which would make the clone's default branch whatever the host
+# happened to have checked out.
+# The clone's origin/* are replaced by the host's own remote-tracking refs and
+# origin/HEAD is copied, so a tool that asks the clone for the default branch
+# (the in-sandbox no-mistakes pipeline) gets the real one.
+mirror_origin_refs() {
+  local wt=$1 clone=$2 ref head
+  while IFS= read -r ref; do
+    [ -z "$ref" ] || git -C "$clone" update-ref -d "$ref"
+  done < <(git -C "$clone" for-each-ref --format='%(refname)' refs/remotes/origin/)
+  git -C "$clone" fetch -q --no-tags "$wt" '+refs/remotes/origin/*:refs/remotes/origin/*' 2>/dev/null || true
+  head=$(git -C "$wt" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null) || head=
+  case "$head" in
+  refs/remotes/origin/?*) git -C "$clone" symbolic-ref refs/remotes/origin/HEAD "$head" ;;
+  esac
+}
+
 cmd_clone() {
   local wt=$1 clone=$2 url name email
   [ -d "$wt" ] || die "worktree $wt does not exist"
@@ -82,6 +101,7 @@ cmd_clone() {
   url=$(git -C "$wt" remote get-url origin 2>/dev/null | strip_url_credentials) || url=
   if [ -n "$url" ]; then
     git -C "$clone" remote set-url origin "$url"
+    mirror_origin_refs "$wt" "$clone"
   else
     git -C "$clone" remote remove origin
   fi

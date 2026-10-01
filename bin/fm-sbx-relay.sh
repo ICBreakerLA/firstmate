@@ -11,7 +11,8 @@
 #
 # Usage:
 #   fm-sbx-relay.sh --id ID --state DIR --config DIR --channel DIR --relay DIR
-#       [--busy-gen GEN] [--wt DIR --clone DIR] [--once | --interval SECS]
+#       [--busy-gen GEN] [--wt DIR --clone DIR] [--sandbox NAME]
+#       [--once | --interval SECS]
 #
 #   --channel DIR   the directory the VM writes: `status` (status lines exactly
 #                   as the brief's status command appends them) and `events`
@@ -24,6 +25,12 @@
 #                   branches to the worktree; if that fails the line becomes a
 #                   `blocked` line naming the refusal, so a worker is never
 #                   reported ready while its commits exist only in the VM.
+#   --sandbox NAME  a no-mistakes ship's sandbox: before each fetch-back the
+#                   relay runs `no-mistakes axi sync` inside it, so fix commits
+#                   the in-VM pipeline made reach the clone's branch first.
+#                   Best effort: a failed sync is left to the fetch-back to
+#                   report, because the unbridged commits are then simply not
+#                   there.
 #   --once          drain what is there now and exit; otherwise poll until
 #                   terminated, with one final drain on SIGTERM or SIGINT.
 #
@@ -41,7 +48,9 @@ set -u
 export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ID='' STATE='' CONFIG='' CHANNEL='' RELAY='' BUSY_GEN='' WT='' CLONE='' ONCE=0 INTERVAL=1
+# shellcheck source=bin/fm-nm-run-lib.sh
+. "$SCRIPT_DIR/fm-nm-run-lib.sh"
+ID='' STATE='' CONFIG='' CHANNEL='' RELAY='' BUSY_GEN='' WT='' CLONE='' SANDBOX='' ONCE=0 INTERVAL=1
 MAX_LINE=1000
 MAX_PASS_BYTES=65536
 MAX_TOTAL_BYTES=${FM_SBX_RELAY_MAX_TOTAL:-1048576}
@@ -61,6 +70,7 @@ while [ "$#" -gt 0 ]; do
   --busy-gen) BUSY_GEN=${2:-}; shift 2 ;;
   --wt) WT=${2:-}; shift 2 ;;
   --clone) CLONE=${2:-}; shift 2 ;;
+  --sandbox) SANDBOX=${2:-}; shift 2 ;;
   --once) ONCE=1; shift ;;
   --interval) INTERVAL=${2:-}; shift 2 ;;
   *) die "unknown argument '$1' (see the script header)" ;;
@@ -125,6 +135,9 @@ append_status() { # <line>
 
 bridge_ok() {
   [ -n "$WT" ] && [ -n "$CLONE" ] || return 0
+  if [ -n "$SANDBOX" ] && fm_nm_sandbox_bind "$WT" "$SANDBOX" "$CLONE"; then
+    fm_nm_run_bounded "$WT" 120 axi sync >/dev/null 2>&1 || true
+  fi
   "$SCRIPT_DIR/fm-sbx-bridge.sh" fetch-back "$WT" "$CLONE" 2>"$RELAY/bridge.err"
 }
 

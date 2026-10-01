@@ -143,6 +143,38 @@ test_done_waits_for_fetch_back_and_failure_becomes_blocked() {
   pass "done is mirrored only after the branch is on the host, otherwise it becomes blocked"
 }
 
+test_a_sandboxed_ship_syncs_the_pipeline_before_fetch_back() {
+  local d repo wt clone fake log
+  new_world synced
+  d="$TMP_ROOT/synced"
+  repo="$d/repo"
+  wt="$d/wt"
+  clone="$d/clone"
+  fake=$(fm_fakebin "$d")
+  log="$d/sbx.log"
+  cat >"$fake/sbx" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >>"$log"
+case "\$1" in
+ls) echo fm-sbx-aaaaaaaa-t1-0000 ;;
+exec)
+  # the pipeline's fix commit lands on the clone's branch only after the sync
+  git -C "$clone" -c user.name=T -c user.email=t@example.invalid commit -q --allow-empty -m "pipeline fix"
+  ;;
+esac
+SH
+  chmod +x "$fake/sbx"
+  fm_git_worktree "$repo" "$wt" base-branch
+  "$BRIDGE" clone "$wt" "$clone" || fail "clone"
+  git -C "$clone" checkout -q -b fm/t1
+  printf 'done [at=9]: ready\n' >"$CHANNEL/status"
+  PATH="$fake:$PATH" relay --wt "$wt" --clone "$clone" --sandbox fm-sbx-aaaaaaaa-t1-0000
+  assert_contains "$(cat "$log")" "no-mistakes axi sync" "the sync ran in the sandbox"
+  assert_equals "$(git -C "$clone" rev-parse HEAD)" "$(git -C "$repo" rev-parse refs/heads/fm/t1)" "the fix commit made by the sync reached the host"
+  assert_equals 'done [at=9]: ready' "$(cat "$STATE/t1.status")" "done is mirrored after both steps"
+  pass "a sandboxed ship's pipeline is synced to the clone before the fetch-back"
+}
+
 test_wellformed_status_lines_are_mirrored_once
 test_malformed_and_hostile_lines_are_dropped_or_cleaned
 test_partial_line_waits_for_its_newline
@@ -151,5 +183,6 @@ test_total_size_is_capped
 test_events_drive_the_busy_record_and_turn_marker
 test_unknown_events_and_stale_gen_are_ignored
 test_done_waits_for_fetch_back_and_failure_becomes_blocked
+test_a_sandboxed_ship_syncs_the_pipeline_before_fetch_back
 
 echo "# all fm-sbx-relay tests passed"

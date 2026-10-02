@@ -84,6 +84,28 @@ test_fetch_back_fast_forwards_the_host_branch() {
   pass "fetch-back creates the branch, follows it, and fast-forwards later commits"
 }
 
+test_fetch_back_records_the_clones_push_as_a_host_remote_tracking_ref() {
+  local tip
+  new_world pushed
+  "$BRIDGE" clone "$WT" "$CLONE" || fail "clone"
+  git -C "$CLONE" checkout -q -b fm/task
+  commit_in "$CLONE" README.md "pushed work"
+  tip=$(git -C "$CLONE" rev-parse HEAD)
+  git -C "$CLONE" update-ref refs/remotes/origin/fm/task "$tip"
+  commit_in "$CLONE" README.md "unpushed work"
+  git -C "$CLONE" update-ref refs/remotes/origin/not-ours "$(git -C "$CLONE" rev-parse HEAD)"
+  git -C "$CLONE" checkout -q -b fm/other base-branch
+  commit_in "$CLONE" other.md "elsewhere"
+  git -C "$CLONE" update-ref refs/remotes/origin/fm/task-lie "$(git -C "$CLONE" rev-parse HEAD)"
+  git -C "$CLONE" branch -q fm/task-lie fm/task
+  git -C "$CLONE" checkout -q fm/task
+  "$BRIDGE" fetch-back "$WT" "$CLONE" || fail "fetch-back should succeed"
+  assert_equals "$tip" "$(git -C "$REPO" rev-parse refs/remotes/origin/fm/task)" "the clone's pushed head is the host's remote-tracking ref"
+  git -C "$REPO" rev-parse -q --verify refs/remotes/origin/not-ours >/dev/null && fail "a tracking ref with no matching local branch must not be recorded"
+  git -C "$REPO" rev-parse -q --verify refs/remotes/origin/fm/task-lie >/dev/null && fail "a tracking ref the branch does not contain must not be recorded"
+  pass "fetch-back records a pushed head as a remote-tracking ref only when the fetched branch holds it"
+}
+
 test_fetch_back_refuses_a_diverged_branch() {
   local before
   new_world diverge
@@ -179,6 +201,7 @@ test_clone_origin_refs_mirror_the_hosts_remote_default_branch
 test_clone_without_a_remote_has_no_origin
 test_clone_is_idempotent_for_a_relaunch
 test_fetch_back_fast_forwards_the_host_branch
+test_fetch_back_records_the_clones_push_as_a_host_remote_tracking_ref
 test_fetch_back_refuses_a_diverged_branch
 test_fetch_back_refuses_over_a_dirty_worktree
 test_a_hostile_clone_cannot_run_code_or_move_other_refs

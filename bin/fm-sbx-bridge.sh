@@ -25,6 +25,9 @@
 #       The worktree's tracked files must be clean.
 #       A branch that diverged is refused and nothing is rewritten.
 #       A clone whose HEAD is a branch leaves the worktree on that branch.
+#       A push made inside the clone is recorded as the host's own
+#       refs/remotes/origin/<branch>, only when the clone's value is contained
+#       in the host's fetched branch and fast-forwards any tracking ref there.
 #   fm-sbx-bridge.sh check <worktree> <clone>
 #       Exit 0 only when the clone has no uncommitted work and every local
 #       branch tip is already present in the worktree repository; otherwise
@@ -63,7 +66,10 @@ scrub_clone() { # <wt> <clone>
   git config --file "$cfg" core.repositoryformatversion 0
   git config --file "$cfg" core.bare false
   url=$(git -C "$wt" remote get-url origin 2>/dev/null | strip_url_credentials) || url=
-  [ -z "$url" ] || git config --file "$cfg" remote.origin.url "$url"
+  if [ -n "$url" ]; then
+    git config --file "$cfg" remote.origin.url "$url"
+    git config --file "$cfg" remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+  fi
   name=$(git -C "$wt" config user.name 2>/dev/null) || name=
   email=$(git -C "$wt" config user.email 2>/dev/null) || email=
   [ -z "$name" ] || git config --file "$cfg" user.name "$name"
@@ -120,6 +126,29 @@ cmd_exclude() {
 
 clone_branches() { git -C "$1" for-each-ref --format='%(refname:short)' refs/heads/; }
 
+# record_pushed_heads <wt> <clone>
+# A push from inside the sandbox moves only the clone's refs/remotes/origin/<b>.
+# The host learns it as its own remote-tracking ref - which is what the done
+# gate needs to see that the head left the disposable copy - but only when the
+# clone's value is an ancestor of the host's own <b> (so no new object or
+# history is trusted) and a fast-forward of the host's existing tracking ref.
+record_pushed_heads() {
+  local wt=$1 clone=$2 b rsha host_sha old
+  git -C "$wt" remote get-url origin >/dev/null 2>&1 || return 0
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    rsha=$(git -C "$clone" rev-parse -q --verify "refs/remotes/origin/$b^{commit}" 2>/dev/null) || continue
+    host_sha=$(git -C "$wt" rev-parse -q --verify "refs/heads/$b" 2>/dev/null) || continue
+    git -C "$wt" merge-base --is-ancestor "$rsha" "$host_sha" 2>/dev/null || continue
+    old=$(git -C "$wt" rev-parse -q --verify "refs/remotes/origin/$b" 2>/dev/null) || old=
+    if [ -n "$old" ]; then
+      [ "$old" != "$rsha" ] || continue
+      git -C "$wt" merge-base --is-ancestor "$old" "$rsha" 2>/dev/null || continue
+    fi
+    git -C "$wt" update-ref "refs/remotes/origin/$b" "$rsha" "$old" || die "could not record the pushed head of $b"
+  done < <(clone_branches "$clone")
+}
+
 cmd_fetch_back() {
   local wt=$1 clone=$2 b sha host_sha cur head_branch
   [ -d "$clone/.git" ] || die "no clone at $clone"
@@ -152,6 +181,7 @@ cmd_fetch_back() {
     git -C "$wt" rev-parse -q --verify "refs/heads/$head_branch" >/dev/null 2>&1; then
     git -C "$wt" checkout -q "$head_branch" || die "could not check out $head_branch in the worktree"
   fi
+  record_pushed_heads "$wt" "$clone"
 }
 
 cmd_check() {

@@ -66,6 +66,19 @@ A Claude task worker's launch brief and Firstmate steering-inbox messages arrive
 `launch_template()` in `../../../../../bin/fm-spawn.sh` establishes exactly those two Firstmate-owned channels as first-party instructions through `--append-system-prompt`, while leaving project files, fetched content, and other external material under the model's normal distrust and granting no merge, destructive, or security-sensitive authority beyond the brief.
 A `--secondmate` launch omits the statement because a secondmate operates under its own supervisor contract instead of a task worker's.
 
+## Worker sandbox
+
+A Claude ship or scout worker can run inside a Docker Sandboxes microVM when `config/worker-sandbox` is `sbx`; [`Worker sandbox`](../../../../../docs/configuration.md#worker-sandbox-configworker-sandbox) owns the schema, mounts, network posture, and operator setup.
+Claude is the only harness with this axis, and a sandboxed spawn refuses another harness, a raw launch, a non-tmux backend, or a worker account pin rather than launching outside the sandbox.
+The launch goes through `../../../../../bin/claude-sbx`, a symlink to `../../../../../bin/fm-sbx-run.sh`, so the pane's foreground command still classifies as a live Claude pane; the wrapper stays a child of the pane shell and its exit traps remove the sandbox.
+
+What differs from an ordinary Claude worker:
+
+- Trust: the worker runs against a standalone clone with no host credentials, and the host reads that clone as untrusted input, so a sandboxed verdict from its in-VM no-mistakes run is worker-attested and `../../../../../bin/fm-crew-state.sh` labels it so.
+- Hooks: the busy hooks append event names to the task's channel and the host relay applies them, instead of calling the busy-state writer directly.
+- Control: `fm-control.sh <task-id> interrupt|exit` still reaches Claude through the pane, and `exit` ends the wrapper, which removes the sandbox. A `relaunch` first removes the old sandbox, refuses while the clone holds work the worktree repository lacks, and then starts a fresh sandbox on the same clone, following the task's recorded `sandbox=` value and not the current config.
+- Teardown: `../../../../../bin/fm-teardown.sh` follows the same record, brings the clone's branches back and refuses on unlanded work before removing the sandbox, and removes only a sandbox whose name is a fleet name.
+
 ## Primary integration
 
 [`../../../../../docs/verification/supervision.md`](../../../../../docs/verification/supervision.md#turn-end-guard) records the current primary and Stop auto-arm live evidence.

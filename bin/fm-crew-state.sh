@@ -177,6 +177,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-sbx-lib.sh
+. "$SCRIPT_DIR/fm-sbx-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
@@ -204,9 +206,15 @@ case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;;
 SEP=' · '
 
 # Emit the one canonical line and exit 0. Detail is optional.
+# A sandboxed task (config/worker-sandbox) runs its whole no-mistakes pipeline
+# inside its own microVM, where the worker can rewrite the run database, so
+# every verdict read for it is the worker's own claim, not host evidence.
+# The line says so, and the caller must not treat it as independent proof.
+SANDBOXED=0
 emit() {  # <state> <source> [detail]
   local line="state: $1${SEP}source: $2"
   [ -n "${3:-}" ] && line="$line${SEP}$3"
+  [ "$SANDBOXED" = 0 ] || line="$line${SEP}attestation: worker-attested (sandboxed pipeline)"
   printf '%s\n' "$line"
   exit 0
 }
@@ -224,6 +232,13 @@ KIND=$(meta_value kind)
 HARNESS=$(meta_value harness)
 REMOTE_HOST=$(meta_value remote_host)
 [ -n "$KIND" ] || KIND=ship
+if [ "$(meta_value sandbox)" = sbx ]; then
+  SANDBOXED=1
+  # Binds the worktree to its sandbox so every no-mistakes read below goes
+  # through `sbx exec` (bin/fm-nm-run-lib.sh); an absent sandbox reads as an
+  # unavailable pipeline and never as the host's own.
+  fm_nm_sandbox_bind "$WT" "$(meta_value sandbox_name)" "$(fm_sbx_clone_dir "$STATE" "$ID")" || true
+fi
 
 # A torn-down (or never-created) worktree has no current state to read. A
 # remote secondmate's recorded worktree is a path on ITS host, so the local

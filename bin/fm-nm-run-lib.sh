@@ -35,9 +35,49 @@ fm_nm_bounded() {  # <dir> <timeout_secs> <command> <args...>
   esac
 }
 
+# Sandboxed tasks (config/worker-sandbox, bin/fm-sbx-lib.sh): the task's
+# no-mistakes daemon, database and runs live INSIDE its microVM, so a host
+# `no-mistakes` call on the task's worktree would read a different, empty home.
+# A caller that knows the task binds its worktree once with
+# fm_nm_sandbox_bind; from then on fm_nm_run_bounded for that worktree runs
+# `no-mistakes` through `sbx exec` in the sandbox, under the same timeout, and
+# never falls back to the host binary or to the host sqlite reader.
+# A sandbox that is not currently listed makes the call fail instead of being
+# exec'd, because `sbx exec` would start a stopped VM.
+# Binding is process-local state; nothing here writes a record.
+FM_NM_SBX_NAME=
+FM_NM_SBX_WT=
+FM_NM_SBX_CLONE=
+FM_NM_SBX_UP=0
+
+# fm_nm_sandbox_bind <worktree> <sandbox-name> <clone-dir>
+# Returns 0 when the sandbox is listed (the exec seam is live) and 1 when it is
+# not; either way the worktree stays bound so callers read "unavailable"
+# rather than silently querying the host.
+fm_nm_sandbox_bind() {
+  FM_NM_SBX_WT=$1 FM_NM_SBX_NAME=$2 FM_NM_SBX_CLONE=$3 FM_NM_SBX_UP=0
+  command -v sbx >/dev/null 2>&1 || return 1
+  sbx ls -q 2>/dev/null | grep -Fxq -- "$2" || return 1
+  FM_NM_SBX_UP=1
+}
+
+fm_nm_sandbox_unbind() {
+  FM_NM_SBX_NAME='' FM_NM_SBX_WT='' FM_NM_SBX_CLONE='' FM_NM_SBX_UP=0
+}
+
+# True when <dir> is the bound sandboxed task's worktree.
+fm_nm_sandbox_bound() {  # <dir>
+  [ -n "$FM_NM_SBX_NAME" ] && [ "$1" = "$FM_NM_SBX_WT" ]
+}
+
 fm_nm_run_bounded() {  # <dir> <timeout_secs> <args...>
   local dir=$1 timeout_secs=$2
   shift 2
+  if fm_nm_sandbox_bound "$dir"; then
+    [ "$FM_NM_SBX_UP" = 1 ] || return 1
+    fm_nm_bounded "$dir" "$timeout_secs" sbx exec -w "$FM_NM_SBX_CLONE" -e NM_HOME=/home/agent/nm "$FM_NM_SBX_NAME" no-mistakes "$@"
+    return
+  fi
   fm_nm_bounded "$dir" "$timeout_secs" no-mistakes "$@"
 }
 
@@ -235,6 +275,12 @@ fm_nm_select_run() {  # <branch> <axi-overview> <worktree> [timeout_secs]
     incomplete\|*) available_ids=${selection#*|} ;;
     *) printf '%s\n' "$selection"; return ;;
   esac
+  # A sandboxed task's database lives in its VM; the host reader below would
+  # open an unrelated file, so a capped overview stays unknown.
+  if fm_nm_sandbox_bound "$3"; then
+    printf 'unknown|sandboxed task: complete run inventory is not readable from the host; run ids: %s\n' "$available_ids"
+    return
+  fi
   if ! inventory=$(fm_nm_bounded "$3" "$timeout_secs" python3 - "$1" "$2" "$3" "$available_ids" 2>/dev/null <<'PY'
 import json
 import os

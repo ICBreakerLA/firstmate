@@ -813,6 +813,53 @@ test_active_run_is_authoritative() {
   pass "active run-step is authoritative"
 }
 
+# A sandboxed task's pipeline runs in its microVM, so its verdict is read
+# through `sbx exec` and labelled as the worker's own claim; a sandbox that is
+# not listed reads as an unavailable pipeline, never as the host's.
+fake_sbx() {  # <case-dir> <listed-name|->
+  local d=$1 listed=$2
+  cat > "$d/fakebin/sbx" <<SH
+#!/usr/bin/env bash
+case "\$1" in
+ls) [ "$listed" = - ] || echo "$listed" ;;
+exec)
+  shift
+  while [ "\$#" -gt 0 ]; do
+    case "\$1" in -w|-e) shift 2 ;; *) break ;; esac
+  done
+  shift
+  exec "\$@" ;;
+esac
+SH
+  chmod +x "$d/fakebin/sbx"
+}
+
+test_sandboxed_verdict_is_labelled_worker_attested() {
+  reset_fakes
+  local d out; d=$(new_case sandboxed)
+  make_repo_on_branch "$d/wt" fm/feat-sbx
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-sbx.meta" "window=fm:fm-feat-sbx" "worktree=$d/wt" "kind=ship" \
+    "sandbox=sbx" "sandbox_name=fm-sbx-test-feat-sbx"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-sbx)"
+  fake_sbx "$d" fm-sbx-test-feat-sbx
+  out=$(run_crew_state "$d" feat-sbx)
+  assert_contains "$out" "source: run-step" "the verdict is read through the sandbox"
+  assert_contains "$out" "attestation: worker-attested (sandboxed pipeline)" "a sandboxed verdict says it is the worker's own claim"
+  fake_sbx "$d" -
+  out=$(run_crew_state "$d" feat-sbx)
+  assert_not_contains "$out" "source: run-step" "an absent sandbox never reads the host's pipeline"
+  assert_contains "$out" "attestation: worker-attested" "the label stays on every sandboxed line"
+  d=$(new_case unsandboxed)
+  make_repo_on_branch "$d/wt" fm/feat-host
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-host.meta" "window=fm:fm-feat-host" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-host)"
+  out=$(run_crew_state "$d" feat-host)
+  assert_not_contains "$out" "attestation:" "an ordinary task carries no attestation label"
+  pass "a sandboxed verdict is worker-attested and never falls back to the host"
+}
+
 # (b) needs-decision log + a resumed (running/fixing) run = SUPERSEDED
 test_stale_needs_decision_superseded() {
   reset_fakes
@@ -5686,5 +5733,6 @@ test_competing_live_runs_report_unknown_with_both_ids
 test_newer_failed_run_is_not_hidden_by_older_live_run
 test_unverifiable_run_selection_reports_unknown
 test_legacy_conflicting_run_records_report_unknown
+test_sandboxed_verdict_is_labelled_worker_attested
 
 echo "all fm-crew-state tests passed"

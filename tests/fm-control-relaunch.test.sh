@@ -27,6 +27,8 @@ set -u
 . "$ROOT/bin/fm-trace-context-lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-tasks-axi-lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-sbx-lib.sh"
 
 CONTROL="$ROOT/bin/fm-control.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
@@ -388,6 +390,64 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
   assert_grep "cd -- '$dir/wt'" "$dir/fake/keys" "the replacement launch must enter the recorded worktree"
   assert_grep "Firstmate operational input waiting: read" "$dir/fake/literal" "the replacement should have been launched"
   pass "fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree"
+}
+
+# make_sbx_stub <case-dir> <sandbox-name>: a fake sbx whose one sandbox stays
+# listed until `sbx rm` is called, as the launch wrapper's cleanup would remove it.
+make_sbx_stub() {
+  local dir=$1 name=$2
+  cat > "$dir/fakebin/sbx" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$dir/sbx.log"
+case "\$1" in
+daemon) echo "Status: running" ;;
+ls) [ ! -e "$dir/sbx-listed" ] || echo "$name" ;;
+rm) rm -f "$dir/sbx-listed" ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/fakebin/sbx"
+  : > "$dir/sbx-listed"
+}
+
+# add_sandboxed_ship <case-dir> <id>: a ship whose record says it runs under sbx,
+# with the standalone clone the bridge made for it.
+add_sandboxed_ship() {
+  local dir=$1 id=$2 name
+  add_ship_task "$dir" "$id" claude
+  name=$(fm_sbx_name "$dir/home" "$id")
+  {
+    echo "sandbox=sbx"
+    echo "sandbox_name=$name"
+  } >> "$dir/home/state/$id.meta"
+  "$ROOT/bin/fm-sbx-bridge.sh" clone "$dir/wt" "$dir/home/state/$id.sbx-clone" || fail "clone"
+  make_sbx_stub "$dir" "$name"
+}
+
+test_sandboxed_relaunch_removes_the_old_vm_and_stays_sandboxed() {
+  local dir out rc
+  dir=$(new_case sbx-ok rls1)
+  add_sandboxed_ship "$dir" rls1
+  out=$(run_control "$dir" rls1 relaunch --note "stopped mid-refactor"); rc=$?
+  expect_code 0 "$rc" "a sandboxed relaunch should succeed"$'\n'"$out"
+  assert_grep "rm --force fm-sbx-" "$dir/sbx.log" "the previous VM is removed before the replacement launches"
+  assert_present "$dir/home/state/rls1.sbx-clone/.git" "the clone is reused, not discarded"
+  [ "$(meta_field "$dir" rls1 sandbox)" = sbx ] || fail "the relaunched task is still recorded as sandboxed"
+  assert_grep "bin/claude-sbx" "$dir/fake/literal" "the replacement launches through the sandbox wrapper"
+  pass "fm-control relaunch: a sandboxed task's old VM is removed and the replacement stays sandboxed on the same clone"
+}
+
+test_sandboxed_relaunch_refuses_while_the_clone_holds_unbridged_work() {
+  local dir out rc
+  dir=$(new_case sbx-held rls2)
+  add_sandboxed_ship "$dir" rls2
+  printf 'uncommitted\n' > "$dir/home/state/rls2.sbx-clone/scratch.txt"
+  out=$(run_control "$dir" rls2 relaunch --note "stopped mid-refactor"); rc=$?
+  expect_code 1 "$rc" "unbridged clone work must refuse the relaunch"
+  assert_contains "$out" "not in the worktree repository" "the refusal names the unbridged work"
+  assert_present "$dir/home/state/rls2.sbx-clone/scratch.txt" "the clone and its work are kept"
+  assert_no_grep "bin/claude-sbx" "$dir/fake/literal" "no replacement is launched"
+  pass "fm-control relaunch: a sandboxed relaunch refuses, keeping the clone, when it holds work the host does not"
 }
 
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text() {
@@ -2387,6 +2447,8 @@ test_relaunch_moves_a_drifted_item_back_in_flight() {
 }
 
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
+test_sandboxed_relaunch_removes_the_old_vm_and_stays_sandboxed
+test_sandboxed_relaunch_refuses_while_the_clone_holds_unbridged_work
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
 test_relaunch_refuses_before_exit_when_the_composer_state_is_unproven
 test_relaunch_from_linked_home_preserves_recorded_worktree

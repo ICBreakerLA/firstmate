@@ -854,12 +854,17 @@ The file holds one line.
 | Value | Meaning |
 | --- | --- |
 | `off` | Workers run on the host. This is the default. |
-| `sbx [cpus=N] [memory=Ng] [allow=HOSTS] [nm=VERSION]` | Claude ship and scout workers run in one `sbx` microVM each. |
+| `sbx [cpus=N] [memory=Ng] [allow=HOSTS] [nm=VERSION] [verify=sportsmeet]` | Claude ship and scout workers run in one `sbx` microVM each. |
 
 `cpus` is 1 to 64 and defaults to 4, and `memory` is a whole number of gigabytes and defaults to `4g`.
 `allow` is a comma-separated list of further host names that every sandbox of this home may reach, and it is added to each sandbox's own network policy, never to the global one.
 `nm` pins the no-mistakes version a sandboxed validation ship may use, such as `nm=v1.79.0`, and a host binary of any other version refuses the launch.
 Without `nm`, the host's own no-mistakes version is used, and the copy installed in the VM must report that same version or the launch refuses.
+
+`verify=sportsmeet` gives each sandbox of this home a request spool and starts a host-side broker for it, so the worker can verify SportsMeet on the host's emulator without any host access of its own.
+It is the only accepted value, and without the token a sandbox gets no spool, no broker and no extra mount.
+The broker requires a Linux host with `flock`, `jq` and `python3` and a `config/sbx-verify` file, and a launch with the token and a missing requirement refuses before any sandbox exists.
+The request and result protocol is in [`sbx-verify-broker.md`](sbx-verify-broker.md).
 
 Any other value, or an unreadable file, refuses every spawn from that home before any endpoint, worktree, or task record exists.
 Under `sbx`, only the canonical Claude launch on the tmux backend is supported, with no worker account pin.
@@ -913,6 +918,26 @@ Before the clone is brought back, and again at teardown, the pipeline's own fix 
 
 Host supervision reads the pipeline through `sbx exec` into the task's sandbox only, never through a host daemon, and a task whose sandbox is gone reads as unavailable rather than from a host record.
 The VM holds the run record, so the verdict a sandboxed worker's pipeline reports is a worker-attested one, and `bin/fm-crew-state.sh` labels it that way instead of presenting it as an independently verified result.
+
+### Verification broker (config/sbx-verify)
+
+The optional local, gitignored `config/sbx-verify` is read only on the host, by `verify=sportsmeet`, and a sandbox can never see it.
+It holds one `key=value` per line, and blank lines and lines starting with `#` are ignored.
+
+| Key | Meaning |
+| --- | --- |
+| `sm-verify=/abs/path` | Required. The pinned host verification command, a regular executable. A path inside any sandbox clone, a verification spool, or this home's `state/` is refused. |
+| `sm-verify-sha256=HEX` | Optional. The broker refuses to run the command when its digest differs. |
+| `app-id=ID` | The app id written into generated flows. The default is `com.sportsmeet.app`. |
+| `bundle-port=N` | The broker-owned port that serves the one bundle file. The default is 8081. |
+| `bundle-bind=ADDR` | The address that port binds. The default is `127.0.0.1`. |
+| `lease-ttl=SECS` | Idle seconds before the emulator lease is taken back and a forced shutdown runs. The default is 1200. |
+| `queue-ttl=SECS` | Seconds a waiting second holder keeps its place without asking again. The default is 180. |
+| `lease-dir=/abs/path` | The lease directory every home sharing the emulator must share. The default is `config/sbx-verify.d`. |
+
+The broker runs only the pinned command, builds every argument itself, and ends the lease with a forced shutdown when the sandbox is removed or the task is torn down.
+Every request and verdict is appended to `state/<id>.sbx-verify/host/audit.log`, which no sandbox mount reaches.
+The worker-authored bundle it serves runs in the app signed in as the verify account, which the captain accepted as a residual risk.
 
 ### Lifecycle
 

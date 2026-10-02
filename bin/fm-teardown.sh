@@ -3619,6 +3619,12 @@ fi
 if [ -n "$TD_SBX" ]; then
   fm_sbx_rm "$TD_SBX" || exit 1
   teardown_sbx_bring_back 0 || exit 1
+  # A verification broker still running for this task must take the shared
+  # emulator down and give its lease back before the task's spool is removed.
+  if [ -d "$(fm_sbx_verify_dir "$STATE" "$ID")" ]; then
+    "$SCRIPT_DIR/fm-sbx-verify-broker.sh" stop --id "$ID" --state "$STATE" --config "$CONFIG" >&2 \
+      || echo "warning: the verification broker of $ID could not be stopped cleanly; the next lease holder retries the emulator shutdown" >&2
+  fi
 fi
 
 # Fix 3 (see script header): sweep remote job workers abandoned by an already
@@ -3852,7 +3858,7 @@ rm -rf "$STATE/$ID.inbox" "$STATE/$ID.git-hooks"
 # A sandboxed task's channel, relay offsets and standalone clone go with it; the
 # sandbox itself was removed and the clone's work brought back before this point.
 if [ -n "$TD_SBX" ]; then
-  rm -rf "$STATE/$ID.sbx" "$STATE/$ID.sbx-relay" "$TD_SBX_CLONE" \
+  rm -rf "$STATE/$ID.sbx" "$STATE/$ID.sbx-relay" "$STATE/$ID.sbx-verify" "$TD_SBX_CLONE" \
     || echo "warning: could not remove the sandbox files of $ID under $STATE" >&2
 fi
 # A presentation journal the close path left behind is orphaned once the

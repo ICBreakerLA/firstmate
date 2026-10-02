@@ -64,13 +64,24 @@ test_sbx_defaults_and_options() {
 
 test_malformed_values_are_refused() {
   local bad err
-  for bad in 'docker\n' 'sbx cpus=0\n' 'sbx cpus=65\n' 'sbx memory=4\n' 'sbx memory=0g\n' 'sbx gpus=1\n' 'off cpus=2\n' 'sbx allow=\n' 'sbx allow=a b;c\n' 'sbx allow=a,,b\n' 'sbx allow=host/path\n' 'sbx nm=latest\n' 'sbx nm=v1.2\n' 'sbx nm=v1.2.3;x\n'; do
+  for bad in 'docker\n' 'sbx cpus=0\n' 'sbx cpus=65\n' 'sbx memory=4\n' 'sbx memory=0g\n' 'sbx gpus=1\n' 'off cpus=2\n' 'sbx allow=\n' 'sbx allow=a b;c\n' 'sbx allow=a,,b\n' 'sbx allow=host/path\n' 'sbx nm=latest\n' 'sbx nm=v1.2\n' 'sbx nm=v1.2.3;x\n' 'sbx verify=\n' 'sbx verify=other\n' 'sbx verify=sportsmeet,x\n'; do
     err=$(load "$bad" 2>&1) && fail "'$bad' should be refused"
     assert_contains "$err" "config/worker-sandbox" "the refusal names the file for '$bad'"
   done
   mkdir -p "$TMP_ROOT/dirconf"
   fm_sbx_load_config "$TMP_ROOT/dirconf" 2>/dev/null && fail "a directory should be refused"
   pass "an unknown value, a bad option, and a non-file are refused"
+}
+
+test_verify_token_is_opt_in_and_strict() {
+  load 'sbx\n' || fail "bare sbx should be accepted"
+  assert_equals "" "$FM_SBX_VERIFY" "the verification broker is off by default"
+  load 'sbx verify=sportsmeet cpus=2\n' || fail "verify=sportsmeet should be accepted"
+  assert_equals "sportsmeet 2" "$FM_SBX_VERIFY $FM_SBX_CPUS" "the verify token is parsed beside other options"
+  load 'sbx\n' || fail "a later bare sbx should be accepted"
+  assert_equals "" "$FM_SBX_VERIFY" "a reload resets the token"
+  assert_equals "/s/t.sbx-verify" "$(fm_sbx_verify_dir /s t)" "the per-task verify directory"
+  pass "verify=sportsmeet is opt-in, strict, and reset on reload"
 }
 
 test_name_is_stable_distinct_and_safe() {
@@ -122,6 +133,7 @@ test_preflight_names_the_missing_requirement() {
 test_absent_and_off_leave_the_default_off
 test_sbx_defaults_and_options
 test_malformed_values_are_refused
+test_verify_token_is_opt_in_and_strict
 test_name_is_stable_distinct_and_safe
 test_only_fleet_names_are_removable
 test_removal_is_idempotent_and_verified

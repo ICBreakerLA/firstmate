@@ -376,6 +376,76 @@ test_a_ship_brings_its_commits_back_on_exit() {
   pass "a ship's commits reach the host worktree repository when the wrapper exits"
 }
 
+# verify_world: a host sm-verify stub plus the config/sbx-verify naming it.
+verify_world() {
+  mkdir -p "$W/hostbin"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s/smv.log"\n' "$W" >"$W/hostbin/sm-verify"
+  chmod +x "$W/hostbin/sm-verify"
+  printf 'sm-verify=%s\nlease-dir=%s/lease\n' "$W/hostbin/sm-verify" "$W" >"$CONFIG/sbx-verify"
+}
+
+test_verify_flag_mounts_the_spool_and_runs_the_broker() {
+  local create out rc
+  new_world verify
+  verify_world
+  out=$(wrap --kind scout --verify sportsmeet -- claude 2>&1); rc=$?
+  expect_code 0 "$rc" "the wrapper still returns claude's exit code: $out"
+  create=$(grep '^create ' "$LOG")
+  assert_contains "$create" " $STATE/t1.sbx-verify/req " "the request spool is mounted writable"
+  assert_contains "$create" " $STATE/t1.sbx-verify/res:ro" "the result directory is mounted read-only"
+  assert_not_contains "$create" "sbx-verify/host" "the host-only directory is never mounted"
+  assert_not_contains "$create" "$W/hostbin" "the pinned sm-verify is never mounted"
+  assert_contains "$create" "-e FM_SBX_VERIFY_SPOOL=$STATE/t1.sbx-verify/req" "the worker learns its spool"
+  assert_absent "$STATE/t1.sbx-verify/host/broker.pid" "no broker is left running"
+  pass "--verify mounts the spool and result directory and names the spool"
+}
+
+test_verify_flag_off_changes_nothing() {
+  local create
+  new_world noverify
+  verify_world
+  wrap --kind scout -- claude >/dev/null 2>&1
+  create=$(grep '^create ' "$LOG")
+  assert_not_contains "$create" ".sbx-verify" "no verification mount without the flag"
+  assert_not_contains "$create" "FM_SBX_VERIFY_SPOOL" "no verification variable without the flag"
+  assert_absent "$STATE/t1.sbx-verify" "no spool is created without the flag"
+  pass "without --verify the run is exactly as before"
+}
+
+test_verify_refusals_happen_before_any_sandbox_exists() {
+  local rc
+  new_world verifybad
+  wrap --kind scout --verify sportsmeet -- claude >/dev/null 2>&1; rc=$?
+  expect_code 1 "$rc" "a missing config/sbx-verify refuses"
+  assert_not_contains "$(log)" "create " "nothing was created"
+  wrap --kind scout --verify other -- claude >/dev/null 2>&1; rc=$?
+  expect_code 2 "$rc" "an unknown verify value refuses"
+  assert_not_contains "$(log)" "create " "nothing was created"
+  pass "a bad or missing verification setup refuses before the sandbox is created"
+}
+
+test_verify_signal_stops_the_broker_and_forces_down() {
+  local pid i
+  new_world verifysig
+  verify_world
+  : >"$W/run.hang"
+  HOME="$W/userhome" PATH="$FAKE:$PATH" setsid "$RUNSH" --id t1 --config "$CONFIG" --state "$STATE" --data "$DATA" \
+    --root "$HOMEDIR" --wt "$WT" --clone "$CLONE" --name "$NAME" --kind scout --verify sportsmeet -- claude >/dev/null 2>/dev/null &
+  pid=$!
+  for i in $(seq 1 100); do [ -f "$W/run.started" ] && break; sleep 0.1; done
+  [ -f "$W/run.started" ] || fail "the sandbox never started"
+  printf '{"verb":"up"}' >"$STATE/t1.sbx-verify/req/1.json"
+  for i in $(seq 1 100); do [ -f "$STATE/t1.sbx-verify/res/1.json" ] && break; sleep 0.1; done
+  [ -f "$STATE/t1.sbx-verify/res/1.json" ] || fail "the broker never answered"
+  kill -TERM -- "-$pid"
+  for i in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  ! kill -0 "$pid" 2>/dev/null || fail "the wrapper outlived TERM"
+  assert_contains "$(cat "$W/smv.log")" "down" "the emulator is forced down when the wrapper is terminated"
+  sleep 1; assert_contains "$(cat "$STATE/t1.sbx-verify/host/audit.log")" broker-stop "the broker ran and stopped with the sandbox"
+  assert_absent "$STATE/t1.sbx-verify/host/broker.pid" "no broker is left running"
+  pass "terminating a verifying sandbox stops the broker with a forced emulator shutdown"
+}
+
 test_creates_with_minimal_mounts_and_cleans_up
 test_environment_is_an_explicit_allowlist
 test_the_token_enters_only_through_the_sandbox_secret_store
@@ -395,5 +465,9 @@ test_a_stopped_daemon_refuses
 test_a_failed_create_removes_nothing_foreign_and_reports
 test_signals_remove_the_sandbox
 test_a_ship_brings_its_commits_back_on_exit
+test_verify_flag_mounts_the_spool_and_runs_the_broker
+test_verify_flag_off_changes_nothing
+test_verify_refusals_happen_before_any_sandbox_exists
+test_verify_signal_stops_the_broker_and_forces_down
 
 echo "# all fm-sbx-run tests passed"

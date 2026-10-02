@@ -12,7 +12,7 @@
 #   claude-sbx --id ID --config DIR --state DIR --data DIR
 #       --root DIR --wt DIR --clone DIR --name SANDBOX [--cpus N] [--memory Ng]
 #       [--busy-gen GEN] [--kind ship|scout] [--nm] [--nm-pin VERSION]
-#       [--allow HOSTS] [--npm-cache DIR] -- CLAUDE_ARGS...
+#       [--allow HOSTS] [--npm-cache DIR] [--verify sportsmeet] -- CLAUDE_ARGS...
 #
 #   --wt, --clone   the host worktree and the standalone clone bin/fm-sbx-bridge.sh
 #                   made of it; only the clone is mounted, and the VM sees a
@@ -29,6 +29,13 @@
 #                   init` runs in it, inside the VM.
 #   --allow HOSTS   further per-sandbox allowed hosts (comma separated).
 #   --npm-cache DIR a read-only npm seed cache (bin/fm-sbx-npm-seed.sh).
+#   --verify sportsmeet
+#                   the host verification broker (bin/fm-sbx-verify-broker.sh,
+#                   docs/sbx-verify-broker.md): a writable request spool and a
+#                   read-only result directory are mounted, the spool is named by
+#                   FM_SBX_VERIFY_SPOOL, and the broker runs on the host for the
+#                   life of the sandbox.
+#                   Without this flag nothing changes.
 #   CLAUDE_ARGS     the claude command line, exactly as the launch built it.
 #
 # What this script does, in order: remove any sandbox of the same name, create
@@ -36,10 +43,12 @@
 # allowlist, remove the instruction file sbx plants, link the brief's status
 # path and worktree path into the VM, copy the user-level skills, apply the
 # optional per-sandbox GitHub secret and network rules, start the host relay
-# (bin/fm-sbx-relay.sh), and run claude in the sandbox.
+# (bin/fm-sbx-relay.sh) and, when asked, the verification broker, and run claude
+# in the sandbox.
 # It runs as a child of the pane shell, never exec'd over it, so that its EXIT,
 # HUP, TERM and INT traps always remove the sandbox, stop the relay with a
-# final drain, and bring the clone's commits back to the worktree.
+# final drain, stop the verification broker with a forced emulator shutdown, and
+# bring the clone's commits back to the worktree.
 #
 # Credentials: the host's credentials are never mounted or copied.
 # The only secret is a GitHub token read on the host, from FM_SBX_GH_TOKEN or
@@ -67,7 +76,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ID='' CONFIG='' STATE='' DATA='' ROOT='' WT='' CLONE='' NAME=''
 CPUS=4 MEMORY=4g BUSY_GEN='' KIND=ship NM=0 NM_PIN='' ALLOW='' NPM_CACHE=''
-RELAY_PID='' CLEANED=0
+RELAY_PID='' CLEANED=0 VERIFY='' VERIFY_PID=''
+BROKER="$SCRIPT_DIR/fm-sbx-verify-broker.sh"
 CLAUDE_USER_HOME=/home/agent
 
 die() {
@@ -93,6 +103,7 @@ while [ "$#" -gt 0 ]; do
   --nm-pin) NM_PIN=${2:-}; shift 2 ;;
   --allow) ALLOW=${2:-}; shift 2 ;;
   --npm-cache) NPM_CACHE=${2:-}; shift 2 ;;
+  --verify) VERIFY=${2:-}; shift 2 ;;
   --) shift; break ;;
   *) die "unknown argument '$1' (see the script header)" ;;
   esac
@@ -106,18 +117,24 @@ case "$ID" in *[!A-Za-z0-9._-]* | '') die "task id '$ID' is not a bare slug" ;; 
 fm_sbx_is_fleet_name "$NAME" || die "sandbox name '$NAME' is not a fleet sandbox name"
 case "$CPUS" in '' | *[!0-9]*) die "--cpus must be a number" ;; esac
 case "$MEMORY" in [1-9]*g) ;; *) die "--memory must look like 4g" ;; esac
+case "$VERIFY" in '' | sportsmeet) ;; *) die "--verify only accepts sportsmeet" ;; esac
 case "$ALLOW" in *[!A-Za-z0-9.,*-]*) die "--allow takes comma-separated host names only" ;; esac
 for d in "$STATE" "$DATA" "$ROOT" "$WT" "$CLONE"; do
   case "$d" in /*) ;; *) die "paths must be absolute: $d" ;; esac
 done
 [ -d "$CLONE/.git" ] || die "no standalone clone at $CLONE (bin/fm-spawn.sh creates it with fm-sbx-bridge.sh clone)"
 fm_sbx_preflight || exit 1
+[ -z "$VERIFY" ] || "$BROKER" check --config "$CONFIG" --state "$STATE" || exit 1
 
 CHANNEL=$(fm_sbx_channel_dir "$STATE" "$ID")
 RELAY=$(fm_sbx_relay_dir "$STATE" "$ID")
 INBOX="$STATE/$ID.inbox"
 mkdir -p "$CHANNEL" "$RELAY" "$INBOX/handled" "$DATA/$ID" || die "could not create the task channel directories"
 chmod 755 "$CHANNEL"
+if [ -n "$VERIFY" ]; then
+  "$BROKER" init --id "$ID" --state "$STATE" || die "could not create the verification spool"
+  VERIFY_DIR=$(fm_sbx_verify_dir "$STATE" "$ID")
+fi
 
 sbx_quiet() { "$@" >/dev/null 2>&1; }
 
@@ -147,6 +164,13 @@ cleanup() {
     kill -TERM "$RELAY_PID" 2>/dev/null || true
     wait "$RELAY_PID" 2>/dev/null || true
   fi
+  if [ -n "$VERIFY" ]; then
+    if [ -n "$VERIFY_PID" ]; then
+      kill -TERM "$VERIFY_PID" 2>/dev/null || true
+      wait "$VERIFY_PID" 2>/dev/null || true
+    fi
+    "$BROKER" stop --id "$ID" --state "$STATE" --config "$CONFIG" >/dev/null 2>&1 || echo "notice: the verification broker for $ID could not be stopped cleanly; the next lease holder retries the emulator shutdown" >&2
+  fi
   bridge_back || true
 }
 trap 'cleanup' EXIT
@@ -174,6 +198,7 @@ for n in CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION CLAUDE_CODE_SEND_FEEDBACK FM_TASK_
 done
 add_env DISABLE_AUTOUPDATER 1
 add_env FM_SBX_CHANNEL "$CHANNEL"
+[ -z "$VERIFY" ] || add_env FM_SBX_VERIFY_SPOOL "$VERIFY_DIR/req"
 if [ "$NM" = 1 ]; then
   add_env NM_HOME "$CLAUDE_USER_HOME/nm"
   add_env NO_MISTAKES_NO_UPDATE_CHECK 1
@@ -181,6 +206,7 @@ if [ "$NM" = 1 ]; then
 fi
 
 mounts=("$CLONE" "$DATA/$ID" "$CHANNEL" "$INBOX")
+[ -z "$VERIFY" ] || mounts+=("$VERIFY_DIR/req" "$VERIFY_DIR/res:ro")
 [ -z "$BRIEF_RECORD" ] || mounts+=("$BRIEF_RECORD:ro")
 [ ! -d "$ROOT/.agents/skills" ] || mounts+=("$ROOT/.agents/skills:ro")
 if [ "${GIT_CONFIG_COUNT:-}" = 1 ] && [ "${GIT_CONFIG_KEY_0:-}" = core.hooksPath ] &&
@@ -284,6 +310,11 @@ relay_args=(--id "$ID" --state "$STATE" --config "$CONFIG" --channel "$CHANNEL" 
 [ "$NM" != 1 ] || [ "$KIND" != ship ] || relay_args+=(--sandbox "$NAME")
 "$SCRIPT_DIR/fm-sbx-relay.sh" "${relay_args[@]}" &
 RELAY_PID=$!
+
+if [ -n "$VERIFY" ]; then
+  "$BROKER" run --id "$ID" --state "$STATE" --config "$CONFIG" --sandbox "$NAME" &
+  VERIFY_PID=$!
+fi
 
 sbx run --name "$NAME" -- "$@"
 rc=$?

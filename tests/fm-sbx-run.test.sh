@@ -126,6 +126,23 @@ test_environment_is_an_explicit_allowlist() {
   pass "only allowlisted variables reach the sandbox"
 }
 
+test_the_commit_identity_reaches_the_sandbox_environment() {
+  local create
+  new_world ident
+  git -C "$REPO" config user.name "Fleet Tests"
+  git -C "$REPO" config user.email "fleet@example.invalid"
+  wrap --kind scout -- claude >/dev/null 2>&1
+  create=$(grep '^create ' "$LOG")
+  assert_contains "$create" "-e GIT_AUTHOR_NAME=Fleet Tests" "the author name is passed"
+  assert_contains "$create" "-e GIT_AUTHOR_EMAIL=fleet@example.invalid" "the author email is passed"
+  assert_contains "$create" "-e GIT_COMMITTER_NAME=Fleet Tests" "the committer name is passed"
+  assert_contains "$create" "-e GIT_COMMITTER_EMAIL=fleet@example.invalid" "the committer email is passed"
+  git -C "$REPO" config --unset user.email
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null wrap --kind scout -- claude >/dev/null 2>&1
+  assert_not_contains "$(grep '^create ' "$LOG" | tail -1)" "GIT_AUTHOR" "no half identity is passed"
+  pass "the commit identity the clone carries also reaches the sandbox environment"
+}
+
 test_the_token_enters_only_through_the_sandbox_secret_store() {
   local create
   new_world token
@@ -448,6 +465,7 @@ test_verify_signal_stops_the_broker_and_forces_down() {
 
 test_creates_with_minimal_mounts_and_cleans_up
 test_environment_is_an_explicit_allowlist
+test_the_commit_identity_reaches_the_sandbox_environment
 test_the_token_enters_only_through_the_sandbox_secret_store
 test_no_token_means_no_secret_and_no_network_rule
 test_a_symlinked_token_file_is_ignored

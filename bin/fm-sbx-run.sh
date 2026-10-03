@@ -199,6 +199,17 @@ done
 add_env DISABLE_AUTOUPDATER 1
 add_env FM_SBX_CHANNEL "$CHANNEL"
 [ -z "$VERIFY" ] || add_env FM_SBX_VERIFY_SPOOL "$VERIFY_DIR/req"
+# The pipeline's own commits (document and lint-fix steps) are made inside the VM,
+# where no git config exists, so the identity the clone carries is also passed as
+# the author and committer environment. Nothing is set when either half is missing.
+git_name=$(git -C "$WT" config user.name 2>/dev/null) || git_name=
+git_email=$(git -C "$WT" config user.email 2>/dev/null) || git_email=
+if [ -n "$git_name" ] && [ -n "$git_email" ]; then
+  add_env GIT_AUTHOR_NAME "$git_name"
+  add_env GIT_AUTHOR_EMAIL "$git_email"
+  add_env GIT_COMMITTER_NAME "$git_name"
+  add_env GIT_COMMITTER_EMAIL "$git_email"
+fi
 if [ "$NM" = 1 ]; then
   add_env NM_HOME "$CLAUDE_USER_HOME/nm"
   add_env NO_MISTAKES_NO_UPDATE_CHECK 1

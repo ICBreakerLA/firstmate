@@ -306,7 +306,10 @@ start_server() {
     rm -f "$HOST/server.pid"
     return 1
   fi
-  BUNDLE_URL="http://$FM_SBXV_BIND:$(head -n 1 "$HOST/server.ready" | tr -dc '0-9')/index.bundle"
+  # 0.0.0.0 is a bind address, not one anything can connect to; sm-verify swaps a loopback host for the address the emulator reaches.
+  local url_host=$FM_SBXV_BIND
+  [ "$url_host" != 0.0.0.0 ] || url_host=127.0.0.1
+  BUNDLE_URL="http://$url_host:$(head -n 1 "$HOST/server.ready" | tr -dc '0-9')/index.bundle"
   audit server-start url "$BUNDLE_URL" bundle_sha256 "$BUNDLE_SHA"
 }
 
@@ -527,7 +530,9 @@ process_request() {
   elif [ "$SMV_RC" != 0 ]; then
     st=failed code=command_failed
   fi
-  reply "$n" "$st" "$code" "" "$(jq -nc --argjson exit "$SMV_RC" --rawfile so "$HOST/run/$n/stdout.clean" --rawfile se "$HOST/run/$n/stderr.clean" --argjson ev "$EVIDENCE_JSON" --argjson skipped "$EVIDENCE_SKIPPED" --arg url "$BUNDLE_URL" \
+  local reply_url=$BUNDLE_URL
+  [ "$verb" != down ] || reply_url=''
+  reply "$n" "$st" "$code" "" "$(jq -nc --argjson exit "$SMV_RC" --rawfile so "$HOST/run/$n/stdout.clean" --rawfile se "$HOST/run/$n/stderr.clean" --argjson ev "$EVIDENCE_JSON" --argjson skipped "$EVIDENCE_SKIPPED" --arg url "$reply_url" \
     '{exit: $exit, stdout: $so, stderr: $se, evidence: $ev, evidence_skipped: $skipped} + (if $url == "" then {} else {bundle_url: $url} end)')"
   audit exec seq "$n" verb "$verb" status "$st" code "$code" exit "$SMV_RC" argv "$argv_desc" smv_sha256 "$SMV_SHA" \
     flow_sha256 "$([ -f "$HOST/run/$n/flow.yaml" ] && fm_sbxv_sha256 "$HOST/run/$n/flow.yaml" || true)" \

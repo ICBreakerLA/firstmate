@@ -606,6 +606,8 @@ PY
   assert_equals "$(sha256sum "$HOST/bundle/index.bundle" | cut -d' ' -f1)" "$(curl -s "http://127.0.0.1:$port/index.bundle" | sha256sum | cut -d' ' -f1)" "later edits to the spool file are not served"
   send 2 '{"verb":"down"}'
   wait_result 2
+  assert_equals null "$(field 2 '.bundle_url // "null"')" "a down result no longer names a bundle URL"
+  assert_equals "http://127.0.0.1:$port/index.bundle" "$(field 1 .bundle_url)" "an up result names the URL it serves"
   local i up=1
   for i in $(seq 1 30); do
     curl -s -m 1 -o /dev/null "http://127.0.0.1:$port/" || { up=0; break; }

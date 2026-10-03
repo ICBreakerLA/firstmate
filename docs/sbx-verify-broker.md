@@ -158,6 +158,8 @@ It answers `GET /index.bundle` with the file whatever the query string says, and
 The manifest is built by the broker and carries none of the worker's bytes, and the server never reads a file on request, so there is no path to traverse and nothing to glob.
 The result carries `bundle_url`, and the broker passes it to `sm-verify` as `FM_SBX_VERIFY_BUNDLE_URL` and `FM_SBX_VERIFY_BUNDLE_PORT`.
 Sending `up` with a new bundle replaces the served one, and the server stops when the lease ends.
+A bundle from `expo export` is a production build, so the app writes nothing to the Android log tag `ReactNativeJS`, and `metro-log` returns only its header line.
+This was observed on the emulator with the app loaded and no log lines under the app's process.
 
 The app that loads this bundle runs worker-authored JavaScript signed in as the verify account.
 That residual risk was accepted when this design was chosen, and the denylist and the missing text-entry verb limit what a tap sequence can reach but not what the bundle itself can do.

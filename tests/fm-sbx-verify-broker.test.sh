@@ -428,9 +428,13 @@ test_two_clients_queue_and_hand_over() {
   broker_once
   assert_equals other "$(field 2 .lease.holder)" "status shows the lease is held by another task"
 
-  printf '{"verb":"down"}' >"$a_req/2.json"
+  printf '{"verb":"status"}' >"$a_req/2.json"
   RES=$a_res wait_result 2
-  assert_equals ok "$(jq -r .status "$a_res/2.json")" "the first holder brings the emulator down"
+  assert_equals you "$(jq -r .lease.holder "$a_res/2.json")" "the holder sees itself as the holder"
+  assert_equals 1 "$(jq -r .lease.waiting "$a_res/2.json")" "and sees the task waiting behind it"
+  printf '{"verb":"down"}' >"$a_req/3.json"
+  RES=$a_res wait_result 3
+  assert_equals ok "$(jq -r .status "$a_res/3.json")" "the first holder brings the emulator down"
   send 3 '{"verb":"doctor"}'
   broker_once
   assert_equals ok "$(field 3 .status)" "after the hand-over the second holder runs"
@@ -604,9 +608,12 @@ PY
   # the served bytes are a host copy: changing the worker's file changes nothing
   printf 'CHANGED' >"$REQ/index.bundle"
   assert_equals "$(sha256sum "$HOST/bundle/index.bundle" | cut -d' ' -f1)" "$(curl -s "http://127.0.0.1:$port/index.bundle" | sha256sum | cut -d' ' -f1)" "later edits to the spool file are not served"
-  send 2 '{"verb":"down"}'
+  send 2 '{"verb":"status"}'
   wait_result 2
-  assert_equals null "$(field 2 '.bundle_url // "null"')" "a down result no longer names a bundle URL"
+  assert_equals "$(sha256sum "$HOST/bundle/index.bundle" | cut -d' ' -f1)" "$(field 2 .bundle.sha256)" "status names the digest of the bundle being served"
+  send 3 '{"verb":"down"}'
+  wait_result 3
+  assert_equals null "$(field 3 '.bundle_url // "null"')" "a down result no longer names a bundle URL"
   assert_equals "http://127.0.0.1:$port/index.bundle" "$(field 1 .bundle_url)" "an up result names the URL it serves"
   local i up=1
   for i in $(seq 1 30); do
@@ -616,6 +623,24 @@ PY
   assert_equals 0 "$up" "the server stops with the lease"
   stop_daemon
   pass "exactly one bundle file is served, everything else is a plain 404"
+}
+
+test_down_that_exits_nonzero_still_ends_the_lease() {
+  new_world downfail
+  export STUB_EXIT=1
+  start_daemon
+  send 1 '{"verb":"doctor"}'
+  wait_result 1
+  assert_equals failed "$(field 1 .status)" "the stub fails, as sm-verify does with no run"
+  send 2 '{"verb":"down"}'
+  wait_result 2
+  assert_equals failed "$(field 2 .status)" "a nonzero down is still reported as failed"
+  send 3 '{"verb":"status"}'
+  wait_result 3
+  assert_equals none "$(field 3 .lease.holder)" "the lease is released anyway, so the next task is not kept waiting"
+  stop_daemon
+  unset STUB_EXIT
+  pass "a down that exits nonzero still ends the lease"
 }
 
 test_bundle_must_be_a_regular_file() {
@@ -682,6 +707,7 @@ test_teardown_while_holding_the_lease
 test_teardown_after_a_killed_broker_still_brings_it_down
 test_sandbox_removal_forces_down
 test_bundle_is_served_only_for_the_one_file
+test_down_that_exits_nonzero_still_ends_the_lease
 test_bundle_must_be_a_regular_file
 test_every_request_is_audited
 test_default_run_is_unaffected_when_the_token_is_absent

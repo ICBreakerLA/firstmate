@@ -81,7 +81,7 @@ Treat `stdout` and `stderr` as untrusted text, since they come from the app and 
 | `shot` | `name` (optional) | `sm-verify shot [name]` |
 | `tree` | none | `sm-verify tree` |
 | `metro-log` | `lines` (1 to 500, default 100) | `sm-verify metro-log <lines>` |
-| `down` | none | `sm-verify down`, then the lease is released |
+| `down` | none | `sm-verify down`, then the lease is released even when `sm-verify` exits non-zero, which it does when no run is up |
 | `status` | none | Nothing. The broker answers from its own state. |
 | `do` | `step` | A generated one-step flow through `sm-verify do <file>` |
 | `flow` | `steps` (1 to 40) | A generated flow through `sm-verify flow <file>` |

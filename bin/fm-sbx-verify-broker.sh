@@ -288,8 +288,9 @@ stop_server() {
 
 # start_server: serve host/bundle/index.bundle on the broker-owned port.
 start_server() {
-  local i
+  local i keep_sha=$BUNDLE_SHA
   stop_server
+  BUNDLE_SHA=$keep_sha
   rm -f "$HOST/server.ready"
   python3 "$IO" serve --file "$HOST/bundle/index.bundle" --port "$FM_SBXV_PORT" --bind "$FM_SBXV_BIND" --ready "$HOST/server.ready" \
     8>&- 9>&- </dev/null >/dev/null 2>"$HOST/server.err" &
@@ -394,10 +395,7 @@ do_status() { # <seq>
     holder=other
     extra=$(lease_info_json)
   fi
-  pos=0
-  if [ "$HOLDING" = 0 ]; then
-    pos=$(queue_live | grep -c . || true)
-  fi
+  pos=$(queue_live | grep -c . || true)
   up=false
   [ "$LEASE_UP" = 1 ] && [ "$HOLDING" = 1 ] && up=true
   srv=null
@@ -537,7 +535,7 @@ process_request() {
   audit exec seq "$n" verb "$verb" status "$st" code "$code" exit "$SMV_RC" argv "$argv_desc" smv_sha256 "$SMV_SHA" \
     flow_sha256 "$([ -f "$HOST/run/$n/flow.yaml" ] && fm_sbxv_sha256 "$HOST/run/$n/flow.yaml" || true)" \
     evidence_sha256 "$(printf '%s' "$EVIDENCE_JSON" | jq -r '[.[].sha256] | join(",")')"
-  if [ "$verb" = down ] && [ "$SMV_RC" = 0 ]; then
+  if [ "$verb" = down ]; then
     release_lease down
   fi
 }

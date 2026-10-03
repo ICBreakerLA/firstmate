@@ -574,21 +574,30 @@ test_bundle_is_served_only_for_the_one_file() {
   assert_equals ok "$(field 1 .status)" "up with a bundle runs: $(cat "$RES/1.json")"
   assert_contains "$(cat "$LOG")" "env-url: http://127.0.0.1:$port/index.bundle" "sm-verify is told the broker URL"
   python3 - "$port" "$(sha256sum "$REQ/index.bundle" | cut -d' ' -f1)" <<'PY' || fail "bundle serving"
-import hashlib, http.client, sys
+import hashlib, http.client, json, sys
 port, digest = int(sys.argv[1]), sys.argv[2]
-def call(method, path):
+def call(method, path, headers=None):
     c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-    c.request(method, path)
+    c.request(method, path, headers=headers or {})
     r = c.getresponse()
     return r.status, r.getheader("Content-Type"), r.read()
 st, ct, body = call("HEAD", "/")
-assert st == 200 and "javascript" in ct, (st, ct)
+assert st == 200 and ct == "application/expo+json", (st, ct)
+# the dev client asks / for a manifest whose launch asset is this server, under the Host it used
+st, ct, body = call("GET", "/", {"Host": "172.28.1.2:%d" % port, "Accept": "application/expo+json", "expo-platform": "android"})
+m = json.loads(body)
+assert st == 200 and ct == "application/expo+json", (st, ct)
+assert m["launchAsset"]["url"] == "http://172.28.1.2:%d/index.bundle" % port, m["launchAsset"]
+assert m["runtimeVersion"].startswith("exposdk:") and m["extra"]["expoGo"]["developer"]["tool"] == "expo-cli", m
+st, ct, body = call("GET", "/status")
+assert st == 200 and body == b"packager-status:running", (st, body)
 st, ct, body = call("GET", "/index.bundle?platform=android&dev=true")
 assert st == 200 and hashlib.sha256(body).hexdigest() == digest
-for method, path in [("GET", "/"), ("GET", "/other.txt"), ("GET", "/../etc/passwd"), ("GET", "/index.bundle/x"),
-                     ("GET", "/index.map"), ("POST", "/index.bundle"), ("GET", "/status"), ("HEAD", "/other.txt"),
-                     ("GET", "/%2e%2e/etc/passwd"), ("PUT", "/index.bundle")]:
-    st, ct, body = call(method, path)
+for method, path, hdrs in [("GET", "/", {"Host": "evil.example/x y"}), ("GET", "/", {"Host": "a b"}), ("GET", "/other.txt", {}),
+                           ("GET", "/../etc/passwd", {}), ("GET", "/index.bundle/x", {}), ("GET", "/index.map", {}),
+                           ("POST", "/index.bundle", {}), ("POST", "/", {}), ("POST", "/status", {}), ("HEAD", "/other.txt", {}),
+                           ("GET", "/%2e%2e/etc/passwd", {}), ("PUT", "/index.bundle", {})]:
+    st, ct, body = call(method, path, hdrs)
     assert st == 404, (method, path, st)
     assert b"secret" not in body
 PY

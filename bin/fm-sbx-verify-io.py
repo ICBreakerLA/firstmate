@@ -16,21 +16,35 @@ Standard library only.
       be written, 2 usage.
 
   serve --file PATH --port N [--bind ADDR] [--ready PATH]
-      Serve exactly one file, read into memory once, and nothing else:
-      HEAD / and HEAD /index.bundle answer with a javascript Content-Type and
-      the length, GET /index.bundle answers with the bytes (a query string is
-      ignored), and every other method or path answers a plain 404.
+      Serve exactly one bundle and the two answers an Expo dev client needs before
+      it will fetch it, read into memory once, and nothing else:
+      GET and HEAD / answer with a fixed Expo manifest (application/expo+json)
+      whose launchAsset points at http://<Host header>/index.bundle, GET and
+      HEAD /status answer "packager-status:running", GET /index.bundle answers
+      with the bytes (a query string is ignored) and HEAD /index.bundle with a
+      javascript Content-Type and the length, and every other method or path
+      answers a plain 404. A Host header that is not a plain host[:port] is a
+      404 too. The manifest carries no worker-authored bytes.
       Nothing on the file system is ever consulted per request.
 """
 import errno
 import hashlib
+import json
 import os
+import re
 import stat
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 CHUNK = 1 << 20
+# What an Expo dev client built for SDK 54 needs in the manifest before it loads a bundle.
+# expo-updates is not installed in the dev client, so extra.expoGo.developer.tool must be set.
+SDK_VERSION = "54.0.0"
+RUNTIME_VERSION = "exposdk:" + SDK_VERSION
+MANIFEST_ID = "00000000-0000-4000-8000-000000000000"
+MANIFEST_CREATED = "2026-01-01T00:00:00.000Z"
+HOST_RE = re.compile(r"^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?$")
 
 
 def usage(msg):
@@ -147,26 +161,61 @@ def serve(argv):
         def _path(self):
             return self.path.split("?", 1)[0]
 
-        def _bundle_headers(self):
+        def _host(self):
+            host = self.headers.get("Host", "")
+            return host if HOST_RE.match(host) else None
+
+        def _send(self, ctype, payload, extra=()):
             self.send_response(200)
-            self.send_header("Content-Type", "application/javascript")
-            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Type", ctype)
+            for k, v in extra:
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(payload)))
             self.send_header("Connection", "close")
             self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(payload)
             self.close_connection = True
 
-        def do_HEAD(self):
-            if self._path() in ("/", "/index.bundle"):
-                self._bundle_headers()
+        def _serve_get_or_head(self):
+            path = self._path()
+            if path == "/index.bundle":
+                self._send("application/javascript", body)
+            elif path == "/status":
+                self._send("text/plain", b"packager-status:running")
+            elif path == "/" and self._host():
+                manifest = json.dumps(
+                    {
+                        "id": MANIFEST_ID,
+                        "createdAt": MANIFEST_CREATED,
+                        "runtimeVersion": RUNTIME_VERSION,
+                        "launchAsset": {
+                            "key": "bundle",
+                            "contentType": "application/javascript",
+                            "url": "http://%s/index.bundle" % self._host(),
+                        },
+                        "assets": [],
+                        "metadata": {},
+                        "extra": {
+                            "expoGo": {"developer": {"tool": "expo-cli"}},
+                            "expoClient": {
+                                "name": "SportsMeet",
+                                "slug": "sportsmeet",
+                                "sdkVersion": SDK_VERSION,
+                                "platforms": ["android"],
+                            },
+                        },
+                    }
+                ).encode()
+                self._send(
+                    "application/expo+json",
+                    manifest,
+                    (("expo-protocol-version", "0"), ("expo-sfv-version", "0")),
+                )
             else:
                 self._plain_404()
 
-        def do_GET(self):
-            if self._path() == "/index.bundle":
-                self._bundle_headers()
-                self.wfile.write(body)
-            else:
-                self._plain_404()
+        do_HEAD = do_GET = _serve_get_or_head
 
         def _other(self):
             self._plain_404()

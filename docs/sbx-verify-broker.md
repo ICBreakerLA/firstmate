@@ -152,8 +152,10 @@ A waiting task keeps its place for the queue TTL, 3 minutes by default, so it mu
 The worker builds a static bundle in its VM and writes exactly one file, `index.bundle`, into the spool.
 Then it sends `{"verb": "up", "bundle": true}`.
 The broker copies that one regular file out, up to 128 MiB, hashes it, and serves it from memory on its own port, 8081 by default.
-The server answers `HEAD /` and `HEAD /index.bundle` with a JavaScript content type, answers `GET /index.bundle` with the file whatever the query string says, and answers everything else, including every other method, with a plain 404.
-It never reads a file on request, so there is no path to traverse and nothing to glob.
+The server answers `GET` and `HEAD /` with a fixed Expo manifest, because the Expo dev client reads it before it loads anything, and its launch asset is `http://<the Host the client used>/index.bundle`.
+It answers `GET /status` with `packager-status:running`, which the app checks before it fetches the bundle.
+It answers `GET /index.bundle` with the file whatever the query string says, and answers everything else, including every other method and a Host header that is not a plain host and port, with a plain 404.
+The manifest is built by the broker and carries none of the worker's bytes, and the server never reads a file on request, so there is no path to traverse and nothing to glob.
 The result carries `bundle_url`, and the broker passes it to `sm-verify` as `FM_SBX_VERIFY_BUNDLE_URL` and `FM_SBX_VERIFY_BUNDLE_PORT`.
 Sending `up` with a new bundle replaces the served one, and the server stops when the lease ends.
 

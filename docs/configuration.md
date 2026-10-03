@@ -890,6 +890,8 @@ The worker's status lines and hook events arrive through the channel, and a host
 ### Git isolation
 
 The worker commits in a standalone clone made with `git clone --local --no-hardlinks`, so nothing in the VM shares objects, hooks, or configuration with the project repository.
+The clone starts at the worktree's HEAD, except when the project's primary checkout has a HEAD that the worktree does not contain: then it starts there, so a repository whose local main carries commits its remote lacks, such as this one, shows the sandbox the code the host runs.
+A primary checkout that is behind the worktree never moves the clone backwards.
 The host treats that clone as untrusted: before any host git read it regenerates the clone's `.git/config` from host values, and the only way work comes back is `git fetch` of the clone's branches into the worktree repository followed by a fast-forward-only merge (`bin/fm-sbx-bridge.sh fetch-back`).
 A push made from inside the sandbox is recorded on the host as its own remote-tracking ref for that branch, only when the clone's value is contained in the branch just fetched and fast-forwards any existing tracking ref, so the done gate sees a pushed head as reachable outside the worker copy.
 A `done` line is mirrored to the task's status only after that fetch-back succeeded, and a failure becomes a `blocked` line.

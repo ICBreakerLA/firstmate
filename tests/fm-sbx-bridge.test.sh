@@ -60,6 +60,30 @@ test_clone_without_a_remote_has_no_origin() {
   pass "a repository with no remote yields a clone with no origin"
 }
 
+test_clone_starts_at_the_primary_checkout_when_it_is_ahead_of_the_worktree() {
+  new_world primaryahead
+  git -C "$WT" checkout -q --detach
+  git -C "$REPO" checkout -q main
+  commit_in "$REPO" fork.txt "fork work the remote lacks"
+  "$BRIDGE" clone "$WT" "$CLONE" || fail "clone"
+  assert_equals "$(git -C "$REPO" rev-parse main)" "$(git -C "$CLONE" rev-parse HEAD)" "the clone starts at the primary checkout's HEAD"
+  [ -f "$CLONE/fork.txt" ] || fail "the sandbox sees the host's own commits"
+  pass "a clone starts from the primary checkout when that is ahead of the pooled worktree"
+}
+
+test_clone_keeps_a_worktree_that_is_ahead_of_a_stale_primary() {
+  new_world primarybehind
+  git -C "$REPO" checkout -q main
+  local stale
+  stale=$(git -C "$REPO" rev-parse main)
+  commit_in "$WT" fresh.txt "fresher commit in the worktree"
+  git -C "$WT" checkout -q --detach
+  "$BRIDGE" clone "$WT" "$CLONE" || fail "clone"
+  assert_equals "$(git -C "$WT" rev-parse HEAD)" "$(git -C "$CLONE" rev-parse HEAD)" "a stale primary does not move the clone backwards"
+  [ "$(git -C "$CLONE" rev-parse HEAD)" != "$stale" ] || fail "the clone must not start at the stale primary commit"
+  pass "a stale primary checkout never moves the clone behind the worktree"
+}
+
 test_clone_is_idempotent_for_a_relaunch() {
   new_world idem
   "$BRIDGE" clone "$WT" "$CLONE" || fail "first clone"
@@ -199,6 +223,8 @@ test_exclude_hides_the_channel_hooks_file() {
 test_clone_is_standalone_and_has_no_host_credentials
 test_clone_origin_refs_mirror_the_hosts_remote_default_branch
 test_clone_without_a_remote_has_no_origin
+test_clone_starts_at_the_primary_checkout_when_it_is_ahead_of_the_worktree
+test_clone_keeps_a_worktree_that_is_ahead_of_a_stale_primary
 test_clone_is_idempotent_for_a_relaunch
 test_fetch_back_fast_forwards_the_host_branch
 test_fetch_back_records_the_clones_push_as_a_host_remote_tracking_ref

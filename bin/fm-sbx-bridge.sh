@@ -96,6 +96,24 @@ mirror_origin_refs() {
   esac
 }
 
+# start_from_primary <wt> <clone>
+# A pooled worktree starts at the remote's default branch, which is not what the
+# host runs when its primary checkout carries commits the remote lacks (this
+# repository's own local main, ahead of upstream). The clone then starts at the
+# primary checkout's HEAD instead, so the sandbox sees the code the host runs.
+# A primary checkout that is not ahead of the worktree, such as a clone that has
+# not been synced yet, never moves the worktree's own fresher commit backwards.
+start_from_primary() {
+  local wt=$1 clone=$2 common base head
+  common=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+  base=$(git --git-dir="$common" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || return 0
+  head=$(git -C "$wt" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || return 0
+  [ "$base" != "$head" ] || return 0
+  ! git -C "$wt" merge-base --is-ancestor "$base" "$head" 2>/dev/null || return 0
+  git -C "$clone" cat-file -e "$base^{commit}" 2>/dev/null || return 0
+  git -C "$clone" -c advice.detachedHead=false checkout -q --detach "$base" || die "could not start the clone at the primary checkout's HEAD"
+}
+
 cmd_clone() {
   local wt=$1 clone=$2 url name email
   [ -d "$wt" ] || die "worktree $wt does not exist"
@@ -104,6 +122,7 @@ cmd_clone() {
   fi
   [ ! -e "$clone" ] || die "$clone exists and is not a clone"
   git clone -q --local --no-hardlinks "$wt" "$clone" || die "could not clone $wt"
+  start_from_primary "$wt" "$clone"
   url=$(git -C "$wt" remote get-url origin 2>/dev/null | strip_url_credentials) || url=
   if [ -n "$url" ]; then
     git -C "$clone" remote set-url origin "$url"

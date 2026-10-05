@@ -387,7 +387,7 @@ USAGE
 }
 case "${1:-}" in
   -h|--help) teardown_usage; exit 0 ;;
-  --*)
+  -*)
     echo "error: invalid teardown request - unknown flag before the task id"
     echo "next: run fm-teardown.sh --help for the expected form"
     exit 2
@@ -395,6 +395,7 @@ case "${1:-}" in
 esac
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
+  echo "error: invalid teardown request"
   echo "next: run fm-teardown.sh --help for the expected form"
   exit 2
 fi

@@ -4404,6 +4404,14 @@ test_axi_usage_contract() {
   [ "$rc" -eq 2 ] || fail "fm-teardown unknown flag exited $rc, not 2"
   case "$out" in *error:*) ;; *) fail "fm-teardown unknown flag error was not on stdout: $out" ;; esac
   case "$out" in *next:*) ;; *) fail "fm-teardown unknown flag error had no next-step line: $out" ;; esac
-  pass "fm-teardown is axi-conformant: --help exits 0 with an example, an unknown flag exits 2 with the error and a next step on stdout"
+  rc=0
+  out=$("$TEARDOWN" -f 2>/dev/null) || rc=$?
+  [ "$rc" -eq 2 ] || fail "fm-teardown single-dash unknown flag exited $rc, not 2"
+  case "$out" in *error:*next:*) ;; *) fail "fm-teardown single-dash unknown flag did not print the error and a next step on stdout: $out" ;; esac
+  rc=0
+  out=$("$TEARDOWN" ../escape 2>/dev/null) || rc=$?
+  [ "$rc" -eq 2 ] || fail "fm-teardown invalid task id exited $rc, not 2"
+  case "$out" in *error:*next:*) ;; *) fail "fm-teardown invalid task id did not print the error and a next step on stdout: $out" ;; esac
+  pass "fm-teardown is axi-conformant: --help exits 0 with an example, an unknown flag or invalid id exits 2 with the error and a next step on stdout"
 }
 test_axi_usage_contract

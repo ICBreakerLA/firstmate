@@ -445,7 +445,7 @@ test_routine_working_and_covered_done_stay_silent_on_the_empty_queue() {
   if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
     fail "routine working/covered done lines printed OPEN DECISIONS: $(cat "$out")"
   fi
-  [ ! -s "$out" ] || fail "the empty-queue covered routine case was not silent: $(cat "$out")"
+  [ "$(cat "$out")" = 'wakes: 0' ] || fail "the empty-queue covered routine case printed more than the empty-queue line: $(cat "$out")"
   pass "routine working and branch-covered done lines print nothing on an empty-queue drain"
 }
 

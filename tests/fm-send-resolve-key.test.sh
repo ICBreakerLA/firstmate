@@ -929,3 +929,18 @@ test_stamped_close_line_stays_within_the_status_line_cap
 test_failed_close_recovery_command_is_shell_safe
 test_remote_reserved_pending_reply_key_closes_locally
 test_decision_answer_partition_relocates_under_the_record
+
+test_axi_usage_contract() {
+  local out rc
+  rc=0
+  out=$("$SEND" --help 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "fm-send --help exited $rc"
+  case "$out" in *usage:*example:*) ;; *) fail "fm-send --help did not print usage with an example: $out" ;; esac
+  rc=0
+  out=$("$SEND" --bogus-flag 2>/dev/null) || rc=$?
+  [ "$rc" -eq 2 ] || fail "fm-send unknown flag exited $rc, not 2"
+  case "$out" in *error:*) ;; *) fail "fm-send unknown flag error was not on stdout: $out" ;; esac
+  case "$out" in *next:*) ;; *) fail "fm-send unknown flag error had no next-step line: $out" ;; esac
+  pass "fm-send is axi-conformant: --help exits 0 with an example, an unknown flag exits 2 with the error and a next step on stdout"
+}
+test_axi_usage_contract

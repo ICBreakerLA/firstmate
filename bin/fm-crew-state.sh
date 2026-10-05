@@ -186,8 +186,27 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
 
+crew_state_usage() {
+  cat <<'USAGE'
+usage: fm-crew-state.sh <id>
+  Print one task's current state and detail from its live endpoint and records.
+example: fm-crew-state.sh fix-login
+USAGE
+}
+case "${1:-}" in
+  -h|--help) crew_state_usage; exit 0 ;;
+  -*)
+    echo "error: unknown flag '$1'"
+    echo "next: run fm-crew-state.sh --help for the expected form"
+    exit 2
+    ;;
+esac
 ID=${1:-}
-[ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
+[ -n "$ID" ] || {
+  echo "error: a task id is required"
+  echo "next: run fm-crew-state.sh <id>, or fm-crew-state.sh --help"
+  exit 2
+}
 
 # Fleet snapshot composition supplies its captured metadata path here so every
 # state read resolves the same task generation selected by that snapshot.

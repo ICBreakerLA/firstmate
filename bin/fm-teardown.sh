@@ -377,8 +377,25 @@ unset _teardown_source
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 # shellcheck source=bin/fm-sbx-lib.sh
 . "$SCRIPT_DIR/fm-sbx-lib.sh"
+teardown_usage() {
+  cat <<'USAGE'
+usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
+  Clean up a landed task: its endpoint, isolated copy, and runtime records.
+  It refuses while the work is unlanded unless --force explicitly discards it.
+example: fm-teardown.sh fix-login
+USAGE
+}
+case "${1:-}" in
+  -h|--help) teardown_usage; exit 0 ;;
+  --*)
+    echo "error: invalid teardown request - unknown flag before the task id"
+    echo "next: run fm-teardown.sh --help for the expected form"
+    exit 2
+    ;;
+esac
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
+  echo "next: run fm-teardown.sh --help for the expected form"
   exit 2
 fi
 ID=$1
@@ -390,7 +407,8 @@ while [ "$#" -gt 0 ]; do
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
     *)
-      echo "error: invalid teardown request" >&2
+      echo "error: invalid teardown request - unknown argument after the task id"
+      echo "next: run fm-teardown.sh --help for the expected form"
       exit 2
       ;;
   esac

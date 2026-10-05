@@ -4392,3 +4392,18 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
+
+test_axi_usage_contract() {
+  local out rc
+  rc=0
+  out=$("$TEARDOWN" --help 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "fm-teardown --help exited $rc"
+  case "$out" in *usage:*example:*) ;; *) fail "fm-teardown --help did not print usage with an example: $out" ;; esac
+  rc=0
+  out=$("$TEARDOWN" --bogus-flag 2>/dev/null) || rc=$?
+  [ "$rc" -eq 2 ] || fail "fm-teardown unknown flag exited $rc, not 2"
+  case "$out" in *error:*) ;; *) fail "fm-teardown unknown flag error was not on stdout: $out" ;; esac
+  case "$out" in *next:*) ;; *) fail "fm-teardown unknown flag error had no next-step line: $out" ;; esac
+  pass "fm-teardown is axi-conformant: --help exits 0 with an example, an unknown flag exits 2 with the error and a next step on stdout"
+}
+test_axi_usage_contract

@@ -6,6 +6,10 @@
 # newer branch outcome, OPEN DECISIONS, captain-call record divergence, and on
 # a supervision-host home the supervision session's new and unprocessed
 # outcomes (BRANCH OUTCOMES), then assert liveness.
+# An empty queue prints the definitive line `wakes: 0` first, so "nothing queued"
+# is distinguishable from a failed read; consumers parse the tab-separated rows
+# and ignore that line. `--help` exits 0 with an example, and an unknown argument
+# prints its error and a `next:` line on stdout and exits 2.
 #
 # Keep sequence-bound row consumption independent from generation-bound episode
 # retirement; docs/watcher-continuity.md owns the recovery contract.
@@ -217,18 +221,30 @@ presented_max_row() { # <rows-file>
   fi
 }
 
+drain_usage() {
+  printf 'usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]\n'
+  printf 'Presents the queued durable wakes (or "wakes: 0" when none are queued) and prints the WAKE_ACK_REQUIRED command to run once they are handled.\n'
+  printf 'example: bin/fm-wake-drain.sh --ack-through 12 --recovery-generation g1\n'
+}
+
 case "${1:-}" in
   '') ;;
+  -h|--help) drain_usage; exit 0 ;;
   --ack-through)
     ACK_THROUGH=${2:-}
-    case "$ACK_THROUGH" in ''|*[!0-9]*) echo "wake drain: invalid acknowledgement sequence" >&2; exit 2 ;; esac
+    case "$ACK_THROUGH" in ''|*[!0-9]*) echo "wake drain: invalid acknowledgement sequence; next: run bin/fm-wake-drain.sh and use the WAKE_ACK_REQUIRED command it prints" >&2; exit 2 ;; esac
     [ "${3:-}" = --recovery-generation ] \
-      || { echo "wake drain: acknowledgement requires its recovery generation" >&2; exit 2; }
+      || { echo "wake drain: acknowledgement requires its recovery generation; next: run bin/fm-wake-drain.sh and use the WAKE_ACK_REQUIRED command it prints" >&2; exit 2; }
     ACK_GENERATION=${4:-}
-    case "$ACK_GENERATION" in ''|*[!A-Za-z0-9._-]*) echo "wake drain: invalid recovery generation" >&2; exit 2 ;; esac
-    [ "$#" -eq 4 ] || { echo "wake drain: unexpected acknowledgement arguments" >&2; exit 2; }
+    case "$ACK_GENERATION" in ''|*[!A-Za-z0-9._-]*) echo "wake drain: invalid recovery generation; next: run bin/fm-wake-drain.sh and use the WAKE_ACK_REQUIRED command it prints" >&2; exit 2 ;; esac
+    [ "$#" -eq 4 ] || { echo "wake drain: unexpected acknowledgement arguments; next: run bin/fm-wake-drain.sh --help" >&2; exit 2; }
     ;;
-  *) echo "usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]" >&2; exit 2 ;;
+  *)
+    printf 'error: unknown argument: %s\n' "$1"
+    drain_usage
+    printf 'next: run bin/fm-wake-drain.sh --help, or run it with no arguments to present the queue\n'
+    exit 2
+    ;;
 esac
 
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
@@ -971,6 +987,7 @@ if [ -n "$ACK_THROUGH" ]; then
 fi
 
 if [ ! -s "$FM_WAKE_QUEUE" ]; then
+  printf 'wakes: 0\n'
   : > "$FM_WAKE_QUEUE"
   fm_recovery_marker_snapshot "$RECOVERY_MARKER" || true
   RECOVERY_MARKER_TOKEN=$FM_RECOVERY_MARKER_TOKEN

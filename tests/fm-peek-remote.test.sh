@@ -107,4 +107,20 @@ test_remote_peek_unreachable_fails_loudly_without_death_claim() {
 test_remote_peek_reads_remote_pane
 test_remote_peek_unreachable_fails_loudly_without_death_claim
 
+test_peek_axi_usage_contract() {
+  local out rc
+  rc=0
+  out=$("$PEEK" --help 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "fm-peek --help exited $rc"
+  case "$out" in *usage:*example:*) ;; *) fail "fm-peek --help did not print usage with an example: $out" ;; esac
+  rc=0
+  out=$("$PEEK" --bogus-flag 2>/dev/null) || rc=$?
+  [ "$rc" -eq 2 ] || fail "fm-peek unknown flag exited $rc, not 2"
+  case "$out" in *error:*) ;; *) fail "fm-peek unknown flag error was not on stdout: $out" ;; esac
+  case "$out" in *next:*) ;; *) fail "fm-peek unknown flag error had no next-step line: $out" ;; esac
+  pass "fm-peek is axi-conformant: --help exits 0 with an example, an unknown flag exits 2 with the error and a next step on stdout"
+}
+
+test_peek_axi_usage_contract
+
 echo "all fm-peek-remote tests passed"

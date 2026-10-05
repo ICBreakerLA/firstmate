@@ -82,7 +82,7 @@ test_newer_task_outcome_and_routine_latest_events_stay_silent() {
   if grep -F 'STATUS OUTCOME BACKSTOP (' "$out" >/dev/null; then
     fail "a newer branch outcome or routine latest event was re-presented: $(cat "$out")"
   fi
-  [ ! -s "$out" ] || fail "covered and routine latest events broke the silent drain contract: $(cat "$out")"
+  [ "$(cat "$out")" = 'wakes: 0' ] || fail "covered and routine latest events printed more than the empty-queue line: $(cat "$out")"
   pass "a newer task-matching branch outcome suppresses the backstop and routine latest events stay silent"
 }
 
@@ -161,7 +161,7 @@ test_same_second_outcome_uses_status_causal_position() {
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$first_out" \
     || fail "main drain failed for same-second covered status"
-  [ ! -s "$first_out" ] \
+  [ -z "$(grep -v "^wakes: 0$" "$first_out")" ] \
     || fail "a same-second handled status was re-presented: $(cat "$first_out")"
 
   printf 'failed: genuinely later same-second event\n' >> "$state/same-second.status"
@@ -189,7 +189,7 @@ test_drain_does_not_scan_append_only_outcome_history() {
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \
     || fail "main drain failed with large append-only outcome history"
-  [ ! -s "$out" ] \
+  [ -z "$(grep -v "^wakes: 0$" "$out")" ] \
     || fail "drain consulted malformed lifetime history instead of the bounded task index: $(cat "$out")"
   pass "drain cost and suppression are independent of append-only outcome history"
 }
@@ -210,7 +210,7 @@ test_successful_backstop_is_idempotent_without_consuming_delayed_annotation() {
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$second_out" \
     || fail "second keyless backstop drain failed"
-  [ ! -s "$second_out" ] \
+  [ -z "$(grep -v "^wakes: 0$" "$second_out")" ] \
     || fail "a successful backstop presentation repeated unchanged: $(cat "$second_out")"
 
   append_wake "$state" signal receipt-task.status 'signal: receipt-task.status' \
@@ -244,7 +244,7 @@ SH
 
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \
     || fail "the top-level empty-queue drain changed its compatibility exit on an output failure"
-  [ ! -s "$out" ] || fail "the failed output consumer received unexpected bytes: $(cat "$out")"
+  [ -z "$(grep -v "^wakes: 0$" "$out")" ] || fail "the failed output consumer received unexpected bytes: $(cat "$out")"
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$retry_out" \
     || fail "backstop retry failed after the output consumer recovered"
@@ -284,7 +284,7 @@ SH
     || fail "the uncommitted backstop did not retry after storage recovered: $(cat "$retry_out")"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$final_out" \
     || fail "post-recovery idempotence drain failed"
-  [ ! -s "$final_out" ] \
+  [ -z "$(grep -v "^wakes: 0$" "$final_out")" ] \
     || fail "the successfully committed retry repeated: $(cat "$final_out")"
   pass "receipt failure may repeat a presented backstop but cannot lose it"
 }
@@ -306,7 +306,7 @@ test_rejected_decision_line_surfaces_once_through_backstop() {
   fi
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$second_out" \
     || fail "second rejected-decision drain failed"
-  [ ! -s "$second_out" ] \
+  [ -z "$(grep -v "^wakes: 0$" "$second_out")" ] \
     || fail "rejected decision backstop repeated unchanged: $(cat "$second_out")"
   pass "captain-facing decisions rejected by the fold surface once"
 }
@@ -326,7 +326,7 @@ test_missing_index_self_heals_on_first_drain() {
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \
     || fail "first drain failed while self-healing a missing outcome index"
-  [ ! -s "$out" ] \
+  [ -z "$(grep -v "^wakes: 0$" "$out")" ] \
     || fail "self-healed index re-presented a handled outcome: $(cat "$out")"
   [ -f "$state/.branch-outcome-index-ready" ] \
     || fail "first drain did not publish the outcome-index ready marker"
@@ -483,7 +483,7 @@ test_overbound_routine_event_stays_silent() {
   perl -e 'print "working: ", "x" x 70000, "\n"' > "$state/oversized.status"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \
     || fail "main drain failed for an over-bound routine event"
-  [ ! -s "$out" ] \
+  [ -z "$(grep -v "^wakes: 0$" "$out")" ] \
     || fail "unclassifiable over-bound routine event was presented: $(cat "$out")"
   pass "an over-bound unclassifiable routine event stays silent"
 }

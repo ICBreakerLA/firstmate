@@ -442,20 +442,20 @@ test_verify_refusals_happen_before_any_sandbox_exists() {
 }
 
 test_verify_signal_stops_the_broker_and_forces_down() {
-  local pid i
+  local pid
   new_world verifysig
   verify_world
   : >"$W/run.hang"
   HOME="$W/userhome" PATH="$FAKE:$PATH" setsid "$RUNSH" --id t1 --config "$CONFIG" --state "$STATE" --data "$DATA" \
     --root "$HOMEDIR" --wt "$WT" --clone "$CLONE" --name "$NAME" --kind scout --verify sportsmeet -- claude >/dev/null 2>/dev/null &
   pid=$!
-  for i in $(seq 1 100); do [ -f "$W/run.started" ] && break; sleep 0.1; done
+  for _ in $(seq 1 100); do [ -f "$W/run.started" ] && break; sleep 0.1; done
   [ -f "$W/run.started" ] || fail "the sandbox never started"
   printf '{"verb":"up"}' >"$STATE/t1.sbx-verify/req/1.json"
-  for i in $(seq 1 100); do [ -f "$STATE/t1.sbx-verify/res/1.json" ] && break; sleep 0.1; done
+  for _ in $(seq 1 100); do [ -f "$STATE/t1.sbx-verify/res/1.json" ] && break; sleep 0.1; done
   [ -f "$STATE/t1.sbx-verify/res/1.json" ] || fail "the broker never answered"
   kill -TERM -- "-$pid"
-  for i in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
   ! kill -0 "$pid" 2>/dev/null || fail "the wrapper outlived TERM"
   assert_contains "$(cat "$W/smv.log")" "down" "the emulator is forced down when the wrapper is terminated"
   sleep 1; assert_contains "$(cat "$STATE/t1.sbx-verify/host/audit.log")" broker-stop "the broker ran and stopped with the sandbox"

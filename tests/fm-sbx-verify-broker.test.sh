@@ -78,7 +78,7 @@ task_dirs() { # <id>: sets TID REQ RES HOST for another task in the same world
 
 free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
 
-broker_once() { "$BROKER" run --id "$TID" --state "$STATE" --config "$CONFIG" --sandbox "sbx-$TID" --once "$@"; }
+broker_once() { "$BROKER" run --id "$TID" --state "$STATE" --config "$CONFIG" --sandbox "sbx-$TID" --once; }
 
 send() { # <n> <json>
   printf '%s' "$2" >"$REQ/.$1.tmp" && mv "$REQ/.$1.tmp" "$REQ/$1.json"
@@ -88,8 +88,8 @@ result() { cat "$RES/$1.json"; }
 field() { result "$1" | jq -r "$2"; }
 stub_calls() { grep -c '^argv:' "$LOG" || true; }
 
-start_daemon() { # [extra args] -> DPID
-  PATH="$FAKEBIN:$PATH" "$BROKER" run --id "$TID" --state "$STATE" --config "$CONFIG" --sandbox "sbx-$TID" --interval 0.1 "$@" >/dev/null 2>&1 &
+start_daemon() { # sets DPID
+  PATH="$FAKEBIN:$PATH" "$BROKER" run --id "$TID" --state "$STATE" --config "$CONFIG" --sandbox "sbx-$TID" --interval 0.1 >/dev/null 2>&1 &
   DPID=$!
   DAEMONS+=("$DPID")
   local i
@@ -280,7 +280,7 @@ test_results_are_written_only_by_the_host_and_atomically() {
   send 1 '{"verb":"doctor"}'
   broker_once
   [ -f "$RES/1.json" ] || fail "result written"
-  [ -z "$(ls -A "$RES" | grep '^\.' || true)" ] || fail "no temp file is left behind"
+  [ -z "$(find "$RES" -mindepth 1 -maxdepth 1 -name '.*')" ] || fail "no temp file is left behind"
   jq -e '.v == 1 and .seq == 1 and .verb == "doctor" and .status == "ok" and .exit == 0' "$RES/1.json" >/dev/null || fail "result shape: $(cat "$RES/1.json")"
   [ "$(stat -c %a "$STATE/t1.sbx-verify/host")" = 700 ] || fail "the host directory is private"
   broker_once
@@ -329,7 +329,7 @@ SH
   FM_SBX_VERIFY_TEST_HOOK="$TMP_ROOT/race-hook2.sh" broker_once
   assert_equals not_regular "$(field 2 .code)" "a file swapped for a symlink before the copy is refused"
   assert_equals 1 "$(stub_calls)" "no further command ran"
-  [ -z "$(ls "$HOST/in" | grep -v '\.\(json\|plan\)$' || true)" ] || fail "unexpected files in the host copy directory"
+  [ -z "$(find "$HOST/in" -mindepth 1 -maxdepth 1 ! -name '*.json' ! -name '*.plan')" ] || fail "unexpected files in the host copy directory"
   pass "a rename or symlink swap during the copy cannot change what runs"
 }
 
@@ -338,7 +338,7 @@ test_no_worker_path_reaches_sm_verify() {
   mkdir -p "$REQ/evil"
   printf '#!/bin/sh\ntouch %s/PWNED\n' "$TMP_ROOT" >"$REQ/sm-verify"
   chmod +x "$REQ/sm-verify"
-  send 1 '{"verb":"do","step":{"tapOn":{"text":"/etc/shadow ../../x $(id)"}}}'
+  send 1 "{\"verb\":\"do\",\"step\":{\"tapOn\":{\"text\":\"/etc/shadow ../../x \$(id)\"}}}"
   send 2 '{"verb":"shot","name":"../../escape"}'
   send 3 '{"verb":"flow","steps":[{"takeScreenshot":{"name":"../../escape"}}]}'
   send 4 '{"verb":"doctor","sm-verify":"/bin/true","path":"/bin/true"}'
@@ -409,9 +409,9 @@ test_status_verb_is_broker_local() {
 
 test_two_clients_queue_and_hand_over() {
   new_world queue
-  local a_req a_res a_host
+  local a_req a_res
   task_dirs a
-  a_req=$REQ a_res=$RES a_host=$HOST
+  a_req=$REQ a_res=$RES
   start_daemon
   local a_pid=$DPID
   printf '{"verb":"up"}' >"$a_req/1.json"
@@ -668,7 +668,7 @@ test_every_request_is_audited() {
   assert_equals rejected "$(jq -sr '[.[] | select(.kind == "request" and .seq == "2")][0].verdict' "$log")" "with their verdicts"
   jq -se 'all(.[]; .ts != null) and ([.[] | select(.kind == "request")] | all(.[]; (.req_sha256 // "") | length == 64))' "$log" >/dev/null || fail "every request line carries a digest and time"
   assert_contains "$(cat "$log")" smv_sha256 "the pinned command digest is recorded"
-  [ -z "$(ls "$RES" | grep -v '\.json$')" ] || true
+  [ -z "$(find "$RES" -mindepth 1 -maxdepth 1 ! -name '*.json')" ] || fail "only result files are left in the result directory"
   pass "every request, verdict and digest is appended to the host audit log"
 }
 

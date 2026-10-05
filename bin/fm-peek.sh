@@ -8,6 +8,9 @@
 # capture (fm-remote-secondmate-control.sh), clamped to that command's
 # 100-line cap. An unreachable host or unreadable endpoint fails loudly naming
 # the host; the local backend adapters are never asked to read a remote target.
+# `--help` exits 0 with an example; a missing target or an unknown flag prints
+# its error on stdout with a `next:` line and exits 2. The capture itself stays
+# raw pane text because callers parse it, so no empty-state marker is added.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,6 +22,27 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-backend.sh"
 
 "$SCRIPT_DIR/fm-guard.sh" || true
+
+peek_usage() {
+  cat <<'USAGE'
+usage: fm-peek.sh <target> [lines=40]
+  Print the bounded tail of a task's endpoint for cheap diagnosis.
+example: fm-peek.sh fix-login 60
+USAGE
+}
+case "${1:-}" in
+  -h|--help) peek_usage; exit 0 ;;
+  -*)
+    echo "error: unknown flag '$1'"
+    echo "next: run fm-peek.sh --help for the expected form"
+    exit 2
+    ;;
+  '')
+    echo "error: a target is required"
+    echo "next: run fm-peek.sh <task-id> [lines], or fm-peek.sh --help"
+    exit 2
+    ;;
+esac
 
 RAW_TARGET=$1
 N=${2:-40}

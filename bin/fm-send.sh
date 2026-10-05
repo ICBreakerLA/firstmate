@@ -228,8 +228,31 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 # a crewmate (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
 
+fm_send_usage() {
+  cat <<'USAGE'
+usage: fm-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] <text...>
+       fm-send.sh <target> --key Enter
+  Steer a task by durable record; the text becomes the task's next steering message.
+example: fm-send.sh fix-login "rebase onto main, then rerun the checks"
+USAGE
+}
+case "${1:-}" in
+  -h|--help) fm_send_usage; exit 0 ;;
+  -*)
+    echo "error: unknown flag '$1' - the first argument is the target"
+    echo "next: run fm-send.sh --help for the expected form"
+    exit 2
+    ;;
+  '')
+    echo "error: a target and message text are required"
+    echo "next: run fm-send.sh <task-id> <text...>, or fm-send.sh --help"
+    exit 2
+    ;;
+esac
+
 if [ -z "${FM_HOME+x}" ] || [ -z "${FM_HOME:-}" ]; then
   echo "error: FM_HOME is not set; fm-send refuses to resolve targets without an explicit firstmate home" >&2
+  echo "next: rerun with FM_HOME=<firstmate home> fm-send.sh <target> <text...>" >&2
   exit 1
 fi
 

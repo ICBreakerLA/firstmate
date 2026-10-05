@@ -5734,5 +5734,25 @@ test_newer_failed_run_is_not_hidden_by_older_live_run
 test_unverifiable_run_selection_reports_unknown
 test_legacy_conflicting_run_records_report_unknown
 test_sandboxed_verdict_is_labelled_worker_attested
+test_axi_usage_contract() {
+  local out rc
+  rc=0
+  out=$("$CREW_STATE" --help 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "fm-crew-state --help exited $rc"
+  case "$out" in *usage:*example:*) ;; *) fail "fm-crew-state --help did not print usage with an example: $out" ;; esac
+  rc=0
+  out=$("$CREW_STATE" --bogus-flag 2>/dev/null) || rc=$?
+  [ "$rc" -eq 2 ] || fail "fm-crew-state unknown flag exited $rc, not 2"
+  case "$out" in *error:*) ;; *) fail "fm-crew-state unknown flag error was not on stdout: $out" ;; esac
+  case "$out" in *next:*) ;; *) fail "fm-crew-state unknown flag error had no next-step line: $out" ;; esac
+  rc=0
+  out=$("$CREW_STATE" 2>/dev/null) || rc=$?
+  [ "$rc" -eq 2 ] || fail "fm-crew-state with no id exited $rc, not 2"
+  case "$out" in *'next:'*) ;; *) fail "fm-crew-state with no id had no next-step line: $out" ;; esac
+  pass "fm-crew-state is axi-conformant: --help exits 0 with an example, an unknown flag exits 2 with the error and a next step on stdout"
+}
+
+test_axi_usage_contract
+
 
 echo "all fm-crew-state tests passed"

@@ -115,8 +115,8 @@ test_no_open_decisions_prints_nothing() {
   if grep -F 'OPEN DECISIONS' "$out" >/dev/null; then
     fail "the empty case printed an OPEN DECISIONS section: $(cat "$out")"
   fi
-  [ ! -s "$out" ] || fail "the empty case with no queued wakes was not silent: $(cat "$out")"
-  pass "no open decisions across the fleet prints nothing"
+  [ "$(cat "$out")" = 'wakes: 0' ] || fail "the empty case did not report a definitive empty queue: $(cat "$out")"
+  pass "no open decisions across the fleet reports only the empty queue"
 }
 
 test_open_decision_surfaces_even_with_an_unrelated_queued_wake() {
@@ -215,6 +215,24 @@ test_over_long_decision_note_is_capped_with_a_marker() {
   pass "an over-long open decision is cut to its per-item budget with the shared truncation marker"
 }
 
+test_axi_usage_and_empty_state() {
+  local dir out rc
+  dir=$(make_case axi)
+  rc=0
+  out=$("$DRAIN" --help 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "drain --help exited $rc"
+  case "$out" in *usage:*example:*) ;; *) fail "drain --help did not print usage with an example: $out" ;; esac
+  rc=0
+  out=$(FM_STATE_OVERRIDE="$dir/state" "$DRAIN" --bogus-flag 2>/dev/null) || rc=$?
+  [ "$rc" -eq 2 ] || fail "drain unknown flag exited $rc, not 2"
+  case "$out" in *error:*next:*) ;; *) fail "drain unknown flag did not print its error and a next step on stdout: $out" ;; esac
+  rc=0
+  out=$(FM_STATE_OVERRIDE="$dir/state" "$DRAIN") || rc=$?
+  [ "$rc" -eq 0 ] || fail "drain on an empty queue exited $rc"
+  [ "$out" = 'wakes: 0' ] || fail "drain on an empty queue did not report a definitive empty state: $out"
+  pass "drain is axi-conformant: --help, unknown-flag refusal on stdout, and a definitive empty state"
+}
+
 test_buried_decision_still_surfaces
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
@@ -224,3 +242,4 @@ test_no_open_decisions_prints_nothing
 test_open_decision_surfaces_even_with_an_unrelated_queued_wake
 test_buried_decision_surfaces_on_the_empty_queue_fast_path
 test_status_symlink_is_not_followed
+test_axi_usage_and_empty_state

@@ -775,6 +775,7 @@ EOF
     append_evidence lifecycle 'durable wake drain returned an invalid acknowledgement; retry catch-up before ordinary work' "$evidence"
     lifecycle_ok=0
   fi
+  drained=$(printf '%s\n' "$drained" | grep -vx 'wakes: 0' || true)
   append_evidence wake "$drained" "$evidence"
 
   if fm_afk_contract_present "$STATE"; then

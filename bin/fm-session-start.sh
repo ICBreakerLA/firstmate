@@ -792,6 +792,7 @@ else
     fi
   fi
   DRAIN_OUT=$("$SCRIPT_DIR/fm-wake-drain.sh" 2>&1)
+  [ "$DRAIN_OUT" != 'wakes: 0' ] || DRAIN_OUT=
   if [ -n "$DRAIN_OUT" ]; then
     printf '%s\n' "$DRAIN_OUT"
   else

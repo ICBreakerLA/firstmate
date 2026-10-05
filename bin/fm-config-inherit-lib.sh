@@ -91,6 +91,11 @@ FM_INHERITABLE_CONFIG="${FM_INHERITABLE_CONFIG:-crew-dispatch.json dispatch-neve
 # already frozen for its current session (bin/fm-trace-context-lib.sh).
 FM_SESSION_SCOPED_INHERITABLE_CONFIG="trace-context"
 
+# Items that are inherited into local secondmate homes but never into remote
+# ones, because they describe this host rather than the fleet: the sbx microVM
+# runtime behind config/worker-sandbox exists only on the primary's Linux host.
+FM_LOCAL_ONLY_INHERITABLE_CONFIG="worker-sandbox"
+
 # True when <item> is session-scoped in the sense above.
 fm_config_inherit_item_session_scoped() {  # <item>
   local item=$1 candidate
@@ -103,10 +108,15 @@ fm_config_inherit_item_session_scoped() {  # <item>
 # The complete declared inherited-material set as home-relative paths, one per
 # line, in propagation order: every FM_INHERITABLE_CONFIG item under config/,
 # then the one shared data file. This is what remote senders and receivers
-# derive from, so both ends of a transfer agree by construction.
+# derive from, so both ends of a transfer agree by construction. Local-only
+# items (FM_LOCAL_ONLY_INHERITABLE_CONFIG) are left out: they are inherited by
+# local secondmate convergence through FM_INHERITABLE_CONFIG directly.
 fm_config_inherit_items() {
-  local item
+  local item local_only
   for item in $FM_INHERITABLE_CONFIG; do
+    for local_only in $FM_LOCAL_ONLY_INHERITABLE_CONFIG; do
+      [ "$item" = "$local_only" ] && continue 2
+    done
     printf 'config/%s\n' "$item"
   done
   printf '%s\n' "$FM_SHARED_CAPTAIN_REL"

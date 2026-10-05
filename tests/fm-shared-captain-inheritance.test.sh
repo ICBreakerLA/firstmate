@@ -185,6 +185,34 @@ remote_quarantine_count() {
   find "$1/data" -name 'captain-shared.md.remote-quarantine-*' | wc -l | tr -d ' '
 }
 
+# config/worker-sandbox names the primary's Linux-host sbx runtime, so it
+# converges into local secondmate homes but must never reach a remote one.
+test_remote_route_never_inherits_the_host_local_worker_sandbox() {
+  local home payload out rc=0 bytes hash
+  home="$TMP_ROOT/remote-sandbox/home"
+  payload="$TMP_ROOT/remote-sandbox/worker-sandbox"
+  mkdir -p "$home/data" "$home/config" "$TMP_ROOT/remote-sandbox"
+  printf 'sbx\n' > "$payload"
+
+  fm_config_inherit_items | grep -qx 'config/worker-sandbox' \
+    && fail "the remote inherited-material set names config/worker-sandbox"
+  fm_config_inherit_items | grep -qx 'config/crew-harness' \
+    || fail "the remote inherited-material set lost an ordinary item"
+  case " $FM_INHERITABLE_CONFIG " in
+    *" worker-sandbox "*) ;;
+    *) fail "local secondmate convergence no longer inherits config/worker-sandbox" ;;
+  esac
+
+  bytes=$(LC_ALL=C wc -c < "$payload" | tr -d ' ')
+  hash=$(fm_inherit_sha256 "$payload") || fail "cannot hash the sandbox payload"
+  out=$(PATH="$BASE_PATH" FM_HOME="$home" "$ROOT/bin/fm-remote-inherit.sh" \
+    put config/worker-sandbox "$bytes" "$hash" 1 < "$payload" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a remote home accepted config/worker-sandbox: $out"
+  assert_contains "$out" "not inherited material" "the refusal did not name the reason"
+  [ ! -e "$home/config/worker-sandbox" ] || fail "config/worker-sandbox reached a remote home"
+  pass "a remote secondmate route never inherits the host-local worker sandbox"
+}
+
 test_remote_receiver_accepts_source_only_edit_without_quarantine() {
   local home source out qpath
   home="$TMP_ROOT/remote-receiver/home"
@@ -597,6 +625,7 @@ test_first_copy_readonly_and_local_files_preserved
 test_true_divergence_after_inherit_still_quarantines
 test_interrupted_publication_matching_source_does_not_quarantine
 test_remote_receiver_accepts_source_only_edit_without_quarantine
+test_remote_route_never_inherits_the_host_local_worker_sandbox
 test_drift_quarantine_collision_and_repeated_convergence
 test_missing_source_mirrors_absence_without_losing_local_bytes
 test_unsafe_artifacts_and_failure_restore_readonly_mode

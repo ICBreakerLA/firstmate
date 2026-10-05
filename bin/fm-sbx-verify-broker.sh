@@ -541,7 +541,7 @@ process_request() {
 }
 
 scan() {
-  local f base num entry count=0
+  local f base num count=0
   local -a list=()
   for f in "$REQ"/*; do
     [ -e "$f" ] || [ -L "$f" ] || continue

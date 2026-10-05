@@ -55,6 +55,58 @@ wait_for_file() {  # <path>
   done
 }
 
+# Bash 3.2, the stock macOS shell, has no BASHPID; under nounset an unguarded
+# read aborts the caller before the command starts. Unsetting it here makes a
+# modern bash behave the same way.
+test_runs_where_the_shell_has_no_bashpid() {
+  local out rc=0
+  out=$(
+    set -u
+    unset BASHPID
+    . "$ROOT/bin/fm-timeout-lib.sh"
+    PATH=$PERL_ONLY fm_exec_timed 5 1 bash -c 'echo ran-without-bashpid' 2>&1
+  ) || rc=$?
+  [ "$rc" -eq 0 ] || fail "fm_exec_timed failed where BASHPID is unset (rc=$rc): $out"
+  assert_contains "$out" "ran-without-bashpid" "the command did not run where BASHPID is unset"
+  pass "fm_exec_timed runs where the shell has no BASHPID"
+}
+
+# On bash 3.2 a subshell's $$ is still the calling script's pid and there is
+# no BASHPID to tell them apart, so the owner must stay that script rather
+# than its parent: once the parent has gone, the command keeps running while
+# the script lives.
+test_a_subshell_without_bashpid_keeps_its_live_script_as_owner() {
+  local dir
+  dir="$TMP_ROOT/subshell-owner"
+  mkdir -p "$dir"
+  cat > "$dir/caller.sh" <<'SH'
+set -u
+. "$1/bin/fm-timeout-lib.sh"
+: > "$2/started"
+i=0
+while kill -0 "$PPID" 2>/dev/null; do
+  i=$((i + 1))
+  [ "$i" -lt 200 ] || exit 1
+  sleep 0.05
+done
+rc=0
+(
+  unset BASHPID
+  fm_exec_timed 10 1 bash -c 'sleep 1; echo survived > "$1/out"' _ "$2"
+) >/dev/null 2>&1 || rc=$?
+echo "$rc" > "$2/rc"
+SH
+  PATH=$PERL_ONLY bash -c '
+    bash "$1/caller.sh" "$2" "$1" &
+    while [ ! -e "$1/started" ]; do sleep 0.02; done
+  ' _ "$dir" "$ROOT"
+  wait_for_file "$dir/rc"
+  [ "$(cat "$dir/rc")" = 0 ] || fail "a subshell call without BASHPID ended early (rc=$(cat "$dir/rc"))"
+  [ "$(cat "$dir/out" 2>/dev/null)" = survived ] \
+    || fail "the command did not survive while its calling script lived"
+  pass "fm_exec_timed in a subshell without BASHPID keeps the live calling script as owner"
+}
+
 test_passes_the_command_status_and_output_through() {
   local out rc=0
   out=$(exec_timed "$PERL_ONLY" 5 1 bash -c 'echo to-stdout; echo to-stderr >&2; exit 7' 2>&1) || rc=$?
@@ -337,6 +389,8 @@ test_a_descendant_holding_the_output_cannot_outlast_the_bound
 test_a_signal_to_the_bounding_process_reaches_the_command
 test_a_named_owner_that_is_gone_ends_the_command
 test_an_owner_that_dies_during_startup_ends_the_command
+test_runs_where_the_shell_has_no_bashpid
+test_a_subshell_without_bashpid_keeps_its_live_script_as_owner
 test_perl_is_preferred_over_timeout
 test_refuses_rather_than_running_unbounded
 test_rejects_malformed_bounds_before_running_anything

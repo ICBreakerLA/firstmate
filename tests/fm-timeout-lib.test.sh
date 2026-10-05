@@ -55,6 +55,22 @@ wait_for_file() {  # <path>
   done
 }
 
+# Bash 3.2, the stock macOS shell, has no BASHPID; under nounset an unguarded
+# read aborts the caller before the command starts. Unsetting it here makes a
+# modern bash behave the same way.
+test_runs_where_the_shell_has_no_bashpid() {
+  local out rc=0
+  out=$(
+    set -u
+    unset BASHPID
+    . "$ROOT/bin/fm-timeout-lib.sh"
+    PATH=$PERL_ONLY fm_exec_timed 5 1 bash -c 'echo ran-without-bashpid' 2>&1
+  ) || rc=$?
+  [ "$rc" -eq 0 ] || fail "fm_exec_timed failed where BASHPID is unset (rc=$rc): $out"
+  assert_contains "$out" "ran-without-bashpid" "the command did not run where BASHPID is unset"
+  pass "fm_exec_timed runs where the shell has no BASHPID"
+}
+
 test_passes_the_command_status_and_output_through() {
   local out rc=0
   out=$(exec_timed "$PERL_ONLY" 5 1 bash -c 'echo to-stdout; echo to-stderr >&2; exit 7' 2>&1) || rc=$?
@@ -337,6 +353,7 @@ test_a_descendant_holding_the_output_cannot_outlast_the_bound
 test_a_signal_to_the_bounding_process_reaches_the_command
 test_a_named_owner_that_is_gone_ends_the_command
 test_an_owner_that_dies_during_startup_ends_the_command
+test_runs_where_the_shell_has_no_bashpid
 test_perl_is_preferred_over_timeout
 test_refuses_rather_than_running_unbounded
 test_rejects_malformed_bounds_before_running_anything

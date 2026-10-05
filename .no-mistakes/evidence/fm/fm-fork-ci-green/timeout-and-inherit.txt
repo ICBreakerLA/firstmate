@@ -1,0 +1,23 @@
+# fm_exec_timed owner resolution inside a subshell with BASHPID unset (bash 3.2 simulation)
+BASHPID set? 
+command-completed-under-living-caller
+subshell rc=0 elapsed=3s
+bound-exceeded rc=124
+
+# remote inherit item set vs local inheritable config
+FM_INHERITABLE_CONFIG=crew-dispatch.json dispatch-never-send crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode worker-sandbox lavish-axi-host keep-ai-trailers supervision-host-off
+remote items:
+config/crew-dispatch.json
+config/dispatch-never-send
+config/crew-harness
+config/backlog-backend
+config/backend
+config/herdr-presentation-spaces
+config/startup-memory-budget
+config/trace-context
+config/launch-env-allowlist
+config/claude-permission-mode
+config/lavish-axi-host
+config/keep-ai-trailers
+config/supervision-host-off
+data/captain-shared.md

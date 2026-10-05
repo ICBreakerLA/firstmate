@@ -1,0 +1,148 @@
+$ bin/fm-wake-drain.sh --help
+[exit 0]
+--stdout--
+usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]
+Presents the queued durable wakes (or "wakes: 0" when none are queued) and prints the WAKE_ACK_REQUIRED command to run once they are handled.
+example: bin/fm-wake-drain.sh --ack-through 12 --recovery-generation g1
+--stderr--
+
+$ bin/fm-wake-drain.sh --bogus
+[exit 2]
+--stdout--
+error: unknown argument: --bogus
+usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]
+Presents the queued durable wakes (or "wakes: 0" when none are queued) and prints the WAKE_ACK_REQUIRED command to run once they are handled.
+example: bin/fm-wake-drain.sh --ack-through 12 --recovery-generation g1
+next: run bin/fm-wake-drain.sh --help, or run it with no arguments to present the queue
+--stderr--
+
+$ bin/fm-send.sh --help
+[exit 0]
+--stdout--
+usage: fm-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] <text...>
+       fm-send.sh <target> --key Enter
+  Steer a task by durable record; the text becomes the task's next steering message.
+example: fm-send.sh fix-login "rebase onto main, then rerun the checks"
+--stderr--
+
+$ bin/fm-send.sh --bogus
+[exit 2]
+--stdout--
+error: unknown flag '--bogus' - the first argument is the target
+next: run fm-send.sh --help for the expected form
+--stderr--
+
+$ bin/fm-peek.sh --help
+[exit 0]
+--stdout--
+usage: fm-peek.sh <target> [lines=40]
+  Print the bounded tail of a task's endpoint for cheap diagnosis.
+example: fm-peek.sh fix-login 60
+--stderr--
+
+$ bin/fm-peek.sh --bogus
+[exit 2]
+--stdout--
+error: unknown flag '--bogus'
+next: run fm-peek.sh --help for the expected form
+--stderr--
+
+$ bin/fm-teardown.sh --help
+[exit 0]
+--stdout--
+usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
+  Clean up a landed task: its endpoint, isolated copy, and runtime records.
+  It refuses while the work is unlanded unless --force explicitly discards it.
+example: fm-teardown.sh fix-login
+--stderr--
+
+$ bin/fm-teardown.sh --bogus
+[exit 2]
+--stdout--
+error: invalid teardown request - unknown flag before the task id
+next: run fm-teardown.sh --help for the expected form
+--stderr--
+
+$ bin/fm-crew-state.sh --help
+[exit 0]
+--stdout--
+usage: fm-crew-state.sh <id>
+  Print one task's current state and detail from its live endpoint and records.
+example: fm-crew-state.sh fix-login
+--stderr--
+
+$ bin/fm-crew-state.sh --bogus
+[exit 2]
+--stdout--
+error: unknown flag '--bogus'
+next: run fm-crew-state.sh --help for the expected form
+--stderr--
+
+$ bin/fm-teardown.sh -f
+[exit 2]
+--stdout--
+error: invalid teardown request - unknown flag before the task id
+next: run fm-teardown.sh --help for the expected form
+--stderr--
+
+$ bin/fm-send.sh -x hi
+[exit 2]
+--stdout--
+error: unknown flag '-x' - the first argument is the target
+next: run fm-send.sh --help for the expected form
+--stderr--
+
+$ bin/fm-peek.sh -x
+[exit 2]
+--stdout--
+error: unknown flag '-x'
+next: run fm-peek.sh --help for the expected form
+--stderr--
+
+$ bin/fm-crew-state.sh -x
+[exit 2]
+--stdout--
+error: unknown flag '-x'
+next: run fm-crew-state.sh --help for the expected form
+--stderr--
+
+$ bin/fm-teardown.sh bad/id
+[exit 2]
+--stdout--
+error: invalid teardown request
+next: run fm-teardown.sh --help for the expected form
+--stderr--
+error: invalid teardown request
+
+$ bin/fm-teardown.sh some-task --nope
+[exit 2]
+--stdout--
+error: invalid teardown request - unknown argument after the task id
+next: run fm-teardown.sh --help for the expected form
+--stderr--
+
+$ bin/fm-wake-drain.sh
+[exit 0]
+--stdout--
+wakes: 0
+--stderr--
+
+$ bin/fm-wake-drain.sh
+[exit 0]
+--stdout--
+wakes: 0
+--stderr--
+
+$ bin/fm-crew-state.sh
+[exit 2]
+--stdout--
+error: a task id is required
+next: run fm-crew-state.sh <id>, or fm-crew-state.sh --help
+--stderr--
+
+$ bin/fm-wake-drain.sh --ack-through abc
+[exit 2]
+--stdout--
+--stderr--
+wake drain: invalid acknowledgement sequence; next: run bin/fm-wake-drain.sh and use the WAKE_ACK_REQUIRED command it prints
+

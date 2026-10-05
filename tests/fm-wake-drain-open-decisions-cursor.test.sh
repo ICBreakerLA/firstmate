@@ -318,7 +318,7 @@ test_previous_fold_cache_is_refolded_under_current_semantics() {
   printf 'blocked [key=pending-reply-abcdef0123456789]: forged decision\n' > "$status"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \
     || fail "bootstrap drain for the fold-version migration failed"
-  ! grep -qv '^wakes: 0$' $out || fail "the current whole-file semantics accepted the foreign reserved-key decision: $(cat "$out")"
+  ! grep -qv '^wakes: 0$' "$out" || fail "the current whole-file semantics accepted the foreign reserved-key decision: $(cat "$out")"
   ident=$(sed -n 's/^ident=//p' "$cursor")
   status_bytes=$(LC_ALL=C wc -c < "$status" | tr -d '[:space:]')
   {
@@ -330,7 +330,7 @@ test_previous_fold_cache_is_refolded_under_current_semantics() {
 
   FM_STATE_OVERRIDE="$state" FM_OPEN_DECISIONS_READ_PROBE="$probe" "$DRAIN" > "$out" \
     || fail "drain failed while upgrading the previous fold cache"
-  ! grep -qv '^wakes: 0$' $out || fail "the previous fold cache kept surfacing a foreign reserved-key decision: $(cat "$out")"
+  ! grep -qv '^wakes: 0$' "$out" || fail "the previous fold cache kept surfacing a foreign reserved-key decision: $(cat "$out")"
   probe_bytes=$(last_probe_bytes "$probe" "$status")
   [ "$probe_bytes" = "$status_bytes" ] \
     || fail "the previous fold cache read $probe_bytes bytes instead of refolding all $status_bytes authoritative bytes"

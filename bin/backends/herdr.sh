@@ -779,8 +779,24 @@ fm_backend_herdr_projection_workspace_label() {  # <task-id> <projection-id>
 # The path is never under any one home's state/ and secondmates never write the
 # primary home. Returns non-zero when the named session's socket cannot be
 # resolved unambiguously.
+#
+# Two macOS users on one Mac share /tmp, and each runs its own Herdr server
+# (the remote fm-remote session is one per account). The first user's
+# namespace is mode 700 and owned by that user, so for the second user it is
+# unusable; that user gets a uid-suffixed namespace instead of an unresolvable
+# lock. FM_HERDR_PRESENTATION_LOCK_BASE moves the shared base for tests only.
 fm_backend_herdr_presentation_lock_namespace() {
-  printf '%s' '/tmp/firstmate-herdr-presentation'
+  local base=${FM_HERDR_PRESENTATION_LOCK_BASE:-/tmp/firstmate-herdr-presentation} uid
+  if [ -e "$base" ] || [ -L "$base" ]; then
+    if fm_backend_herdr_presentation_lock_namespace_valid "$base"; then
+      printf '%s' "$base"
+      return 0
+    fi
+    uid=$(id -u 2>/dev/null) || return 1
+    printf '%s-%s' "$base" "$uid"
+    return 0
+  fi
+  printf '%s' "$base"
 }
 
 fm_backend_herdr_presentation_lock_namespace_mode() {
@@ -838,18 +854,35 @@ fm_backend_herdr_canonical_socket_path() {  # <socket-path>
 }
 
 fm_backend_herdr_presentation_session_socket_path() {  # <session>
-  local session=$1 sessions socket
+  local session=$1 sessions candidates candidate count uid mine
   [ -n "$session" ] || return 1
   sessions=$(fm_backend_herdr_cli "$session" session list --json 2>/dev/null) || return 1
-  socket=$(printf '%s' "$sessions" | jq -er --arg want "$session" '
+  candidates=$(printf '%s' "$sessions" | jq -er --arg want "$session" '
     [.sessions[]?
       | select(.name == $want and .running == true)
       | select((.socket_path | type) == "string")
       | select((.socket_path | length) > 0)
       | .socket_path]
-    | if length == 1 then .[0] else empty end
+    | .[]
   ' 2>/dev/null) || return 1
-  fm_backend_herdr_canonical_socket_path "$socket"
+  count=$(printf '%s\n' "$candidates" | grep -c . || true)
+  if [ "$count" -gt 1 ]; then
+    # Another account's server on this host can run the same session name;
+    # only a socket this user owns is this user's endpoint.
+    uid=$(id -u 2>/dev/null) || return 1
+    mine=
+    while IFS= read -r candidate; do
+      [ -n "$candidate" ] || continue
+      [ "$(fm_backend_herdr_presentation_lock_namespace_uid "$candidate")" = "$uid" ] || continue
+      mine="${mine}${candidate}"$'\n'
+    done <<EOF
+$candidates
+EOF
+    candidates=${mine%$'\n'}
+    count=$(printf '%s\n' "$candidates" | grep -c . || true)
+  fi
+  [ "$count" -eq 1 ] || return 1
+  fm_backend_herdr_canonical_socket_path "$candidates"
 }
 
 fm_backend_herdr_presentation_session_lock_path() {  # <session>

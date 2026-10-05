@@ -3404,6 +3404,56 @@ test_presentation_session_lock_path_is_shared_across_homes() {
   pass "herdr presentation lock: one path per session/socket across homes"
 }
 
+# Two macOS users on one Mac each run a herdr server named fm-remote. The
+# session listing then carries two running entries under one name and the
+# first user's lock namespace is unusable by the second, so remote retirement
+# could neither pick an endpoint nor take its lock. Each user resolves its own.
+test_presentation_session_lock_resolves_per_user_for_same_named_sessions() {
+  local dir log resp fb mine theirs me path_mine path_theirs ns_mine ns_foreign
+  dir="$TMP_ROOT/presentation-session-two-users"; mkdir -p "$dir/responses" "$dir/mine" "$dir/theirs"
+  log="$dir/log"; resp="$dir/responses"; : > "$log"
+  mine="$dir/mine/herdr.sock"; theirs="$dir/theirs/herdr.sock"
+  : > "$mine"; : > "$theirs"
+  me=$(id -u)
+  printf '%s\n' "{\"sessions\":[{\"name\":\"fm-remote\",\"running\":true,\"socket_path\":\"$theirs\"},{\"name\":\"fm-remote\",\"running\":true,\"socket_path\":\"$mine\"}]}" > "$resp/1.out"
+  cp "$resp/1.out" "$resp/2.out"
+  fb=$(make_herdr_fakebin "$dir")
+  # The fake reports the other user's socket as owned by another uid.
+  path_mine=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_HERDR_PRESENTATION_LOCK_BASE="$dir/lock-ns" FM_TEST_THEIRS="$theirs" FM_TEST_MY_SOCK="$mine" FM_TEST_ME="$me" \
+    bash -c '. "$0/bin/backends/herdr.sh"
+      fm_backend_herdr_presentation_lock_namespace_uid() {
+        [ "$1" = "$FM_TEST_THEIRS" ] && { printf "%s" "$((FM_TEST_ME + 1))"; return 0; }
+        [ "$1" = "$FM_TEST_MY_SOCK" ] && { printf "%s" "$FM_TEST_ME"; return 0; }
+        stat -c %u "$1" 2>/dev/null || /usr/bin/stat -f %u "$1"
+      }
+      fm_backend_herdr_presentation_session_lock_path fm-remote' "$ROOT") \
+    || fail "two same-named sessions: this user's lock path did not resolve"
+  case "$path_mine" in
+    "$dir"/lock-ns/order-*.lock) ;;
+    *) fail "two same-named sessions: unexpected lock path $path_mine" ;;
+  esac
+  path_theirs=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    FM_HERDR_PRESENTATION_LOCK_BASE="$dir/lock-ns" \
+    bash -c '. "$0/bin/backends/herdr.sh"
+      fm_backend_herdr_presentation_lock_namespace_uid() { printf "%s" 0; }
+      fm_backend_herdr_presentation_session_lock_path fm-remote' "$ROOT" 2>/dev/null) \
+    && fail "two same-named sessions, neither owned by this user, still resolved a lock: $path_theirs"
+
+  # A namespace already claimed by another user must not strand this one.
+  mkdir -p "$dir/foreign-ns"; chmod 700 "$dir/foreign-ns"
+  ns_foreign=$(PATH="$fb:$PATH" FM_HERDR_PRESENTATION_LOCK_BASE="$dir/foreign-ns" FM_TEST_ME="$me" \
+    bash -c '. "$0/bin/backends/herdr.sh"
+      fm_backend_herdr_presentation_lock_namespace_uid() { printf "%s" "$((FM_TEST_ME + 1))"; }
+      fm_backend_herdr_presentation_lock_namespace' "$ROOT") \
+    || fail "a foreign-owned lock namespace was not worked around"
+  [ "$ns_foreign" = "$dir/foreign-ns-$me" ] || fail "foreign-owned namespace did not fall back to a per-user one: $ns_foreign"
+  ns_mine=$(PATH="$fb:$PATH" FM_HERDR_PRESENTATION_LOCK_BASE="$dir/foreign-ns" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_presentation_lock_namespace' "$ROOT")
+  [ "$ns_mine" = "$dir/foreign-ns" ] || fail "an own namespace must stay the shared one: $ns_mine"
+  pass "herdr presentation lock: two same-named sessions and a foreign namespace resolve per user"
+}
+
 test_presentation_session_lock_path_rejects_malformed_socket() {
   local dir log resp fb path status
   dir="$TMP_ROOT/presentation-malformed-socket"; mkdir -p "$dir/responses"
@@ -5865,6 +5915,7 @@ test_projection_order_anchors_the_parent_by_exact_id
 test_projection_order_foreign_new_child_before_parent_is_read_only
 test_projection_order_missing_parent_is_read_only
 test_presentation_session_lock_path_is_shared_across_homes
+test_presentation_session_lock_resolves_per_user_for_same_named_sessions
 test_presentation_session_lock_path_rejects_malformed_socket
 test_projection_order_rejects_malformed_socket
 test_projection_reclaim_refusal_matrix_is_non_mutating

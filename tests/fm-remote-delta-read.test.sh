@@ -127,23 +127,37 @@ pass 'a same-size in-place rewrite breaks continuity as prefix-changed'
 
 # A same-size rewrite of the same inode within the snapshot's own second leaves
 # size, inode, device, and whole-second mtime and ctime unchanged: only the
-# subsecond stat key can tell it moved. Each attempt starts on a second
-# boundary, rewrites once the first capture ran, and is retried only if the
-# rewrite still crossed into the next ctime second.
+# subsecond stat key can tell it moved. The reader's capture is held open by a
+# perl shim, so the rewrite lands exactly between the first capture and the next
+# poll rather than after a guessed delay. Each attempt starts just after a
+# second boundary, past the kernel's coarse timestamp lag, and is retried only
+# if the rewrite still crossed into the next ctime second.
 ctime_second() { perl -e 'print +(stat shift)[10]' "$1"; }
+HOLD_DIR="$TMP_ROOT/hold"
+HOLD_SHIM="$TMP_ROOT/hold-shim"
+mkdir -p "$HOLD_DIR" "$HOLD_SHIM"
+REAL_PERL=$(PATH=/usr/bin:/bin command -v perl)
+cat > "$HOLD_SHIM/perl" <<SH
+#!/bin/sh
+$REAL_PERL "\$@" || exit \$?
+: > "$HOLD_DIR/captured"
+n=0
+while [ ! -e "$HOLD_DIR/go" ] && [ \$n -lt 500 ]; do $REAL_PERL -e 'select(undef, undef, undef, 0.01)'; n=\$((n + 1)); done
+SH
+chmod +x "$HOLD_SHIM/perl"
 SAME_SECOND=
-for _ in 1 2 3; do
-  perl -MTime::HiRes=time,sleep -e 'sleep(1 - (time - int(time)))'
+for _ in 1 2 3 4 5; do
+  rm -f "$HOLD_DIR/captured" "$HOLD_DIR/go"
+  perl -MTime::HiRes=time,sleep -e 'sleep(1.05 - (time - int(time)))'
   printf 'alpha\nbeta\n' > "$DELTA_HOME/$DELTA_LOG_REL"
   BEFORE_SECOND=$(ctime_second "$DELTA_HOME/$DELTA_LOG_REL")
-  : > "$EXEC_LOG"
-  FM_TEST_EXEC_LOG="$EXEC_LOG" PATH="$DELTA_SHIM:/usr/bin:/bin" \
-    run_reader 11 "$PREFIX_SHA" 2 > "$TMP_ROOT/same-second.out" &
+  PATH="$HOLD_SHIM:/usr/bin:/bin" run_reader 11 "$PREFIX_SHA" 4 > "$TMP_ROOT/same-second.out" &
   READER_PID=$!
-  for _ in $(seq 1 50); do grep -qx perl "$EXEC_LOG" && break; sleep 0.01; done
-  sleep 0.15
+  for _ in $(seq 1 500); do [ -e "$HOLD_DIR/captured" ] && break; sleep 0.01; done
+  [ -e "$HOLD_DIR/captured" ] || fail 'the reader never took its first capture'
   printf 'OMEGA\nbeta\n' > "$DELTA_HOME/$DELTA_LOG_REL"
   AFTER_SECOND=$(ctime_second "$DELTA_HOME/$DELTA_LOG_REL")
+  : > "$HOLD_DIR/go"
   RC=0
   wait "$READER_PID" || RC=$?
   [ "$BEFORE_SECOND" = "$AFTER_SECOND" ] || continue

@@ -503,6 +503,17 @@ jobs:
             exit 1
           }
 
+          # The launch-env-allowlist wrapper executes in the pane's own shell
+          # on macOS, where /bin/sh, /bin/bash and /bin/zsh are all present.
+          allowlist_output=$(FM_TEST_ONLY=test_launch_environment_allowlist \
+            /bin/bash tests/fm-spawn-dispatch-profile.test.sh)
+          printf '%s\n' "$allowlist_output"
+          allowlist_count=$(printf '%s\n' "$allowlist_output" | grep -c '^ok - ')
+          [ "$allowlist_count" -eq 4 ] || {
+            echo "::error::expected 4 launch-env-allowlist regressions, got $allowlist_count"
+            exit 1
+          }
+
   invariants:
     name: Repo invariants
     runs-on: ubuntu-latest

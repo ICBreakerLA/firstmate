@@ -870,6 +870,7 @@ Any other value, or an unreadable file, refuses every spawn from that home befor
 Under `sbx`, only the canonical Claude launch on the tmux backend is supported, with no worker account pin.
 A Claude launch with a pin, a raw launch command, another harness, or another backend refuses rather than starting a worker outside the sandbox the captain asked for.
 A persistent secondmate is never sandboxed, but its own Claude ship and scout workers follow the file, which is inherited into the secondmate home under the [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) inherited-local-material contract.
+A remote secondmate home never inherits the file, because the sandbox runtime is local to the primary's Linux host.
 
 ### What a sandboxed worker can see and do
 

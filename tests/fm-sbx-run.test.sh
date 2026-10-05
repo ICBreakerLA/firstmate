@@ -442,7 +442,7 @@ test_verify_refusals_happen_before_any_sandbox_exists() {
 }
 
 test_verify_signal_stops_the_broker_and_forces_down() {
-  local pid i
+  local pid
   new_world verifysig
   verify_world
   : >"$W/run.hang"

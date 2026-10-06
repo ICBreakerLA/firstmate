@@ -968,7 +968,8 @@ These steps are the owner's and are not automated.
 3. Optionally seed the offline npm cache with `bin/fm-sbx-npm-seed.sh <project-dir>` and rerun it when a lockfile changes.
    Sandboxed workers install with `npm ci --offline` against that cache, which is mounted read-only, because the registry is not reachable by default.
 4. Optionally create `config/sbx-github-token` (mode 600) for the GitHub access described above.
-5. Write `sbx` to `config/worker-sandbox`.
+5. A home that ships to the Firstmate fork optionally creates `~/.config/firstmate/fork-gh-token` (mode 600) with that fork-only token, so a ship's sandbox gets it automatically instead of the home's own token.
+6. Write `sbx` to `config/worker-sandbox`.
 
 ### Failures
 

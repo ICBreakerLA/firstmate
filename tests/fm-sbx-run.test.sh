@@ -45,7 +45,9 @@ daemon) echo "Status: running" ;;
 ls) cat "$LIVE" ;;
 create) printf '%s\\n' "\$3" >>"$LIVE" ;;
 rm) grep -Fxv -- "\$3" "$LIVE" >"$LIVE.new"; mv "$LIVE.new" "$LIVE" ;;
-secret) cat >"$W/secret.stdin" ;;
+secret)
+  [ "\$2" = rm ] && exit 0
+  if [ "\$6" = --command ]; then sh -c "\$7" >"$W/secret.stdin"; else cat >"$W/secret.stdin"; fi ;;
 exec)
   case "\$*" in
   *"no-mistakes --version"*) cat "$W/vm.nmver" 2>/dev/null; exit 0 ;;
@@ -249,7 +251,9 @@ test_a_fork_ship_swaps_the_secret_and_points_origin_at_the_fork() {
   assert_contains "$lines" "secret rm github --sandbox $NAME" "the sandbox's starting credential is removed"
   assert_contains "$lines" "secret set github --sandbox $NAME" "the fork secret is scoped to this sandbox"
   [ "$(printf '%s\n' "$lines" | grep -n 'secret rm' | cut -d: -f1)" -lt "$(printf '%s\n' "$lines" | grep -n 'secret set' | cut -d: -f1)" ] || fail "the old secret must go before the new one is set: $lines"
-  assert_equals "$FORK_SECRET" "$(cat "$W/secret.stdin")" "the fork token reaches sbx on stdin"
+  assert_contains "$lines" "secret rm github --sandbox $NAME -f" "the removal is non-interactive"
+  assert_contains "$lines" "secret set github --sandbox $NAME --command" "the host reads the token file for sbx"
+  assert_equals "$FORK_SECRET" "$(cat "$W/secret.stdin")" "the fork token reaches sbx from the host file"
   assert_not_contains "$(log)" "$FORK_SECRET" "the fork token is never in any sbx argument"
   assert_not_contains "$(log)" "$SECRET" "the home's own token is not used for the fork"
   assert_contains "$(log)" "ENV-AT-RUN: 0" "neither token is in the environment claude runs under"

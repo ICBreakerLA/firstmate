@@ -241,9 +241,10 @@ fm_sbx_fork_url() {
 }
 
 # fm_sbx_fork_secret <name>
-# Replace one sandbox's github secret with the fork-only token, streaming the
-# file straight into sbx so the value is never held in a variable, an argument
-# or the environment.
+# Replace one sandbox's github secret with the fork-only token.
+# sbx runs the --command on the host and reads the token from its output, so the
+# value is never held in a variable, an argument or the environment; only the
+# file's path is an argument.
 # Returns 0 when stored, 3 when the token file is absent, a symlink, unreadable
 # or empty (the sandbox keeps whatever credential it started with), and 1 when
 # sbx refused the secret.
@@ -252,8 +253,8 @@ fm_sbx_fork_secret() {
   file=$(fm_sbx_fork_token_file)
   [ -f "$file" ] && [ ! -L "$file" ] && [ -r "$file" ] || return 3
   [ -n "$(tr -d '[:space:]' <"$file" 2>/dev/null | head -c 1)" ] || return 3
-  sbx secret rm github --sandbox "$name" </dev/null >/dev/null 2>&1 || true
-  tr -d '[:space:]' <"$file" | sbx secret set github --sandbox "$name" >/dev/null 2>&1
+  sbx secret rm github --sandbox "$name" -f </dev/null >/dev/null 2>&1 || true
+  sbx secret set github --sandbox "$name" --command "tr -d '[:space:]' <$(printf '%q' "$file")" </dev/null >/dev/null 2>&1
 }
 
 # fm_sbx_lint_tools <name> <code-root>

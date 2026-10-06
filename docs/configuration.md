@@ -910,7 +910,7 @@ The token is never an argument, a mount, or an environment variable of the worke
 A symlinked token file is never read.
 
 A ship whose repository lists the Firstmate fork (`ICBreakerLA/firstmate`, overridable with `FM_SBX_FORK_REPO`) as any remote gets the fork-only token from `~/.config/firstmate/fork-gh-token` (`FM_SBX_FORK_TOKEN_FILE`) instead, with no manual step.
-The launch removes the sandbox's starting `github` secret, stores the fork token in its place with the same stdin-only `sbx secret set`, and points the clone's `origin` at `https://github.com/ICBreakerLA/firstmate` so the pipeline pushes to the fork rather than upstream.
+The launch removes the sandbox's starting `github` secret, stores the fork token in its place with `sbx secret set --command`, which makes sbx read the token file on the host, and points the clone's `origin` at `https://github.com/ICBreakerLA/firstmate` so the pipeline pushes to the fork rather than upstream.
 The host's bridge keeps that origin only because the fork is one of the host repository's own remotes, so a worker cannot choose another.
 Scouts, other repositories, and an explicit `FM_SBX_GH_TOKEN` keep the home's token, and an absent, symlinked, or empty fork token file leaves the home's token in place with a notice that the fork push will be refused.
 The token's value is never printed and never reaches an argument, a mount, or the worker's environment.

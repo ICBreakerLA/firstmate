@@ -109,6 +109,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-sbx-verify-broker.sh` | Host-side broker that answers a sandboxed worker's typed verification requests by running the pinned `sm-verify`, behind a lease, a validator, and an audit log |
 | `fm-sbx-verify-lib.sh`   | Config grammar, request validator, selector denylist, and Maestro generator for the verification broker |
 | `fm-sbx-verify-io.py`    | No-follow file copy and the one-file bundle server for the verification broker |
+| `fm-pipeline-spend.sh`   | Attribute a task's no-mistakes pipeline spend to the task and keep it in the private spend ledger |
 | `fm-tangle-lib.sh`       | Shared default-branch resolution and primary-checkout tangle classification          |
 | `fm-timeout-lib.sh`      | Single owner of hard-bounded command execution and its fallback watchdog |
 | `fm-timing-lib.sh`       | Single owner of the deferred network stage's per-step elapsed-time records, inert unless a run asks for them |

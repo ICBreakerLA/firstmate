@@ -516,4 +516,8 @@ The other harnesses rely on these mechanisms:
 - Grok retains native background-completion notifications.
 - Codex retains bounded foreground checkpoints.
 
+`bin/fm-watcher-beat-check.sh` is the cheap, read-only proof that the primary watcher is alive: it prints one `watcher-down` line and exits 1 when the beacon is older than the grace while work is in flight.
+Run it from something that ticks independently of the watcher, because a registered custom check cannot report the absence of the watcher that runs it.
+`bin/fm-guard.sh` stays the model-aware verdict, and the check is a pure beacon-age test.
+
 [`verification/supervision.md`](verification/supervision.md#watcher-continuity) records the current cross-harness live evidence, the dated Stop-owned Claude auto-arm results, and exact opt-in commands.

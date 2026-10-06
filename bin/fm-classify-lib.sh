@@ -2625,17 +2625,28 @@ FM_WORKTREE_WRITE_TIMEOUT=${FM_WORKTREE_WRITE_TIMEOUT:-10}
 # worktree's own filesystem rather than descending into a nested network or container
 # mount, so a write that lands only under such a mount is one more negative outcome.
 crew_worktree_written_since() {  # <id> <state> <anchor-file>
-  local id=$1 state=$2 anchor=$3 wt kind name hit bound
-  local -a names=() prune=()
+  local id=$1 state=$2 anchor=$3 wt kind name hit bound dir sandbox
+  local -a names=() prune=() dirs=()
   [ -n "$id" ] || return 1
   [ -f "$anchor" ] || return 1
   wt=$(grep '^worktree=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
-  [ -n "$wt" ] && [ -d "$wt" ] || return 1
   kind=$(grep '^kind=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
   [ "$kind" != secondmate ] || return 1
-  if [ -e "$wt/.fm-secondmate-home" ] || [ -L "$wt/.fm-secondmate-home" ]; then
-    return 1
+  if [ -n "$wt" ] && [ -d "$wt" ]; then
+    if [ -e "$wt/.fm-secondmate-home" ] || [ -L "$wt/.fm-secondmate-home" ]; then
+      return 1
+    fi
+    dirs+=( "$wt" )
   fi
+  # A sandboxed worker (sandbox=sbx) writes inside its own standalone clone
+  # (fm_sbx_clone_dir in bin/fm-sbx-lib.sh: <state>/<id>.sbx-clone) and the host
+  # worktree only changes when that work is bridged back, so a probe of the host
+  # worktree alone reads a busy sandboxed worker as writing nothing.
+  sandbox=$(grep '^sandbox=' "$state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+  if [ "$sandbox" = sbx ] && [ -d "$state/$id.sbx-clone" ]; then
+    dirs+=( "$state/$id.sbx-clone" )
+  fi
+  [ "${#dirs[@]}" -gt 0 ] || return 1
   read -r -a names <<< "$FM_WORKTREE_WRITE_PRUNE"
   for name in ${names[@]+"${names[@]}"}; do
     [ "${#prune[@]}" -eq 0 ] || prune+=( -o )
@@ -2643,14 +2654,17 @@ crew_worktree_written_since() {  # <id> <state> <anchor-file>
   done
   bound=$FM_WORKTREE_WRITE_TIMEOUT
   case "$bound" in ''|*[!0-9]*|0) bound=10 ;; esac
-  if [ "${#prune[@]}" -gt 0 ]; then
-    hit=$(fm_run_timed "$bound" find "$wt" -xdev -maxdepth "$FM_WORKTREE_WRITE_MAXDEPTH" \
-      \( "${prune[@]}" \) -prune -o -type f -newer "$anchor" -print -quit 2>/dev/null || true)
-  else
-    hit=$(fm_run_timed "$bound" find "$wt" -xdev -maxdepth "$FM_WORKTREE_WRITE_MAXDEPTH" \
-      -type f -newer "$anchor" -print -quit 2>/dev/null || true)
-  fi
-  [ -n "$hit" ]
+  for dir in "${dirs[@]}"; do
+    if [ "${#prune[@]}" -gt 0 ]; then
+      hit=$(fm_run_timed "$bound" find "$dir" -xdev -maxdepth "$FM_WORKTREE_WRITE_MAXDEPTH" \
+        \( "${prune[@]}" \) -prune -o -type f -newer "$anchor" -print -quit 2>/dev/null || true)
+    else
+      hit=$(fm_run_timed "$bound" find "$dir" -xdev -maxdepth "$FM_WORKTREE_WRITE_MAXDEPTH" \
+        -type f -newer "$anchor" -print -quit 2>/dev/null || true)
+    fi
+    [ -z "$hit" ] || return 0
+  done
+  return 1
 }
 
 # 0 (benign/absorb) if EVERY task referenced by a no-verb "signal:" wake is provably

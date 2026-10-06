@@ -25,7 +25,11 @@
 # <id>` renders the same rows as a human table. There is no machine-readable
 # export yet, so this script reads the database read-only (mode=ro), located
 # by bin/fm-nm-run-lib.sh's fm_nm_state_db, and bounded by 30 seconds per
-# no-mistakes or database call.
+# no-mistakes or database call. A sandboxed task's database lives inside its
+# microVM (bin/fm-nm-run-lib.sh), unreachable as a host file, so this script
+# binds the task's sandbox before the `axi` lookup and records the source as
+# unavailable rather than reading a host path that is either absent or, worse,
+# some unrelated repository's database.
 #
 # Attribution. A task's runs are the runs no-mistakes recorded for the task
 # copy's repository and current branch since that branch was created:
@@ -89,6 +93,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-sbx-lib.sh
+. "$SCRIPT_DIR/fm-sbx-lib.sh"
 
 usage() {
   sed -n '2,/^set -eu$/s/^# \{0,1\}//p' "$0"
@@ -136,6 +142,9 @@ else
   # line is the oldest surviving entry, normally the branch's creation.
   SINCE=$(git -C "$WT" reflog show --date=unix --format=%gd "refs/heads/$BRANCH" -- 2>/dev/null \
     | tail -1 | sed -n 's/.*@{\([0-9][0-9]*\)}$/\1/p') || SINCE=
+  if [ "$(meta_value sandbox)" = sbx ]; then
+    fm_nm_sandbox_bind "$WT" "$(meta_value sandbox_name)" "$(fm_sbx_clone_dir "$STATE" "$ID")" || true
+  fi
   OVERVIEW=$(fm_nm_run_checked "$WT" "$TIMEOUT" axi) || true
   REPO=$(fm_nm_strip_quotes "$(printf '%s\n' "$OVERVIEW" | sed -n 's/^repo:[[:space:]]*//p' | head -1)")
   if [ -z "$REPO" ]; then
@@ -143,6 +152,8 @@ else
     FIRST_LINE=$(printf '%s\n' "$OVERVIEW" | sed -n '/^error:/{p;q;}')
     [ -n "$FIRST_LINE" ] || FIRST_LINE=$(printf '%s\n' "$OVERVIEW" | sed -n '/[^[:space:]]/{p;q;}')
     [ -z "$FIRST_LINE" ] || REASON="$REASON: $FIRST_LINE"
+  elif fm_nm_sandbox_bound "$WT"; then
+    REASON="no-mistakes' state database lives inside the task's sandbox and is not readable from the host"
   else
     DB=$(fm_nm_state_db "$WT")
   fi

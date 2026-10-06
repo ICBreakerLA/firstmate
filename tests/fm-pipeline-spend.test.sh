@@ -314,6 +314,61 @@ test_disabled_record_does_not_read_or_create_spend_data() {
   pass 'an absent opt-in flag bypasses task, pipeline, and ledger reads and writes'
 }
 
+# A sandboxed task's own no-mistakes daemon, database, and runs live inside
+# its microVM (bin/fm-nm-run-lib.sh). A fake `sbx` records every call it is
+# asked to make and execs straight into the fake no-mistakes, so the repo
+# lookup only succeeds if the script bound the sandbox before calling it; the
+# host never has a matching state database for that worktree, so the record
+# must read as unavailable, naming the sandbox, rather than silently reading
+# some unrelated host database.
+test_sandboxed_task_binds_before_axi_and_never_reads_the_host_database() {
+  local d out calls
+  d=$TMP_ROOT/sandboxed
+  mkdir -p "$d/home/state" "$d/home/data" "$d/home/config" "$d/fakebin"
+  : > "$d/home/config/pipeline-spend"
+  fm_git_init_commit "$d/project"
+  GIT_COMMITTER_DATE="@$BRANCH_EPOCH +0000" git -C "$d/project" worktree add -q -b fm/task "$d/wt"
+  fm_write_meta "$d/home/state/task.meta" \
+    "window=firstmate:fm-task" \
+    "endpoint_task_id=task" \
+    "worktree=$d/wt" \
+    "project=$d/project" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "sandbox=sbx" \
+    "sandbox_name=fm-sbx-test" \
+    "spawn_gen=s$SPAWN_EPOCH.1.abc"
+  calls=$d/calls.log
+  : > "$calls"
+  cat > "$d/fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+printf 'no-mistakes %s\n' "$*" >> "$CALLS"
+[ "$*" = axi ] || exit 1
+printf 'bin: no-mistakes\nrepo: %s\ncurrent_branch: fm/task\n' "$REPO_ANSWER"
+SH
+  cat > "$d/fakebin/sbx" <<'SH'
+#!/usr/bin/env bash
+printf 'sbx %s\n' "$*" >> "$CALLS"
+case "$1" in
+ls) printf 'fm-sbx-test\n' ;;
+exec) shift 6; exec "$@" ;;
+esac
+SH
+  chmod +x "$d/fakebin/no-mistakes" "$d/fakebin/sbx"
+  out=$(env -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE FM_HOME="$d/home" NM_HOME="$d/nm" \
+    CALLS="$calls" REPO_ANSWER="$d/project" PATH="$d/fakebin:$PATH" \
+    "$SPEND" record task) || fail "record failed for a sandboxed task"
+  out=$(tail -1 "$d/home/data/pipeline-spend.jsonl")
+  assert_contains "$(cat "$calls")" \
+    "sbx exec -w $d/home/state/task.sbx-clone -e NM_HOME=/home/agent/nm fm-sbx-test no-mistakes axi" \
+    'the repo lookup for a sandboxed task runs through sbx exec, in its own clone'
+  assert_equals "\"$d/project\"" "$(field "$out" .repo)" 'the sandboxed lookup resolved the repository'
+  assert_equals '"unavailable"' "$(field "$out" .source)" \
+    'a sandboxed task never reads a host-local state database, even though the repo resolved'
+  assert_contains "$(field "$out" .reason)" 'sandbox' 'the reason names the sandbox, not a generic read failure'
+  pass 'a sandboxed task binds before the axi lookup and never reads a host-local state database'
+}
+
 # With neither NM_HOME nor HOME set, the state database still resolves under
 # the account's home directory, as the CLI's own lookup does, never /.no-mistakes.
 test_state_db_without_nm_home_or_home_uses_the_account_home() {
@@ -351,5 +406,6 @@ test_absent_spend_is_zero_or_unavailable_never_invented
 test_older_state_without_delta_columns_counts_only_provable_rounds
 test_record_appends_once_per_task_incarnation
 test_disabled_record_does_not_read_or_create_spend_data
+test_sandboxed_task_binds_before_axi_and_never_reads_the_host_database
 test_state_db_without_nm_home_or_home_uses_the_account_home
 test_refusals

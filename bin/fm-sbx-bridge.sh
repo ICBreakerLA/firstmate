@@ -67,7 +67,7 @@ keep_fork_origin() {
   [ -n "$cur" ] && [ "$cur" != "$host" ] || { printf '%s\n' "$host"; return 0; }
   slug=$(fm_sbx_github_slug "$cur" 2>/dev/null) || slug=
   if [ -n "$slug" ] && [ "$cur" = "https://github.com/$(fm_sbx_fork_repo)" ] &&
-    [ "$slug" = "$(fm_sbx_fork_repo | tr 'A-Z' 'a-z')" ]; then
+    [ "$slug" = "$(fm_sbx_fork_repo | tr '[:upper:]' '[:lower:]')" ]; then
     while IFS= read -r r; do
       u=$(git -C "$wt" remote get-url "$r" 2>/dev/null) || continue
       if [ "$(fm_sbx_github_slug "$u" 2>/dev/null)" = "$slug" ]; then

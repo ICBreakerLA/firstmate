@@ -211,7 +211,7 @@ fm_sbx_github_slug() {
   */?*) ;;
   *) return 1 ;;
   esac
-  printf '%s\n' "$rest" | tr 'A-Z' 'a-z'
+  printf '%s\n' "$rest" | tr '[:upper:]' '[:lower:]'
 }
 
 # fm_sbx_fork_repo / fm_sbx_fork_token_file
@@ -229,7 +229,7 @@ fm_sbx_fork_token_file() { printf '%s\n' "${FM_SBX_FORK_TOKEN_FILE:-${XDG_CONFIG
 fm_sbx_fork_url() {
   local wt=$1 fork want r u
   fork=$(fm_sbx_fork_repo)
-  want=$(printf '%s' "$fork" | tr 'A-Z' 'a-z')
+  want=$(printf '%s' "$fork" | tr '[:upper:]' '[:lower:]')
   while IFS= read -r r; do
     [ -n "$r" ] || continue
     u=$(git -C "$wt" remote get-url "$r" 2>/dev/null) || continue

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fm-sbx-verify-broker.sh - the host-side verification broker for a sandboxed
-# worker (config/worker-sandbox `verify=sportsmeet`).
+# worker (config/worker-sandbox `verify=app`).
 #
 # A sandboxed worker cannot reach the host's Android emulator, so it asks for
 # a fixed set of verbs through a request spool and reads typed results back.
@@ -619,7 +619,7 @@ check)
   [ -n "$CONFIG" ] || die "--config is required"
   for t in jq python3 flock; do
     command -v "$t" >/dev/null 2>&1 || {
-      echo "error: verify=sportsmeet needs $t on the host PATH" >&2
+      echo "error: verify=app needs $t on the host PATH" >&2
       exit 1
     }
   done

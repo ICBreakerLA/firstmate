@@ -1,6 +1,6 @@
 # Sandbox verification broker
 
-A sandboxed worker cannot reach the host's Android emulator, so a home that sets `verify=sportsmeet` in [`config/worker-sandbox`](configuration.md#worker-sandbox-configworker-sandbox) gives its sandboxes a request spool instead.
+A sandboxed worker cannot reach the host's Android emulator, so a home that sets `verify=app` in [`config/worker-sandbox`](configuration.md#worker-sandbox-configworker-sandbox) gives its sandboxes a request spool instead.
 The worker writes small typed requests into the spool, a host-side broker validates each one, runs the host's pinned `sm-verify` command for it, and writes a typed result back.
 The worker never gets a shell on the host, never names a path or an option for `sm-verify`, and never writes Maestro YAML.
 This page is the contract a worker-side client implements against.

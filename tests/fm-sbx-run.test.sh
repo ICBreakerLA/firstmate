@@ -398,14 +398,14 @@ verify_world() {
   mkdir -p "$W/hostbin"
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"%s/smv.log"\n' "$W" >"$W/hostbin/sm-verify"
   chmod +x "$W/hostbin/sm-verify"
-  printf 'sm-verify=%s\nlease-dir=%s/lease\n' "$W/hostbin/sm-verify" "$W" >"$CONFIG/sbx-verify"
+  printf 'app-id=com.example.app\nsm-verify=%s\nlease-dir=%s/lease\n' "$W/hostbin/sm-verify" "$W" >"$CONFIG/sbx-verify"
 }
 
 test_verify_flag_mounts_the_spool_and_runs_the_broker() {
   local create out rc
   new_world verify
   verify_world
-  out=$(wrap --kind scout --verify sportsmeet -- claude 2>&1); rc=$?
+  out=$(wrap --kind scout --verify app -- claude 2>&1); rc=$?
   expect_code 0 "$rc" "the wrapper still returns claude's exit code: $out"
   create=$(grep '^create ' "$LOG")
   assert_contains "$create" " $STATE/t1.sbx-verify/req " "the request spool is mounted writable"
@@ -432,7 +432,7 @@ test_verify_flag_off_changes_nothing() {
 test_verify_refusals_happen_before_any_sandbox_exists() {
   local rc
   new_world verifybad
-  wrap --kind scout --verify sportsmeet -- claude >/dev/null 2>&1; rc=$?
+  wrap --kind scout --verify app -- claude >/dev/null 2>&1; rc=$?
   expect_code 1 "$rc" "a missing config/sbx-verify refuses"
   assert_not_contains "$(log)" "create " "nothing was created"
   wrap --kind scout --verify other -- claude >/dev/null 2>&1; rc=$?
@@ -447,7 +447,7 @@ test_verify_signal_stops_the_broker_and_forces_down() {
   verify_world
   : >"$W/run.hang"
   HOME="$W/userhome" PATH="$FAKE:$PATH" setsid "$RUNSH" --id t1 --config "$CONFIG" --state "$STATE" --data "$DATA" \
-    --root "$HOMEDIR" --wt "$WT" --clone "$CLONE" --name "$NAME" --kind scout --verify sportsmeet -- claude >/dev/null 2>/dev/null &
+    --root "$HOMEDIR" --wt "$WT" --clone "$CLONE" --name "$NAME" --kind scout --verify app -- claude >/dev/null 2>/dev/null &
   pid=$!
   for _ in $(seq 1 100); do [ -f "$W/run.started" ] && break; sleep 0.1; done
   [ -f "$W/run.started" ] || fail "the sandbox never started"

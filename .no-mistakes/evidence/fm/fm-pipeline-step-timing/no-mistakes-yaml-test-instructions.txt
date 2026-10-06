@@ -1,0 +1,8 @@
+top-level keys: disable_project_settings,document,commands,test
+test.instructions (first 6 lines):
+Validate only what the diff changes, and finish the whole Test step in about five minutes.
+Run the added or changed tests/*.test.sh files and the one or two existing tests of the touched subject, each under bash, then stop; CI owns the broad suite, so never walk it.
+Run a new regression test once against the base to see it fail and once against the change to see it pass, then move on; do not repeat a proof a deterministic test already gives.
+Start a live scenario only when the diff changes launch, lifecycle, or harness behavior that no deterministic test can reach.
+Before starting one, check that its tools exist here (tmux, herdr, the harness CLI). When one is absent, as in a sandboxed ship, record that scenario as untested in one line and go on; never probe for a workaround or build a stand-in.
+Run live Herdr scenarios only through bin/fm-herdr-lab.sh with a named non-default fm-lab-* session, following that helper's prepare, provision, run, and teardown contract exactly.

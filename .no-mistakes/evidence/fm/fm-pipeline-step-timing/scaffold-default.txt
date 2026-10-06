@@ -1,0 +1,2 @@
+scaffolded: /tmp/tmp.pWpKNCFFXj/data/nm-default/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
+scaffolded: /tmp/tmp.pWpKNCFFXj/data/nm-gerrit/brief.md (ship, mode=no-mistakes forge=gerrit shape=squash; replace {TASK} and {FIRSTMATE_SPEC})

@@ -1,0 +1,28 @@
+32c32
+<    `echo "{state} [at=<epoch>]: {one short line}" >> '/tmp/tmp.Wds2o8q9is/state/nm-default.status' && { [ ! -e '/tmp/tmp.Wds2o8q9is/config/fleet-ledger' ] || '/tmp/tmp.iGWviEvAfB/bin/fm-fleet-ledger.sh' appended '/tmp/tmp.Wds2o8q9is/config' '/tmp/tmp.Wds2o8q9is/state/nm-default.status' >/dev/null 2>&1 || true; }`
+---
+>    `echo "{state} [at=<epoch>]: {one short line}" >> '/tmp/tmp.pWpKNCFFXj/state/nm-default.status' && { [ ! -e '/tmp/tmp.pWpKNCFFXj/config/fleet-ledger' ] || '/home/agent/nm/worktrees/f0d5f625e218/01M494BWQMZ40HKKY5SR0X741T/bin/fm-fleet-ledger.sh' appended '/tmp/tmp.pWpKNCFFXj/config' '/tmp/tmp.pWpKNCFFXj/state/nm-default.status' >/dev/null 2>&1 || true; }`
+56,57c56,57
+<    For a no-mistakes ask-user gate specifically, escalate all ask-user findings as one event plus one snapshot file, using that same shape even when the gate holds only a single ask-user finding: write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority), to `/tmp/tmp.Wds2o8q9is/data/nm-default/nm-<run>-findings.txt`, then report the gate with
+<    `needs-decision [at=<epoch>] [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file=/tmp/tmp.Wds2o8q9is/data/nm-default/nm-<run>-findings.txt`
+---
+>    For a no-mistakes ask-user gate specifically, escalate all ask-user findings as one event plus one snapshot file, using that same shape even when the gate holds only a single ask-user finding: write only the ask-user findings, verbatim and unparaphrased (id, severity, file, line, description, authority), to `/tmp/tmp.pWpKNCFFXj/data/nm-default/nm-<run>-findings.txt`, then report the gate with
+>    `needs-decision [at=<epoch>] [key=nm-<run>-<step>]: ask-user findings=<id1>,<id2>,... file=/tmp/tmp.pWpKNCFFXj/data/nm-default/nm-<run>-findings.txt`
+85,86c85,86
+< Firstmate steers you through durable message files in '/tmp/tmp.Wds2o8q9is/state/nm-default.inbox'.
+< When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list '/tmp/tmp.Wds2o8q9is/state/nm-default.inbox'/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: `mv '/tmp/tmp.Wds2o8q9is/state/nm-default.inbox'/NNN.msg '/tmp/tmp.Wds2o8q9is/state/nm-default.inbox'/handled/`.
+---
+> Firstmate steers you through durable message files in '/tmp/tmp.pWpKNCFFXj/state/nm-default.inbox'.
+> When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list '/tmp/tmp.pWpKNCFFXj/state/nm-default.inbox'/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: `mv '/tmp/tmp.pWpKNCFFXj/state/nm-default.inbox'/NNN.msg '/tmp/tmp.pWpKNCFFXj/state/nm-default.inbox'/handled/`.
+91c91
+< A correction edits only the wrong text: do not run `/tmp/tmp.iGWviEvAfB/bin/fm-ensure-agents-md.sh`, create either file, or add sections, headings, or pointers alongside it.
+---
+> A correction edits only the wrong text: do not run `/home/agent/nm/worktrees/f0d5f625e218/01M494BWQMZ40HKKY5SR0X741T/bin/fm-ensure-agents-md.sh`, create either file, or add sections, headings, or pointers alongside it.
+97,99c97,99
+< When you believe it is complete, append `done [at=<epoch>]: {summary}` to the status file and stop.
+< Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
+< That first `done:` is the handoff that starts the pipeline, which owns the push; it is not a request to push from this copy.
+---
+> When you believe it is complete, append `done [at=<epoch>]: {summary}` to the status file, then run /no-mistakes yourself in the same turn without waiting for firstmate.
+> That first `done:` tells firstmate the pipeline is starting, and the pipeline owns the push; it is not a request for permission and not a request to push from this copy.
+> A later steering message that asks you to run /no-mistakes is the same instruction: reattach to the run you already started rather than starting another.

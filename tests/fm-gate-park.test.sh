@@ -56,42 +56,30 @@ test_new_gate_nudges_once_and_wakes() {
   pass "a new parked gate sends one reattach nudge and wakes firstmate with the gate and owner"
 }
 
-test_same_gate_is_idempotent_and_new_gate_fires_again() {
+test_nudge_is_bounded_to_one_per_interval() {
   local dir
-  dir=$(make_case gp-idem); make_send_stub "$dir" >/dev/null
+  dir=$(make_case gp-interval); make_send_stub "$dir" >/dev/null
   export FM_FAKE_CREW_STATE="$PARKED_HUMAN"
   run_check "$dir" t1 test_fm-t1 >/dev/null || fail "first check should wake"
-  rm -f "$dir/state/.gate-park-eval-test_fm-t1"
-  run_check "$dir" t1 test_fm-t1 >/dev/null && fail "the same gate woke and nudged twice"
-  [ "$(wc -l < "$dir/send.log")" -eq 1 ] || fail "the same gate was nudged twice"
+  [ "$(wc -l < "$dir/send.log")" -eq 1 ] || fail "the first park was not nudged once"
+  touch -d '5 seconds ago' "$dir/state/.gate-park-eval-test_fm-t1"
+  touch "$dir/state/t1.turn-ended"
+  run_check "$dir" t1 test_fm-t1 >/dev/null && fail "a second wake came inside the nudge interval"
+  [ "$(wc -l < "$dir/send.log")" -eq 1 ] || fail "the worker was nudged again inside the interval"
+  touch -d '10 minutes ago' "$dir/state/.gate-park-nudged-test_fm-t1"
+  run_check "$dir" t1 test_fm-t1 >/dev/null || fail "a worker still idle at the gate was not nudged after the interval"
+  [ "$(wc -l < "$dir/send.log")" -eq 2 ] || fail "no second nudge after the interval"
   FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
-  rm -f "$dir/state/.gate-park-eval-test_fm-t1"
+  touch -d '10 minutes ago' "$dir/state/.gate-park-nudged-test_fm-t1"
+  touch "$dir/state/t1.turn-ended"
   run_check "$dir" t1 test_fm-t1 >/dev/null && fail "a working run produced a wake"
-  [ ! -e "$dir/state/.gate-park-sig-test_fm-t1" ] || fail "leaving the gate did not clear its record"
   FM_FAKE_CREW_STATE="$PARKED_HUMAN"
-  rm -f "$dir/state/.gate-park-eval-test_fm-t1"
-  run_check "$dir" t1 test_fm-t1 >/dev/null || fail "parking again at the same gate after leaving it was not treated as new"
-  [ "$(wc -l < "$dir/send.log")" -eq 2 ] || fail "the re-park was not nudged"
-  unset FM_FAKE_CREW_STATE
-  pass "a gate is nudged once; leaving it and parking again is a new event"
-}
-
-test_nudge_turn_does_not_rearm_the_same_gate() {
-  local dir
-  dir=$(make_case gp-nudge-turn); make_send_stub "$dir" >/dev/null
-  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at awaiting_approval: 1 finding(s) · run: run-7'
-  run_check "$dir" t1 test_fm-t1 >/dev/null || fail "first check should wake"
   touch -d '5 seconds ago' "$dir/state/.gate-park-eval-test_fm-t1"
   touch "$dir/state/t1.turn-ended"
-  run_check "$dir" t1 test_fm-t1 >/dev/null && fail "the turn the nudge caused re-armed the same gate"
-  [ "$(wc -l < "$dir/send.log")" -eq 1 ] || fail "the same gate was nudged again after the nudge's own turn"
-  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at awaiting_approval: 3 finding(s) · run: run-7'
-  touch -d '5 seconds ago' "$dir/state/.gate-park-eval-test_fm-t1"
-  touch "$dir/state/t1.turn-ended"
-  run_check "$dir" t1 test_fm-t1 >/dev/null || fail "a changed gate after a worker turn was not treated as new"
-  [ "$(wc -l < "$dir/send.log")" -eq 2 ] || fail "the changed gate was not nudged"
+  run_check "$dir" t1 test_fm-t1 >/dev/null || fail "a re-park at an identical gate after the interval was not nudged"
+  [ "$(wc -l < "$dir/send.log")" -eq 3 ] || fail "the identical re-park was not nudged"
   unset FM_FAKE_CREW_STATE
-  pass "a turn the nudge caused does not re-arm the same gate; a changed gate does"
+  pass "a parked gate is nudged once per interval, again after it, and an identical re-park after it is nudged"
 }
 
 test_slow_state_read_is_bounded() {
@@ -203,8 +191,7 @@ test_watcher_ignores_a_busy_worker_at_a_gate() {
 }
 
 test_new_gate_nudges_once_and_wakes
-test_same_gate_is_idempotent_and_new_gate_fires_again
-test_nudge_turn_does_not_rearm_the_same_gate
+test_nudge_is_bounded_to_one_per_interval
 test_slow_state_read_is_bounded
 test_reported_gate_is_left_alone
 test_cadence_and_non_gate_states

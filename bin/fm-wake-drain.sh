@@ -37,6 +37,8 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 . "$SCRIPT_DIR/fm-supervision-engine-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# shellcheck source=bin/fm-handoff-journal-lib.sh
+. "$SCRIPT_DIR/fm-handoff-journal-lib.sh"
 
 DRAIN_TMP=
 DRAIN_VIEW_TMP=
@@ -931,6 +933,7 @@ if [ -n "$ACK_THROUGH" ]; then
     }
   fi
   ACK_REMOVED=$(( $(awk 'END { print NR }' "$FM_WAKE_QUEUE") - $(awk 'END { print NR }' "$DRAIN_TMP") ))
+  ACKED_ROWS=$(awk -F '\t' 'FILENAME == ARGV[1] { kept[$2] = 1; next } NF >= 5 && !($2 in kept)' "$DRAIN_TMP" "$FM_WAKE_QUEUE" 2>/dev/null || true)
   if [ ! -s "$DRAIN_TMP" ]; then
     fm_recovery_marker_ack "$RECOVERY_MARKER" "$ACK_GENERATION"
     RECOVERY_ACK_STATUS=$?
@@ -954,6 +957,7 @@ if [ -n "$ACK_THROUGH" ]; then
     exit 1
   fi
   DRAIN_TMP=
+  [ -z "$ACKED_ROWS" ] || printf '%s\n' "$ACKED_ROWS" | fm_hj_record_rows acked
   if [ "$ACTOR" = branch ]; then
     consume_actor_rows_locked "$ELIGIBLE_ROWS_FILE" "$ACK_THROUGH" || exit 1
   else
@@ -1077,6 +1081,7 @@ case "${FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT:-0}" in
 esac
 if [ -n "$RAW_ROWS" ]; then
   printf '%s\n' "$RAW_ROWS" || exit "$?"
+  printf '%s\n' "$RAW_ROWS" | fm_hj_record_rows presented
 fi
 fm_recovery_marker_snapshot "$RECOVERY_MARKER" || exit 1
 RECOVERY_MARKER_TOKEN=$FM_RECOVERY_MARKER_TOKEN

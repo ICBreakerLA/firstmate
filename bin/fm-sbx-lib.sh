@@ -192,6 +192,127 @@ fm_sbx_nm_prepare() {
   }
 }
 
+# fm_sbx_github_slug <url>
+# The lowercased owner/repo of a github.com URL (https, ssh:// or scp form, with
+# or without credentials or a .git suffix); returns 1 for any other URL.
+fm_sbx_github_slug() {
+  local u rest
+  u=$(printf '%s' "$1" | sed -e 's#^\([A-Za-z][A-Za-z0-9+.-]*://\)[^/@]*@#\1#')
+  case "$u" in
+  https://github.com/* | http://github.com/*) rest=${u#*://github.com/} ;;
+  ssh://github.com/*) rest=${u#ssh://github.com/} ;;
+  git@github.com:*) rest=${u#git@github.com:} ;;
+  *) return 1 ;;
+  esac
+  rest=${rest%/}
+  rest=${rest%.git}
+  case "$rest" in
+  *[!A-Za-z0-9._/-]* | */*/* | /* | */ | '' | */.*) return 1 ;;
+  */?*) ;;
+  *) return 1 ;;
+  esac
+  printf '%s\n' "$rest" | tr 'A-Z' 'a-z'
+}
+
+# fm_sbx_fork_repo / fm_sbx_fork_token_file
+# The Firstmate fork a sandboxed ship may deliver to, and the host file holding
+# the token that is valid for that fork only.
+# FM_SBX_FORK_REPO and FM_SBX_FORK_TOKEN_FILE override the defaults for a home
+# that runs a different fork; the token file is never inside a sandbox mount.
+fm_sbx_fork_repo() { printf '%s\n' "${FM_SBX_FORK_REPO:-ICBreakerLA/firstmate}"; }
+fm_sbx_fork_token_file() { printf '%s\n' "${FM_SBX_FORK_TOKEN_FILE:-${XDG_CONFIG_HOME:-${HOME:-}/.config}/firstmate/fork-gh-token}"; }
+
+# fm_sbx_fork_url <worktree>
+# Prints https://github.com/<fork> when any remote of the worktree's repository
+# names the Firstmate fork, so the swap below applies to that fork's work only;
+# prints nothing and returns 1 for every other repository.
+fm_sbx_fork_url() {
+  local wt=$1 fork want r u
+  fork=$(fm_sbx_fork_repo)
+  want=$(printf '%s' "$fork" | tr 'A-Z' 'a-z')
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    u=$(git -C "$wt" remote get-url "$r" 2>/dev/null) || continue
+    [ "$(fm_sbx_github_slug "$u" 2>/dev/null)" = "$want" ] || continue
+    printf 'https://github.com/%s\n' "$fork"
+    return 0
+  done < <(git -C "$wt" remote 2>/dev/null)
+  return 1
+}
+
+# fm_sbx_fork_secret <name>
+# Replace one sandbox's github secret with the fork-only token, streaming the
+# file straight into sbx so the value is never held in a variable, an argument
+# or the environment.
+# Returns 0 when stored, 3 when the token file is absent, a symlink, unreadable
+# or empty (the sandbox keeps whatever credential it started with), and 1 when
+# sbx refused the secret.
+fm_sbx_fork_secret() {
+  local name=$1 file
+  file=$(fm_sbx_fork_token_file)
+  [ -f "$file" ] && [ ! -L "$file" ] && [ -r "$file" ] || return 3
+  [ -n "$(tr -d '[:space:]' <"$file" 2>/dev/null | head -c 1)" ] || return 3
+  sbx secret rm github --sandbox "$name" </dev/null >/dev/null 2>&1 || true
+  tr -d '[:space:]' <"$file" | sbx secret set github --sandbox "$name" >/dev/null 2>&1
+}
+
+# fm_sbx_lint_tools <name> <code-root>
+# Give a sandboxed ship's pipeline the lint tools it cannot download: the host's
+# ShellCheck and actionlint, each only when it reports exactly the version the
+# lint owners pin, are copied into the VM beside no-mistakes and gh.
+# The copy is not a mount and widens no network rule, and bin/fm-lint.sh and
+# bin/fm-lint-workflows.sh still verify the version of whatever is on the VM's
+# PATH, so the lint step stays a real pinned run.
+# A tool the host lacks, at another version, or that does not run in the VM is
+# left out with a notice, and the lint step then fails naming it as before.
+fm_sbx_lint_tools() {
+  local name=$1 root=$2 tool pin bin got
+  for tool in shellcheck actionlint; do
+    case "$tool" in
+    shellcheck) pin=$("$root/bin/fm-lint.sh" --required-version 2>/dev/null) || pin= ;;
+    actionlint) pin=$("$root/bin/fm-lint-workflows.sh" --required-version 2>/dev/null) || pin= ;;
+    esac
+    if [ -z "$pin" ]; then
+      echo "notice: could not read the pinned $tool version from $root/bin, so $name gets no $tool and its lint step will fail" >&2
+      continue
+    fi
+    bin=$(command -v "$tool" 2>/dev/null || true)
+    got=
+    if [ -n "$bin" ]; then
+      bin=$(readlink -f "$bin" 2>/dev/null || printf '%s' "$bin")
+      got=$(_fm_sbx_tool_version "$tool" "$bin")
+    fi
+    if [ "$got" != "$pin" ]; then
+      echo "notice: the host $tool reports '${got:-nothing}' but $pin is pinned, so $name gets no $tool and its lint step will fail; install it with bin/fm-install-$tool.sh <directory> and put that directory on PATH" >&2
+      continue
+    fi
+    if sbx cp "$bin" "$name:/tmp/fm-$tool" >/dev/null 2>&1 &&
+      sbx exec -u root "$name" install -m 755 "/tmp/fm-$tool" "/usr/local/bin/$tool" >/dev/null 2>&1 &&
+      [ "$(_fm_sbx_tool_version "$tool" "$tool" "$name")" = "$pin" ]; then
+      :
+    else
+      sbx exec -u root "$name" rm -f "/usr/local/bin/$tool" >/dev/null 2>&1 || true
+      echo "notice: the host $tool cannot run inside $name, so its lint step will fail" >&2
+    fi
+  done
+}
+
+# _fm_sbx_tool_version <tool> <binary> [<sandbox>]: the version a lint tool
+# reports, on the host or (with a sandbox) inside it; empty when it does not run.
+_fm_sbx_tool_version() {
+  local tool=$1 bin=$2 name=${3:-} out
+  case "$tool" in
+  shellcheck)
+    if [ -n "$name" ]; then out=$(sbx exec "$name" "$bin" --version 2>/dev/null) || return 0; else out=$("$bin" --version 2>/dev/null) || return 0; fi
+    printf '%s\n' "$out" | awk '/^version:/ {print $2; exit}'
+    ;;
+  actionlint)
+    if [ -n "$name" ]; then out=$(sbx exec "$name" "$bin" -version 2>/dev/null) || return 0; else out=$("$bin" -version 2>/dev/null) || return 0; fi
+    printf '%s\n' "$out" | awk 'NR==1 {print; exit}'
+    ;;
+  esac
+}
+
 # fm_sbx_exists <name>: true when sbx lists the sandbox.
 fm_sbx_exists() {
   sbx ls -q 2>/dev/null | grep -Fxq -- "$1"

@@ -208,6 +208,25 @@ test_check_reports_unbridged_and_dirty_clone_work() {
   pass "check fails on unbridged commits and on uncommitted clone work"
 }
 
+test_the_forks_origin_survives_a_scrub_only_when_the_host_lists_it() {
+  new_world forkorigin
+  "$BRIDGE" clone "$WT" "$CLONE" || fail "clone"
+  git -C "$CLONE" remote set-url origin https://github.com/ICBreakerLA/firstmate
+  "$BRIDGE" check "$WT" "$CLONE" >/dev/null 2>&1 || true
+  assert_equals "https://example.invalid/org/repo.git" "$(git -C "$CLONE" remote get-url origin)" "a fork origin the host never listed falls back to the host's"
+  git -C "$REPO" remote add fork https://github.com/ICBreakerLA/firstmate.git
+  git -C "$CLONE" remote set-url origin https://github.com/ICBreakerLA/firstmate
+  "$BRIDGE" check "$WT" "$CLONE" >/dev/null 2>&1 || true
+  assert_equals "https://github.com/ICBreakerLA/firstmate" "$(git -C "$CLONE" remote get-url origin)" "a fork origin the host lists is kept"
+  git -C "$CLONE" remote set-url origin https://github.com/someone-else/firstmate
+  "$BRIDGE" check "$WT" "$CLONE" >/dev/null 2>&1 || true
+  assert_equals "https://example.invalid/org/repo.git" "$(git -C "$CLONE" remote get-url origin)" "a worker-chosen origin is replaced by the host's"
+  git -C "$CLONE" remote set-url origin https://x:tok@github.com/ICBreakerLA/firstmate
+  "$BRIDGE" check "$WT" "$CLONE" >/dev/null 2>&1 || true
+  assert_equals "https://github.com/ICBreakerLA/firstmate" "$(git -C "$CLONE" remote get-url origin)" "a credential in the clone's origin is stripped, never kept"
+  pass "a scrub keeps the Firstmate fork as origin only when the host lists that repository"
+}
+
 test_exclude_hides_the_channel_hooks_file() {
   new_world exclude
   "$BRIDGE" clone "$WT" "$CLONE" || fail "clone"
@@ -234,5 +253,6 @@ test_a_hostile_clone_cannot_run_code_or_move_other_refs
 test_a_clone_whose_git_dir_is_redirected_is_refused
 test_check_reports_unbridged_and_dirty_clone_work
 test_exclude_hides_the_channel_hooks_file
+test_the_forks_origin_survives_a_scrub_only_when_the_host_lists_it
 
 echo "# all fm-sbx-bridge tests passed"

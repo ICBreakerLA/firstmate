@@ -16,6 +16,7 @@ fm_git_identity 'Captain Tests' 'captain@example.invalid'
 unset FM_SBX_GH_TOKEN GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 NAME=fm-sbx-0123abcd-t1-9999
 SECRET='ghp_FAKE_TEST_TOKEN_0123456789'
+FORK_SECRET='ghp_FAKE_FORK_ONLY_TOKEN_9876543210'
 
 # new_world <case>
 # Builds a fake home, a real worktree plus standalone clone, and a recording sbx.
@@ -50,10 +51,12 @@ exec)
   *"no-mistakes --version"*) cat "$W/vm.nmver" 2>/dev/null; exit 0 ;;
   *"no-mistakes init"*) [ ! -f "$W/init.fail" ] || exit 1 ;;
   *"gh --version"*) [ ! -f "$W/gh.fail" ] || exit 1 ;;
+  *"shellcheck --version"*) cat "$W/vm.shellcheck" 2>/dev/null; exit 0 ;;
+  *"actionlint -version"*) cat "$W/vm.actionlint" 2>/dev/null; exit 0 ;;
   esac
   ;;
 run)
-  printf '%s\\n' "ENV-AT-RUN: \$(env | grep -c -F "$SECRET")" >>"$LOG"
+  printf '%s\\n' "ENV-AT-RUN: \$(env | grep -c -F -e "$SECRET" -e "$FORK_SECRET")" >>"$LOG"
   if [ -f "$W/run.hang" ]; then : >"$W/run.started"; sleep 30 & wait \$!; fi
   exit "\$(cat "$W/run.rc" 2>/dev/null || echo 0)"
   ;;
@@ -224,6 +227,144 @@ test_nm_ship_gets_the_host_gh_and_survives_one_that_does_not_run() {
   assert_contains "$(log)" "rm -f /usr/local/bin/gh" "the unusable copy is removed"
   assert_contains "$(log)" "run --name" "claude still starts"
   pass "the host gh is installed for a no-mistakes ship and an unusable copy is dropped"
+}
+
+# fork_world <case>: a world whose repository also has a remote naming the
+# Firstmate fork, with the fork-only token in the host file the launch reads.
+fork_world() {
+  new_world "$1"
+  git -C "$REPO" remote add fork https://github.com/ICBreakerLA/firstmate
+  printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
+  FORK_TOKEN_FILE="$W/userhome/fork-gh-token"
+  printf '%s\n' "$FORK_SECRET" >"$FORK_TOKEN_FILE"
+  export FM_SBX_FORK_TOKEN_FILE="$FORK_TOKEN_FILE"
+}
+
+test_a_fork_ship_swaps_the_secret_and_points_origin_at_the_fork() {
+  local out lines
+  fork_world forkswap
+  fake_nm "$W" v1.79.0
+  out=$(wrap --nm -- claude 2>&1) || fail "fork ship run failed: $out"
+  lines=$(grep -n -e '^secret ' -e '^run ' "$LOG" | sed 's/^[0-9]*://')
+  assert_contains "$lines" "secret rm github --sandbox $NAME" "the sandbox's starting credential is removed"
+  assert_contains "$lines" "secret set github --sandbox $NAME" "the fork secret is scoped to this sandbox"
+  [ "$(printf '%s\n' "$lines" | grep -n 'secret rm' | cut -d: -f1)" -lt "$(printf '%s\n' "$lines" | grep -n 'secret set' | cut -d: -f1)" ] || fail "the old secret must go before the new one is set: $lines"
+  assert_equals "$FORK_SECRET" "$(cat "$W/secret.stdin")" "the fork token reaches sbx on stdin"
+  assert_not_contains "$(log)" "$FORK_SECRET" "the fork token is never in any sbx argument"
+  assert_not_contains "$(log)" "$SECRET" "the home's own token is not used for the fork"
+  assert_contains "$(log)" "ENV-AT-RUN: 0" "neither token is in the environment claude runs under"
+  assert_contains "$(log)" "policy allow network --sandbox $NAME github.com,api.github.com" "GitHub is allowed for this sandbox only"
+  assert_equals "https://github.com/ICBreakerLA/firstmate" "$(git -C "$CLONE" remote get-url origin)" "the pipeline pushes to the fork"
+  "$BRIDGE" check "$WT" "$CLONE" >/dev/null 2>&1 || true
+  assert_equals "https://github.com/ICBreakerLA/firstmate" "$(git -C "$CLONE" remote get-url origin)" "a host read of the clone keeps the fork origin"
+  assert_not_contains "$(log)" "run --name $NAME -- claude secret" "claude is the only thing run"
+  pass "a fork ship starts with the fork-only token and an origin that is the fork, without anyone swapping them"
+}
+
+test_a_fork_swap_never_applies_to_other_work() {
+  local out url
+  fork_world forkscope
+  fake_nm "$W" v1.79.0
+  git -C "$REPO" remote remove fork
+  url=$(git -C "$CLONE" remote get-url origin)
+  out=$(wrap --nm -- claude 2>&1) || fail "ship run failed: $out"
+  assert_equals "$SECRET" "$(cat "$W/secret.stdin")" "another repository keeps the home's own token"
+  assert_not_contains "$(log)" "secret rm" "no credential is removed for another repository"
+  assert_equals "$url" "$(git -C "$CLONE" remote get-url origin)" "another repository keeps its origin"
+  git -C "$REPO" remote add fork https://github.com/ICBreakerLA/firstmate
+  : >"$LOG"
+  out=$(wrap --kind scout -- claude 2>&1) || fail "scout run failed: $out"
+  assert_not_contains "$(log)" "secret rm" "a scout never gets the fork token"
+  assert_equals "$SECRET" "$(cat "$W/secret.stdin")" "a scout keeps the home's own token"
+  pass "the swap applies to a ship of the Firstmate fork only and leaves the home's token for everything else"
+}
+
+test_a_fork_ship_without_a_usable_fork_token_keeps_the_home_token_and_says_so() {
+  local out
+  fork_world forknotoken
+  fake_nm "$W" v1.79.0
+  rm -f "$FORK_TOKEN_FILE"
+  out=$(wrap --nm -- claude 2>&1) || fail "ship run failed: $out"
+  assert_contains "$out" "is absent, a symlink or empty" "the missing file is named"
+  assert_not_contains "$out" "$FORK_SECRET" "no token is printed"
+  assert_equals "$SECRET" "$(cat "$W/secret.stdin")" "the home's token stays in place"
+  assert_equals "https://github.com/ICBreakerLA/firstmate" "$(git -C "$CLONE" remote get-url origin)" "the origin is still the fork, never upstream"
+  : >"$LOG"
+  printf '%s\n' "$FORK_SECRET" >"$W/real-token"
+  ln -s "$W/real-token" "$FORK_TOKEN_FILE"
+  out=$(wrap --nm -- claude 2>&1) || fail "ship run failed: $out"
+  assert_not_contains "$(log)" "secret rm" "a symlinked fork token is never followed"
+  : >"$LOG"
+  rm -f "$FORK_TOKEN_FILE"
+  : >"$FORK_TOKEN_FILE"
+  out=$(wrap --nm -- claude 2>&1) || fail "ship run failed: $out"
+  assert_not_contains "$(log)" "secret rm" "an empty fork token is never stored"
+  pass "an absent, symlinked or empty fork token leaves the sandbox on the home's token with a notice"
+}
+
+test_an_explicit_token_beats_the_fork_swap() {
+  local out
+  fork_world forkenv
+  fake_nm "$W" v1.79.0
+  out=$(FM_SBX_GH_TOKEN=ghp_EXPLICIT_LAUNCH_TOKEN wrap --nm -- claude 2>&1) || fail "ship run failed: $out"
+  assert_equals "ghp_EXPLICIT_LAUNCH_TOKEN" "$(cat "$W/secret.stdin")" "the explicit token is stored"
+  assert_not_contains "$(log)" "secret rm" "the fork swap stands aside"
+  pass "an explicit FM_SBX_GH_TOKEN is never replaced by the fork token"
+}
+
+# fake_lint_tools <world> <shellcheck-version> <actionlint-version> [<vm-shellcheck> <vm-actionlint>]
+fake_lint_tools() {
+  local w=$1
+  printf '#!/usr/bin/env bash\nprintf "ShellCheck - shell script analysis tool\\nversion: %s\\n"\n' "$2" >"$FAKE/shellcheck"
+  printf '#!/usr/bin/env bash\nprintf "%s\\n1.22.0 built with go\\n"\n' "$3" >"$FAKE/actionlint"
+  chmod +x "$FAKE/shellcheck" "$FAKE/actionlint"
+  printf 'ShellCheck - shell script analysis tool\nversion: %s\n' "${4:-$2}" >"$w/vm.shellcheck"
+  printf '%s\n1.22.0 built with go\n' "${5:-$3}" >"$w/vm.actionlint"
+}
+
+test_nm_ship_gets_the_pinned_host_lint_tools() {
+  local out sc al
+  new_world lint
+  fake_nm "$W" v1.79.0
+  sc=$("$ROOT/bin/fm-lint.sh" --required-version)
+  al=$("$ROOT/bin/fm-lint-workflows.sh" --required-version)
+  fake_lint_tools "$W" "$sc" "$al"
+  out=$(wrap --root "$ROOT" --nm -- claude 2>&1) || fail "nm ship run failed: $out"
+  assert_contains "$(log)" "cp $FAKE/shellcheck $NAME:/tmp/fm-shellcheck" "the host ShellCheck is copied in"
+  assert_contains "$(log)" "install -m 755 /tmp/fm-shellcheck /usr/local/bin/shellcheck" "it is installed on the VM's PATH"
+  assert_contains "$(log)" "cp $FAKE/actionlint $NAME:/tmp/fm-actionlint" "the host actionlint is copied in"
+  assert_contains "$(log)" "install -m 755 /tmp/fm-actionlint /usr/local/bin/actionlint" "it is installed on the VM's PATH"
+  assert_not_contains "$(log)" "policy allow network --sandbox $NAME github.com,api.github.com,objects" "no network rule is added for the tools"
+  assert_not_contains "$out" "the host shellcheck" "nothing is reported about ShellCheck when it is in place"
+  assert_not_contains "$out" "the host actionlint" "nothing is reported about actionlint when it is in place"
+  : >"$LOG"
+  out=$(wrap --root "$ROOT" --kind scout -- claude 2>&1) || fail "scout run failed: $out"
+  assert_not_contains "$(log)" "fm-shellcheck" "a scout is not given the lint tools"
+  pass "a no-mistakes ship gets the host's pinned ShellCheck and actionlint inside the sandbox"
+}
+
+test_lint_tools_of_the_wrong_version_or_that_do_not_run_are_left_out_loudly() {
+  local out sc al
+  new_world lintbad
+  fake_nm "$W" v1.79.0
+  sc=$("$ROOT/bin/fm-lint.sh" --required-version)
+  al=$("$ROOT/bin/fm-lint-workflows.sh" --required-version)
+  fake_lint_tools "$W" 0.0.1 "$al"
+  out=$(wrap --root "$ROOT" --nm -- claude 2>&1) || fail "a wrong host tool must not stop the worker: $out"
+  assert_contains "$out" "the host shellcheck reports '0.0.1' but $sc is pinned" "the mismatch is named"
+  assert_not_contains "$(log)" "fm-shellcheck" "a ShellCheck of another version is never copied"
+  assert_contains "$(log)" "cp $FAKE/actionlint" "the other tool is still provided"
+  : >"$LOG"
+  fake_lint_tools "$W" "$sc" "$al" "$sc" 9.9.9
+  out=$(wrap --root "$ROOT" --nm -- claude 2>&1) || fail "a tool that does not run must not stop the worker: $out"
+  assert_contains "$out" "the host actionlint cannot run inside" "an unusable copy is reported"
+  assert_contains "$(log)" "rm -f /usr/local/bin/actionlint" "the unusable copy is removed"
+  : >"$LOG"
+  rm -f "$FAKE/shellcheck" "$FAKE/actionlint"
+  out=$(PATH="$FAKE:/usr/bin:/bin" wrap --root "$ROOT" --nm -- claude 2>&1) || fail "absent host tools must not stop the worker: $out"
+  assert_contains "$out" "the host shellcheck reports 'nothing'" "an absent tool is reported"
+  assert_contains "$(log)" "run --name" "claude still starts"
+  pass "a host tool at another version, absent or unable to run is never installed and the lint step still fails naming it"
 }
 
 test_nm_version_mismatch_and_pin_refuse() {
@@ -472,6 +613,12 @@ test_a_symlinked_token_file_is_ignored
 test_nm_ship_gets_the_pipeline_environment_and_network
 test_nm_ship_clone_is_prepared_before_the_worker_starts
 test_nm_ship_gets_the_host_gh_and_survives_one_that_does_not_run
+test_a_fork_ship_swaps_the_secret_and_points_origin_at_the_fork
+test_a_fork_swap_never_applies_to_other_work
+test_a_fork_ship_without_a_usable_fork_token_keeps_the_home_token_and_says_so
+test_an_explicit_token_beats_the_fork_swap
+test_nm_ship_gets_the_pinned_host_lint_tools
+test_lint_tools_of_the_wrong_version_or_that_do_not_run_are_left_out_loudly
 test_nm_version_mismatch_and_pin_refuse
 test_nm_init_failure_refuses_and_removes
 test_nm_without_a_host_binary_refuses_and_still_removes

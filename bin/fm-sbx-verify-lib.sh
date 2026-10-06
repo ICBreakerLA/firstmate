@@ -21,8 +21,7 @@
 #                           a regular executable that is not inside any
 #                           sandbox clone or this home's state directory
 #   sm-verify-sha256=HEX    optional: refuse to run when the file's digest differs
-#   app-id=ID               the app id written into generated flows
-#                           (default com.sportsmeet.app)
+#   app-id=ID               required: the app id written into generated flows
 #   bundle-port=N           the broker-owned port the one bundle file is served
 #                           on (default 8081)
 #   bundle-bind=ADDR        the address that port binds (default 127.0.0.1)
@@ -33,7 +32,7 @@
 #   lease-dir=/abs/path     the lease every home sharing the emulator must share
 #                           (default <config>/sbx-verify.d)
 
-FM_SBXV_SMV='' FM_SBXV_SMV_SHA='' FM_SBXV_APP_ID=com.sportsmeet.app
+FM_SBXV_SMV='' FM_SBXV_SMV_SHA='' FM_SBXV_APP_ID=''
 FM_SBXV_PORT=8081 FM_SBXV_BIND=127.0.0.1 FM_SBXV_TTL=1200 FM_SBXV_QTTL=180 FM_SBXV_LEASE_DIR=''
 
 # Host-owned selector denylist: a tap whose text or id contains any of these,
@@ -63,11 +62,11 @@ fm_sbxv_realpath() { python3 -c 'import os,sys; print(os.path.realpath(sys.argv[
 fm_sbxv_load_config() {
   local cdir=$1 state=$2 file line key val real
   file="$cdir/sbx-verify"
-  FM_SBXV_SMV='' FM_SBXV_SMV_SHA='' FM_SBXV_APP_ID=com.sportsmeet.app
+  FM_SBXV_SMV='' FM_SBXV_SMV_SHA='' FM_SBXV_APP_ID=''
   FM_SBXV_PORT=8081 FM_SBXV_BIND=127.0.0.1 FM_SBXV_TTL=1200 FM_SBXV_QTTL=180
   FM_SBXV_LEASE_DIR="$cdir/sbx-verify.d"
   if [ ! -f "$file" ] || [ -L "$file" ] || [ ! -r "$file" ]; then
-    echo "error: verify=sportsmeet needs the host file config/sbx-verify (a regular file holding sm-verify=/absolute/path)" >&2
+    echo "error: verify=app needs the host file config/sbx-verify (a regular file holding sm-verify=/absolute/path)" >&2
     return 1
   fi
   while IFS= read -r line || [ -n "$line" ]; do
@@ -130,6 +129,10 @@ fm_sbxv_load_config() {
     return 1
     ;;
   esac
+  if [ -z "$FM_SBXV_APP_ID" ]; then
+    echo "error: config/sbx-verify needs app-id=ID (letters, digits, dot and underscore)" >&2
+    return 1
+  fi
   real=$(fm_sbxv_realpath "$FM_SBXV_SMV" 2>/dev/null) || real=''
   if [ -z "$real" ] || [ ! -f "$real" ] || [ ! -x "$real" ]; then
     echo "error: config/sbx-verify sm-verify '$FM_SBXV_SMV' is not an executable regular file" >&2

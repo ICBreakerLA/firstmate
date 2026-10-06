@@ -60,7 +60,7 @@ new_world() {
   mkdir -p "$BIN" "$CONFIG" "$STATE" "$FAKEBIN"
   chmod 755 "$STATE"
   make_stub "$BIN/sm-verify"
-  printf 'sm-verify=%s\nlease-dir=%s\nlease-ttl=%s\nqueue-ttl=%s\nbundle-port=%s\n' "$BIN/sm-verify" "$LEASE" "$ttl" "$qttl" "$(free_port)" >"$CONFIG/sbx-verify"
+  printf 'app-id=com.example.app\nsm-verify=%s\nlease-dir=%s\nlease-ttl=%s\nqueue-ttl=%s\nbundle-port=%s\n' "$BIN/sm-verify" "$LEASE" "$ttl" "$qttl" "$(free_port)" >"$CONFIG/sbx-verify"
   LOG="$d/stub.log"
   : >"$LOG"
   export STUB_LOG="$LOG"
@@ -253,7 +253,7 @@ test_allowed_steps_become_literal_yaml() {
   assert_contains "$log" 'text: "Home \\(1\\)"' "selector regex characters are escaped to match literally"
   assert_contains "$log" 'text: "Games\\.\\*"' "an assertion selector is escaped too"
   assert_contains "$log" '- swipe:' "swipe is emitted"
-  assert_contains "$log" 'appId: com.sportsmeet.app' "the host config owns the appId"
+  assert_contains "$log" 'appId: com.example.app' "the host config owns the appId"
   assert_not_contains "$log" runScript "no scripting command appears"
   assert_contains "$log" "$HOST/run/1/evidence/home1" "screenshots land in the per-request evidence directory"
   pass "allowed steps become a host-generated flow with literal selectors"
@@ -370,13 +370,19 @@ test_config_refuses_a_worker_reachable_sm_verify() {
   new_world cfg
   mkdir -p "$STATE/t1.sbx-clone/bin"
   cp "$BIN/sm-verify" "$STATE/t1.sbx-clone/bin/sm-verify"
-  printf 'sm-verify=%s\n' "$STATE/t1.sbx-clone/bin/sm-verify" >"$CONFIG/sbx-verify"
+  printf 'app-id=com.example.app\nsm-verify=%s\n' "$STATE/t1.sbx-clone/bin/sm-verify" >"$CONFIG/sbx-verify"
   if "$BROKER" check --config "$CONFIG" --state "$STATE" 2>"$TMP_ROOT/cfg.err"; then fail "a clone path must be refused"; fi
   assert_contains "$(cat "$TMP_ROOT/cfg.err")" "host-owned" "the refusal explains itself"
-  printf 'sm-verify=%s\n' "$BIN/sm-verify" >"$CONFIG/sbx-verify"
+  printf 'app-id=com.example.app\nsm-verify=%s\n' "$BIN/sm-verify" >"$CONFIG/sbx-verify"
   "$BROKER" check --config "$CONFIG" --state "$STATE" || fail "a host path passes"
-  printf 'sm-verify=%s\nsm-verify-sha256=%s\n' "$BIN/sm-verify" "$(printf 'a%.0s' $(seq 1 64))" >"$CONFIG/sbx-verify"
+  printf 'app-id=com.example.app\nsm-verify=%s\nsm-verify-sha256=%s\n' "$BIN/sm-verify" "$(printf 'a%.0s' $(seq 1 64))" >"$CONFIG/sbx-verify"
   if "$BROKER" check --config "$CONFIG" --state "$STATE" 2>/dev/null; then fail "a wrong pin must be refused"; fi
+  printf 'sm-verify=%s\n' "$BIN/sm-verify" >"$CONFIG/sbx-verify"
+  if "$BROKER" check --config "$CONFIG" --state "$STATE" 2>"$TMP_ROOT/cfg.err"; then fail "a missing app-id must be refused"; fi
+  assert_contains "$(cat "$TMP_ROOT/cfg.err")" "app-id" "the refusal names app-id"
+  printf 'app-id=bad id!\nsm-verify=%s\n' "$BIN/sm-verify" >"$CONFIG/sbx-verify"
+  if "$BROKER" check --config "$CONFIG" --state "$STATE" 2>"$TMP_ROOT/cfg.err"; then fail "a malformed app-id must be refused"; fi
+  assert_contains "$(cat "$TMP_ROOT/cfg.err")" "app-id" "the malformed refusal names app-id"
   rm -f "$CONFIG/sbx-verify"
   if "$BROKER" check --config "$CONFIG" --state "$STATE" 2>/dev/null; then fail "a missing config must be refused"; fi
   pass "the pinned sm-verify must be a host-owned file matching its digest"
@@ -384,7 +390,7 @@ test_config_refuses_a_worker_reachable_sm_verify() {
 
 test_a_changed_sm_verify_is_not_run() {
   new_world pin
-  printf 'sm-verify=%s\nsm-verify-sha256=%s\nlease-dir=%s\n' "$BIN/sm-verify" "$(sha256sum "$BIN/sm-verify" | cut -d' ' -f1)" "$LEASE" >"$CONFIG/sbx-verify"
+  printf 'app-id=com.example.app\nsm-verify=%s\nsm-verify-sha256=%s\nlease-dir=%s\n' "$BIN/sm-verify" "$(sha256sum "$BIN/sm-verify" | cut -d' ' -f1)" "$LEASE" >"$CONFIG/sbx-verify"
   send 1 '{"verb":"doctor"}'
   broker_once
   assert_equals ok "$(field 1 .status)" "the pinned file runs"

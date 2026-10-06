@@ -12,7 +12,7 @@
 #   claude-sbx --id ID --config DIR --state DIR --data DIR
 #       --root DIR --wt DIR --clone DIR --name SANDBOX [--cpus N] [--memory Ng]
 #       [--busy-gen GEN] [--kind ship|scout] [--nm] [--nm-pin VERSION]
-#       [--allow HOSTS] [--npm-cache DIR] [--verify sportsmeet] -- CLAUDE_ARGS...
+#       [--allow HOSTS] [--npm-cache DIR] [--verify app] -- CLAUDE_ARGS...
 #
 #   --wt, --clone   the host worktree and the standalone clone bin/fm-sbx-bridge.sh
 #                   made of it; only the clone is mounted, and the VM sees a
@@ -29,7 +29,7 @@
 #                   init` runs in it, inside the VM.
 #   --allow HOSTS   further per-sandbox allowed hosts (comma separated).
 #   --npm-cache DIR a read-only npm seed cache (bin/fm-sbx-npm-seed.sh).
-#   --verify sportsmeet
+#   --verify app
 #                   the host verification broker (bin/fm-sbx-verify-broker.sh,
 #                   docs/sbx-verify-broker.md): a writable request spool and a
 #                   read-only result directory are mounted, the spool is named by
@@ -117,7 +117,7 @@ case "$ID" in *[!A-Za-z0-9._-]* | '') die "task id '$ID' is not a bare slug" ;; 
 fm_sbx_is_fleet_name "$NAME" || die "sandbox name '$NAME' is not a fleet sandbox name"
 case "$CPUS" in '' | *[!0-9]*) die "--cpus must be a number" ;; esac
 case "$MEMORY" in [1-9]*g) ;; *) die "--memory must look like 4g" ;; esac
-case "$VERIFY" in '' | sportsmeet) ;; *) die "--verify only accepts sportsmeet" ;; esac
+case "$VERIFY" in '' | app) ;; *) die "--verify only accepts app" ;; esac
 case "$ALLOW" in *[!A-Za-z0-9.,*-]*) die "--allow takes comma-separated host names only" ;; esac
 for d in "$STATE" "$DATA" "$ROOT" "$WT" "$CLONE"; do
   case "$d" in /*) ;; *) die "paths must be absolute: $d" ;; esac

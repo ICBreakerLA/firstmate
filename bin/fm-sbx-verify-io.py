@@ -199,8 +199,8 @@ def serve(argv):
                         "extra": {
                             "expoGo": {"developer": {"tool": "expo-cli"}},
                             "expoClient": {
-                                "name": "SportsMeet",
-                                "slug": "sportsmeet",
+                                "name": "App",
+                                "slug": "app",
                                 "sdkVersion": SDK_VERSION,
                                 "platforms": ["android"],
                             },

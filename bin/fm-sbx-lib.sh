@@ -15,7 +15,7 @@
 #
 # Value grammar of config/worker-sandbox, one line:
 #   off                      the default; also an absent file
-#   sbx [cpus=N] [memory=Ng] [allow=HOSTS] [nm=VERSION] [verify=sportsmeet]
+#   sbx [cpus=N] [memory=Ng] [allow=HOSTS] [nm=VERSION] [verify=app]
 #                            run Claude workers in an sbx microVM
 # cpus defaults to 4 (1-64) and memory to 4g (a whole number of gigabytes).
 # allow= is a comma-separated list of further host names every sandbox of this
@@ -24,9 +24,9 @@
 # validation ship may use, and a host binary of any other version refuses the
 # launch; without it the host's own version is used and only has to match the
 # copy installed in the VM.
-# verify=sportsmeet opts every sandbox of this home into the host-side
+# verify=app opts every sandbox of this home into the host-side
 # verification broker (bin/fm-sbx-verify-broker.sh, docs/sbx-verify-broker.md);
-# sportsmeet is the only accepted value and the token's absence changes nothing.
+# app is the only accepted value and the token's absence changes nothing.
 #
 # Every sandbox this tree creates is named fm-sbx-<home-hash>-<id>-<id-hash>,
 # so a sweep, a removal, or an operator listing can tell fleet sandboxes from
@@ -50,7 +50,7 @@ fm_sbx_load_config() {
   FM_SBX_MODE=off FM_SBX_CPUS=4 FM_SBX_MEMORY=4g FM_SBX_ALLOW='' FM_SBX_NM_PIN='' FM_SBX_VERIFY=''
   [ -e "$file" ] || [ -L "$file" ] || return 0
   if [ ! -f "$file" ] || [ ! -r "$file" ]; then
-    echo "error: config/worker-sandbox must be a readable regular file holding: off, or sbx with optional cpus=N memory=Ng allow=HOSTS nm=VERSION verify=sportsmeet" >&2
+    echo "error: config/worker-sandbox must be a readable regular file holding: off, or sbx with optional cpus=N memory=Ng allow=HOSTS nm=VERSION verify=app" >&2
     return 1
   fi
   raw=$(tr '\n\t' '  ' <"$file" || true)
@@ -96,13 +96,13 @@ fm_sbx_load_config() {
       esac
       FM_SBX_NM_PIN=${tok#nm=}
       ;;
-    verify=sportsmeet) FM_SBX_VERIFY=sportsmeet ;;
+    verify=app) FM_SBX_VERIFY=app ;;
     verify=*)
-      echo "error: config/worker-sandbox verify= only accepts sportsmeet, got '${tok#verify=}'" >&2
+      echo "error: config/worker-sandbox verify= only accepts app, got '${tok#verify=}'" >&2
       return 1
       ;;
     *)
-      echo "error: config/worker-sandbox holds the option '$tok'; accepted options are cpus=N (1-64), memory=Ng, allow=HOSTS, nm=VERSION and verify=sportsmeet" >&2
+      echo "error: config/worker-sandbox holds the option '$tok'; accepted options are cpus=N (1-64), memory=Ng, allow=HOSTS, nm=VERSION and verify=app" >&2
       return 1
       ;;
     esac

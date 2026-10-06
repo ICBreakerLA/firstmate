@@ -255,6 +255,7 @@ make_remote_ledger_fleet() {  # <parent-home> <count>
     id="ledger-$i"
     remote_home="$TMP_ROOT/remote-ledger-home-$i"
     mkdir -p "$remote_home/state"
+    rm -f "$remote_home/state/slow-ledger-read" "$remote_home/state/unbounded-ledger-read" "$remote_home/state/home-summary.json"
     remote_home=$(cd "$remote_home" && pwd -P)
     printf -- '- %s - ledger fixture (host: host-%s; root: /remote/root; home: %s; scope: fixture; projects: sample; added 2026-09-01)\n' \
       "$id" "$i" "$remote_home" >> "$parent/data/secondmates.md"

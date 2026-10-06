@@ -102,7 +102,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-crew-state.sh`       | Print one deterministic current-state line for a crew                                |
 | `fm-worker-liveness.sh` | Tracked worker-liveness check: one alarm line per worker whose agent is really gone, aware of sandboxed workers and declared pipeline or CI waits |
 | `fm-watcher-beat-check.sh` | Cheap proof the primary watcher is alive: one watcher-down alarm line and exit 1 when its beacon is older than the grace |
-| `fm-gate-park-lib.sh` | Single owner of parked-gate detection: an idle worker whose run is parked at a gate gets one reattach nudge and firstmate an actionable wake |
+| `fm-gate-park-lib.sh` | Single owner of parked-gate detection: an idle worker whose run is parked at a gate gets at most one reattach nudge per interval and firstmate an actionable wake |
 | `fm-handoff-journal-lib.sh` | Single owner of the handoff journal the wake drain appends to, so the latency report can see when a wake was presented and acknowledged |
 | `fm-handoff-latency.sh`  | Read-only report of where time went between workers and firstmate, worst gap first    |
 | `fm-nm-run-lib.sh`       | Single owner of shared no-mistakes run-attribution primitives and rules             |

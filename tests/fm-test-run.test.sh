@@ -1111,7 +1111,7 @@ test_portable_parallel_lanes_stay_duration_balanced() {
 }
 
 test_portable_serial_shards_partition_the_serial_lane() {
-  local lanes count serial shard listed union dups shard_lane total cap
+  local lanes count serial shard listed union shard_lane total cap
   lanes=$("$RUNNER" --list-lanes)
   count=$(printf '%s\n' "$lanes" | grep -c '^portable-serial-[0-9]*of[0-9]*$')
   [ "$count" -ge 2 ] || fail "expected at least two portable serial shard lanes, got $count"
@@ -1130,10 +1130,13 @@ test_portable_serial_shards_partition_the_serial_lane() {
   done
   union=$(printf '%s\n' "$union" | grep -v '^$' || true)
 
-  dups=$(printf '%s\n' "$union" | LC_ALL=C sort | uniq -d || true)
-  [ -z "$dups" ] || fail "portable serial shards run the same script twice: $dups"
-  [ "$(printf '%s\n' "$union" | LC_ALL=C sort)" = "$serial" ] \
+  # A script split into slices lands on several shards by design; the coverage
+  # guard (exercised below) proves each slice runs exactly once, so here only
+  # the set of scripts is compared.
+  [ "$(printf '%s\n' "$union" | LC_ALL=C sort -u)" = "$serial" ] \
     || fail "portable serial shards must exactly cover the portable serial lane"
+  "$RUNNER" --check-coverage >/dev/null \
+    || fail "coverage guard must accept every slice of every split script exactly once"
 
   # Every shard carries a real share of the lane, so no degenerate partition
   # leaves one runner doing nearly all of the work the split exists to spread.
@@ -1208,10 +1211,14 @@ test_portable_serial_packing_budget_boundary() {
 from pathlib import Path
 import re, sys
 runner = Path(sys.argv[1])
+text = runner.read_text()
+# The boundary is about one unsplit script filling a shard, so drop the slice
+# row first; the weight row is the only line with a millisecond-sized number.
+text = re.sub(r"(?m)^tests/fm-watch-triage\.test\.sh [0-9]{1,2}\n", "", text)
 runner.write_text(re.sub(
-    r"(?m)^tests/fm-watch-triage\.test\.sh [0-9]+$",
+    r"(?m)^tests/fm-watch-triage\.test\.sh [0-9]{3,}$",
     f"tests/fm-watch-triage.test.sh {sys.argv[2]}",
-    runner.read_text(),
+    text,
 ))
 PY
     out=$(bash "$repo/bin/fm-test-run.sh" --check-coverage 2>&1) && rc=0 || rc=$?
@@ -1228,6 +1235,83 @@ PY
     fi
   done
   pass "serial packing accepts the exact budget and refuses one millisecond above it"
+}
+
+# The slice gate runs every top-level test_* call of a script exactly once across
+# its slices, so splitting a long script over runners never drops or doubles work.
+test_slice_gate_runs_every_call_exactly_once() {
+  local tmp gate k n calls slot_log total
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-slice.XXXXXX")
+  gate="$ROOT/tests/fm-test-slice-gate.sh"
+  cat >"$tmp/fixture.test.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+set -eu
+test_a() { echo "RAN a"; }
+test_b() { echo "RAN b"; }
+test_c() { echo "RAN c"; }
+test_d() { echo "RAN d"; }
+test_e() { echo "RAN e"; }
+test_f() { echo "RAN f"; }
+test_g() { echo "RAN g"; }
+helper_not_a_test() { echo "RAN helper"; }
+helper_not_a_test
+test_a
+test_b
+test_c
+test_d
+test_e
+test_f
+test_g
+FIXTURE
+  n=3
+  : >"$tmp/all"
+  k=1
+  while [ "$k" -le "$n" ]; do
+    slot_log="$tmp/log.$k"
+    ( cd "$tmp" && BASH_ENV="$gate" FM_TEST_SLICE="${k}of${n}" FM_TEST_SLICE_SCRIPT=fixture.test.sh \
+        FM_TEST_SLICE_LOG="$slot_log" bash fixture.test.sh ) >"$tmp/out.$k" 2>&1 \
+      || fail "slice $k of $n failed: $(cat "$tmp/out.$k")"
+    grep -q '^ran ' "$slot_log" || fail "slice $k of $n ran nothing"
+    grep '^RAN test_\|^RAN [a-g]$' "$tmp/out.$k" >>"$tmp/all" || true
+    assert_contains "$(cat "$tmp/out.$k")" "RAN helper" "non-test commands must run in every slice"
+    k=$((k + 1))
+  done
+  total=$(wc -l <"$tmp/all" | tr -d ' ')
+  [ "$total" -eq 7 ] || fail "slices must run each of the 7 calls once, ran $total: $(cat "$tmp/all")"
+  calls=$(sort "$tmp/all" | uniq -d)
+  [ -z "$calls" ] || fail "a call ran in two slices: $calls"
+  # A script that is not selected for slicing is untouched by the gate.
+  ( cd "$tmp" && BASH_ENV="$gate" FM_TEST_SLICE=1of3 FM_TEST_SLICE_SCRIPT=other.sh bash fixture.test.sh ) >"$tmp/out.all" 2>&1
+  [ "$(grep -c '^RAN [a-g]$' "$tmp/out.all")" -eq 7 ] || fail "the gate must stay inert for other scripts"
+  rm -rf "$tmp"
+  pass "slice gate runs every call exactly once and stays inert elsewhere"
+}
+
+# Every script the runner splits must have at least as many independent calls as
+# it has slices, or a slice would be empty and quietly cover nothing.
+test_split_scripts_have_a_call_for_every_slice() {
+  local gate script n log checked=0
+  gate="$ROOT/tests/fm-test-slice-gate.sh"
+  log=$(mktemp "${TMPDIR:-/tmp}/fm-test-run-split.XXXXXX")
+  while read -r script n; do
+    case "$script" in tests/*.test.sh) ;; *) continue ;; esac
+    : >"$log"
+    # Slice 0 never matches, so every call is skipped and only the numbering runs.
+    ( cd "$ROOT" && BASH_ENV="$gate" FM_TEST_SLICE="0of${n}" FM_TEST_SLICE_SCRIPT="$script" \
+        FM_TEST_SLICE_LOG="$log" bash "$script" ) >/dev/null 2>&1 || true
+    if [ ! -s "$log" ]; then
+      # Only a script that declares its own capability skip may log nothing.
+      ( cd "$ROOT" && bash "$script" 2>&1 | grep -Eq '^(ok - )?skip(ped)?[: ]' ) \
+        || fail "$script is split in $n but logged no test calls"
+      continue
+    fi
+    [ "$(grep -c '^skipped ' "$log")" -ge "$n" ] \
+      || fail "$script is split in $n slices but has only $(grep -c '^skipped ' "$log") test calls"
+    checked=$((checked + 1))
+  done < <("$RUNNER" --list-split-hints)
+  [ "$checked" -gt 0 ] || fail "no split script was checked"
+  rm -f "$log"
+  pass "every split script has a test call for every slice"
 }
 
 test_portable_serial_shard_lane_refusals() {
@@ -1855,6 +1939,8 @@ test_portable_parallel_lanes_stay_duration_balanced
 test_portable_serial_shards_partition_the_serial_lane
 test_portable_serial_hint_coverage_is_reported_and_bounded
 test_portable_serial_packing_budget_boundary
+test_slice_gate_runs_every_call_exactly_once
+test_split_scripts_have_a_call_for_every_slice
 test_portable_serial_shard_lane_refusals
 test_jobs_requires_proven_isolated
 test_jobs_admits_a_concurrent_safe_family

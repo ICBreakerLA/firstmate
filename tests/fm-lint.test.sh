@@ -214,11 +214,18 @@ test_canonical_partitions_preserve_full_lint() {
       || fail "partition $part did not stream an end record per root"
   done
   [ "$(LC_ALL=C sort "$tmp/union")" = "$all" ] || fail "lint partitions lose or duplicate canonical roots"
-  for option in 0of2 3of2 1of3; do
+  for option in 0of2 3of2 1of1 1of9 9of8 1of 2; do
     rc=0
     "$LINT" --partition "$option" --list-files > "$tmp/refused" 2>&1 || rc=$?
     [ "$rc" = 2 ] || fail "invalid partition $option was not refused"
   done
+  : > "$tmp/union8"
+  for part in 1of8 2of8 3of8 4of8 5of8 6of8 7of8 8of8; do
+    selected=$("$LINT" --partition "$part" --list-files) || fail "partition $part was refused"
+    [ -n "$selected" ] || fail "empty lint partition $part"
+    printf '%s\n' "$selected" >> "$tmp/union8"
+  done
+  [ "$(LC_ALL=C sort "$tmp/union8")" = "$all" ] || fail "eight lint partitions lose or duplicate canonical roots"
   rc=0
   "$LINT" --partition 1of2 --fast > "$tmp/refused" 2>&1 || rc=$?
   [ "$rc" = 2 ] || fail "partition accepted --fast"

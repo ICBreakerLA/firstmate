@@ -58,6 +58,14 @@ Each shard is still strictly serial in itself, and separate runners mean no two 
 Assignment is longest-processing-time bin packing over per-script duration hints embedded in `bin/fm-test-run.sh`.
 [Verification inputs](#verification-inputs) owns the measurement provenance and exceptions.
 A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
+
+A script whose `test_*` calls are independent and listed flat at the end of the file may also be split into slices, so one long suite no longer pins a whole shard.
+`portable_serial_split_hints` in `bin/fm-test-run.sh` names each such script and its slice count, and `--list-split-hints` prints that table.
+Each slice becomes its own packed unit, and a shard that receives several slices of one script runs them together.
+`tests/fm-test-slice-gate.sh` is loaded through `BASH_ENV` for that one script and runs every n-th top-level `test_*` call, in call order, so the slices together run each call exactly once.
+A slice that ran no call fails its shard unless the script declared its own capability skip, so a slice can never pass by doing nothing.
+The coverage guard requires every slice of every split script to be assigned exactly once, and `tests/fm-test-run.test.sh` proves the gate runs each call once and that every split script has at least one call per slice.
+Add a script to the split table only when its calls do not depend on one another's side effects.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
 Balance is still worth keeping current, because enough unmeasured scripts let one shard carry more than twice another shard's real work and reach the job cap while another runner sits idle.
 `bin/fm-test-run.sh --check-coverage` reports the unmeasured share as `serial_unhinted=` and refuses past `PORTABLE_SERIAL_MAX_UNHINTED_PERCENT`.
@@ -105,15 +113,15 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 
 ## Lint partitions and end-to-end latency
 
-`bin/fm-lint.sh` owns two canonical CI partitions, each running full source-aware ShellCheck analysis, workflow validation, and backend-purity checks.
+`bin/fm-lint.sh` owns the canonical CI partitions (`--partition KofN` for N from 2 to 8), each running full source-aware ShellCheck analysis, workflow validation, and backend-purity checks.
 CI requires its per-root bounds, so an unenforceable deadline or address-space limit refuses lint rather than running uncapped; the script header owns the envelope and per-root execution contract.
 Its `--list-files` interface exposes partition membership; `tests/fm-lint.test.sh` verifies complete/disjoint executed roots and unchanged analysis flags.
 The workflow uploads each partition's quiet telemetry plus its per-root lifecycle sidecar to distinguish analysis cost, memory use, and host contention.
-No fast mode, path skips, reduced checks, or paid runner provisioning is part of this layout.
+No fast mode, path skips, reduced checks, or paid runner provisioning is part of this layout; more partitions and slices only spread the same checks across more runners.
 
 The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the current watch-triage floor alone exceeds that objective.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
-The layout uses fourteen long-lived Linux jobs (nine serial, two parallel, Herdr, two lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
+The layout uses long-lived Linux jobs for twelve serial shards, two parallel lanes (each running four scripts at a time, the bound proven in [fm-test-isolation-proof.md](fm-test-isolation-proof.md)), Herdr, and eight lint partitions, plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession without cancelling main pushes or changing the compliance workflow's event semantics.
 

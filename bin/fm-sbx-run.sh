@@ -27,6 +27,10 @@
 #                   when given), and before the worker starts the clone's origin
 #                   HEAD is set to the real default branch and `no-mistakes
 #                   init` runs in it, inside the VM.
+#                   The host's ShellCheck and actionlint are copied in as well,
+#                   each only at the version bin/fm-lint.sh and
+#                   bin/fm-lint-workflows.sh pin, because the sandbox cannot
+#                   download them (fm_sbx_lint_tools in bin/fm-sbx-lib.sh).
 #   --allow HOSTS   further per-sandbox allowed hosts (comma separated).
 #   --npm-cache DIR a read-only npm seed cache (bin/fm-sbx-npm-seed.sh).
 #   --verify app
@@ -54,6 +58,11 @@
 # The only secret is a GitHub token read on the host, from FM_SBX_GH_TOKEN or
 # else the file config/sbx-github-token, which is stored as a per-sandbox sbx secret that the sbx proxy injects on allowed
 # GitHub hosts; the token never enters the VM.
+# A ship whose repository has a remote naming the Firstmate fork
+# (fm_sbx_fork_url) gets the fork-only token from the host file
+# fm_sbx_fork_token_file in its place, and its clone's origin is pointed at the
+# fork, so the pipeline never needs the home's own token swapped by hand; every
+# other repository keeps the home's token, and FM_SBX_GH_TOKEN always wins.
 # This script never changes the global sbx policy and never signs in to Claude.
 set -u
 
@@ -293,11 +302,34 @@ if [ "$NM" = 1 ]; then
   fi
   ALLOW="github.com,api.github.com${ALLOW:+,$ALLOW}"
 fi
+[ "$NM" != 1 ] || [ "$KIND" != ship ] || fm_sbx_lint_tools "$NAME" "$ROOT"
+# A ship of the Firstmate fork delivers to the fork, so its sandbox starts with
+# the fork-only token in place of the home's own GitHub token, and its clone's
+# origin names the fork rather than any other remote of the project.
+# Every other repository keeps the home's token, and an explicit
+# FM_SBX_GH_TOKEN always wins.
+FORK_SECRET=0
+if [ "$KIND" = ship ] && [ -z "${FM_SBX_GH_TOKEN:-}" ] && fork_url=$(fm_sbx_fork_url "$WT"); then
+  cur_url=$(git config --file "$CLONE/.git/config" --get remote.origin.url 2>/dev/null || true)
+  if [ "$(fm_sbx_github_slug "$cur_url" 2>/dev/null)" != "$(fm_sbx_github_slug "$fork_url")" ]; then
+    git -C "$CLONE" remote get-url origin >/dev/null 2>&1 || git -C "$CLONE" remote add origin "$fork_url" ||
+      die "could not give the clone an origin for the fork"
+    git -C "$CLONE" remote set-url origin "$fork_url" || die "could not point the clone's origin at the fork"
+  fi
+  fm_sbx_fork_secret "$NAME"
+  case $? in
+  0) FORK_SECRET=1 ;;
+  3) echo "notice: $NAME delivers to the Firstmate fork but $(fm_sbx_fork_token_file) is absent, a symlink or empty, so the pipeline's push will be refused" >&2 ;;
+  *) die "could not store the fork GitHub secret for $NAME" ;;
+  esac
+fi
 GH_TOKEN_VALUE=${FM_SBX_GH_TOKEN:-}
-if [ -z "$GH_TOKEN_VALUE" ] && [ -f "$CONFIG/sbx-github-token" ] && [ ! -L "$CONFIG/sbx-github-token" ]; then
+if [ -z "$GH_TOKEN_VALUE" ] && [ "$FORK_SECRET" = 0 ] && [ -f "$CONFIG/sbx-github-token" ] && [ ! -L "$CONFIG/sbx-github-token" ]; then
   GH_TOKEN_VALUE=$(tr -d '[:space:]' <"$CONFIG/sbx-github-token" 2>/dev/null || true)
 fi
-if [ -n "$GH_TOKEN_VALUE" ]; then
+if [ "$FORK_SECRET" = 1 ]; then
+  case ",$ALLOW," in *,github.com,*) ;; *) ALLOW="github.com,api.github.com${ALLOW:+,$ALLOW}" ;; esac
+elif [ -n "$GH_TOKEN_VALUE" ]; then
   printf '%s' "$GH_TOKEN_VALUE" | sbx secret set github --sandbox "$NAME" >/dev/null 2>&1 ||
     die "could not store the per-sandbox GitHub secret for $NAME"
   case ",$ALLOW," in *,github.com,*) ;; *) ALLOW="github.com,api.github.com${ALLOW:+,$ALLOW}" ;; esac

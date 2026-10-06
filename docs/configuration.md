@@ -909,12 +909,20 @@ The wrapper stores it as a per-sandbox `sbx` secret, so the VM sees only a place
 The token is never an argument, a mount, or an environment variable of the worker.
 A symlinked token file is never read.
 
+A ship whose repository lists the Firstmate fork (`ICBreakerLA/firstmate`, overridable with `FM_SBX_FORK_REPO`) as any remote gets the fork-only token from `~/.config/firstmate/fork-gh-token` (`FM_SBX_FORK_TOKEN_FILE`) instead, with no manual step.
+The launch removes the sandbox's starting `github` secret, stores the fork token in its place with `sbx secret set --command`, which makes sbx read the token file on the host, and points the clone's `origin` at `https://github.com/ICBreakerLA/firstmate` so the pipeline pushes to the fork rather than upstream.
+The host's bridge keeps that origin only because the fork is one of the host repository's own remotes, so a worker cannot choose another.
+Scouts, other repositories, and an explicit `FM_SBX_GH_TOKEN` keep the home's token, and an absent, symlinked, or empty fork token file leaves the home's token in place with a notice that the fork push will be refused.
+The token's value is never printed and never reaches an argument, a mount, or the worker's environment.
+
 ### No-mistakes ships
 
 A no-mistakes ship runs its pipeline inside its own sandbox, because the pipeline would otherwise need the host's daemon, credentials, and project.
 The host's static `no-mistakes` binary is copied into the VM with its own `NM_HOME` under the VM user's home, update checks, telemetry, and auto-update are off, and nothing under the host's no-mistakes home is mounted.
 Before the worker starts, the launch checks the VM binary's version against the host's (and against `nm=`), sets the clone's `origin` to the project's real remote URL without credentials, runs `git fetch origin` and `git remote set-head origin -a` so the clone knows the real default branch, and runs `no-mistakes init` in the clone.
 The host's `gh` is copied in beside it, because the image's packaged `gh` is too old for the pipeline's CI step, and a copy that does not run in the VM is removed again with a notice.
+ShellCheck and actionlint are copied in the same way, because the VM cannot download them through its allowlist and the project's lint step needs the versions its lint scripts pin.
+A host tool of another version is never copied, and a copy that does not run in the VM is removed again, each with a notice, so the lint step still fails naming the tool rather than passing without it.
 Against a real repository, `github.com` and `api.github.com` were enough for the clone, the push over https with the proxy-injected token, pull request creation, and CI polling through `gh`.
 Pull request media attachments were not exercised, so a project that needs them may need an `allow=` entry.
 Before the clone is brought back, and again at teardown, the pipeline's own fix commits are synced to the clone's branch with `no-mistakes axi sync` inside the VM, which only has anything to bring back once the run has pushed.
@@ -960,7 +968,8 @@ These steps are the owner's and are not automated.
 3. Optionally seed the offline npm cache with `bin/fm-sbx-npm-seed.sh <project-dir>` and rerun it when a lockfile changes.
    Sandboxed workers install with `npm ci --offline` against that cache, which is mounted read-only, because the registry is not reachable by default.
 4. Optionally create `config/sbx-github-token` (mode 600) for the GitHub access described above.
-5. Write `sbx` to `config/worker-sandbox`.
+5. A home that ships to the Firstmate fork optionally creates `~/.config/firstmate/fork-gh-token` (mode 600) with that fork-only token, so a ship's sandbox gets it automatically instead of the home's own token.
+6. Write `sbx` to `config/worker-sandbox`.
 
 ### Failures
 

@@ -36,6 +36,10 @@
 # Exit: 0 success, 1 refusal or failure with the reason on stderr.
 set -u
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=bin/fm-sbx-lib.sh
+. "$SCRIPT_DIR/fm-sbx-lib.sh"
+
 die() {
   echo "error: $*" >&2
   exit 1
@@ -48,6 +52,31 @@ host_fetch() { # <wt> <clone> <refspec>
 
 strip_url_credentials() {
   sed -e 's#^\([A-Za-z][A-Za-z0-9+.-]*://\)[^/@]*@#\1#'
+}
+
+# keep_fork_origin <wt> <clone> <host-origin-url>
+# A ship of the Firstmate fork has its clone's origin pointed at the fork
+# (bin/fm-sbx-run.sh), which the host worktree's own origin may not be.
+# The clone's value is kept only when it is that fork's https URL and a remote
+# of the host worktree names the same repository, so a worker can never choose
+# an origin the host did not already list; every other value falls back to the
+# host's origin.
+keep_fork_origin() {
+  local wt=$1 clone=$2 host=$3 cur slug r u
+  cur=$(git config --file "$clone/.git/config" --get remote.origin.url 2>/dev/null | strip_url_credentials) || cur=
+  [ -n "$cur" ] && [ "$cur" != "$host" ] || { printf '%s\n' "$host"; return 0; }
+  slug=$(fm_sbx_github_slug "$cur" 2>/dev/null) || slug=
+  if [ -n "$slug" ] && [ "$cur" = "https://github.com/$(fm_sbx_fork_repo)" ] &&
+    [ "$slug" = "$(fm_sbx_fork_repo | tr '[:upper:]' '[:lower:]')" ]; then
+    while IFS= read -r r; do
+      u=$(git -C "$wt" remote get-url "$r" 2>/dev/null) || continue
+      if [ "$(fm_sbx_github_slug "$u" 2>/dev/null)" = "$slug" ]; then
+        printf '%s\n' "$cur"
+        return 0
+      fi
+    done < <(git -C "$wt" remote 2>/dev/null)
+  fi
+  printf '%s\n' "$host"
 }
 
 # The clone is the worker's, so nothing in it is trusted to configure a command
@@ -66,6 +95,7 @@ scrub_clone() { # <wt> <clone>
   git config --file "$cfg" core.repositoryformatversion 0
   git config --file "$cfg" core.bare false
   url=$(git -C "$wt" remote get-url origin 2>/dev/null | strip_url_credentials) || url=
+  url=$(keep_fork_origin "$wt" "$clone" "$url")
   if [ -n "$url" ]; then
     git config --file "$cfg" remote.origin.url "$url"
     git config --file "$cfg" remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'

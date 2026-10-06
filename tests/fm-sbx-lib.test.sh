@@ -120,6 +120,25 @@ test_removal_is_idempotent_and_verified() {
   pass "removal is idempotent and reports a sandbox that survives"
 }
 
+test_github_slugs_and_the_fork_remote() {
+  local u w
+  for u in https://github.com/ICBreakerLA/firstmate https://github.com/ICBreakerLA/firstmate.git/ \
+    git@github.com:ICBreakerLA/firstmate.git ssh://git@github.com/ICBreakerLA/firstmate https://user:tok@github.com/icbreakerla/Firstmate; do
+    assert_equals icbreakerla/firstmate "$(fm_sbx_github_slug "$u")" "slug of $u (credentials never leak)"
+  done
+  for u in https://example.invalid/ICBreakerLA/firstmate https://github.com/ICBreakerLA https://github.com/a/b/c ''; do
+    fm_sbx_github_slug "$u" >/dev/null 2>&1 && fail "'$u' is not a GitHub repository URL"
+  done
+  w="$TMP_ROOT/forkwt"
+  git init -q "$w"
+  git -C "$w" remote add origin https://github.com/kunchenguid/firstmate
+  fm_sbx_fork_url "$w" >/dev/null && fail "a repository without the fork has no fork URL"
+  git -C "$w" remote add fork git@github.com:ICBreakerLA/firstmate.git
+  assert_equals https://github.com/ICBreakerLA/firstmate "$(fm_sbx_fork_url "$w")" "any remote naming the fork yields its https URL"
+  assert_equals other/repo "$(FM_SBX_FORK_REPO=other/repo fm_sbx_fork_repo)" "the fork identity is overridable"
+  pass "slugs normalize every GitHub URL form and the fork is found among a repository's remotes"
+}
+
 test_preflight_names_the_missing_requirement() {
   local err
   fm_sbx_preflight || fail "a running daemon passes"
@@ -138,5 +157,7 @@ test_name_is_stable_distinct_and_safe
 test_only_fleet_names_are_removable
 test_removal_is_idempotent_and_verified
 test_preflight_names_the_missing_requirement
+
+test_github_slugs_and_the_fork_remote
 
 echo "# all fm-sbx-lib tests passed"

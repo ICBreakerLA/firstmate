@@ -49,21 +49,29 @@ fm_hj_now_ms() {
   printf '%s\n' "$((sec * 1000))"
 }
 
-# The task a wake key belongs to: the status or turn-ended file name, or the
-# watcher's window name, reduced to the bare task id. Other keys (a check name,
+# The task a wake key belongs to: a stale wake's window name through
+# window_to_task (fm-classify-lib.sh, which every caller recording a stale wake
+# sources), a `gate-parked:<task>:<run>` key's task, and a status, turn-ended or
+# meta file name reduced to the bare task id. Other keys (a check name,
 # `heartbeat`) pass through unchanged.
-fm_hj_task_of_key() { # <key>
-  local key=$1
-  key=${key%.status}
-  key=${key%.turn-ended}
-  key=${key%.meta}
+fm_hj_task_of_key() { # <kind> <key>
+  local kind=$1 key=$2
+  case "$kind:$key" in
+    stale:*) key=$(window_to_task "$key") ;;
+    *:gate-parked:*:*) key=${key#gate-parked:}; key=${key%:*} ;;
+    *)
+      key=${key%.status}
+      key=${key%.turn-ended}
+      key=${key%.meta}
+      ;;
+  esac
   printf '%s\n' "$key"
 }
 
 # fm_hj_record <event> <seq> <kind> <key> <queued-epoch> [<task>]
 fm_hj_record() {
   local event=$1 seq=${2:-0} kind=${3:--} key=${4:--} queued=${5:-0} task=${6:-} file lines
-  [ -n "$task" ] || task=$(fm_hj_task_of_key "$key")
+  [ -n "$task" ] || task=$(fm_hj_task_of_key "$kind" "$key")
   file=$(fm_hj_path)
   {
     printf 'v1\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \

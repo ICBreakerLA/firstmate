@@ -15,8 +15,11 @@
 #
 # THE RULE. For one idle task, read the authoritative current state
 # ($FM_CREW_STATE_BIN). Only a `parked` verdict from a run step is a gate; every
-# other state clears the task's record so a later park is a new event. For a
-# gate that is new (its run id and gate name are the signature):
+# other state clears the task's record so a later park is a new event, and so
+# does the worker being seen busy (gate_park_worker_busy): a worker that answered
+# a gate and went idle again with its run re-parked at the same gate is owed the
+# check again. For a gate that is new (its run id and gate name are the
+# signature):
 #   - when the task's own status log holds no open needs-decision bound to that
 #     run, nobody has been told: send the worker the reattach nudge (read the
 #     gate with `no-mistakes axi run` and report it as its brief says) and wake
@@ -32,13 +35,16 @@
 # call), so it runs for an idle task when its turn-ended touch is newer than the
 # last read (a turn just ended: the moment a drive wait expires) or the last
 # read is FM_GATE_PARK_SECS old (default 30). FM_GATE_PARK_SECS=0 turns the
-# check off. FM_GATE_PARK_SEND_TIMEOUT (default 12) bounds the nudge.
+# check off. FM_GATE_PARK_READ_TIMEOUT (default 10) bounds the state read, with
+# its forge fallback skipped (a parked verdict never needs it), so an idle task
+# never stalls the poll; FM_GATE_PARK_SEND_TIMEOUT (default 12) bounds the nudge.
 set -u
 
 GATE_PARK_REASON=''
 GATE_PARK_KEY=''
 FM_GATE_PARK_SECS=${FM_GATE_PARK_SECS:-30}
 FM_GATE_PARK_SEND_TIMEOUT=${FM_GATE_PARK_SEND_TIMEOUT:-12}
+FM_GATE_PARK_READ_TIMEOUT=${FM_GATE_PARK_READ_TIMEOUT:-10}
 
 FM_GATE_PARK_NUDGE='Your no-mistakes run is parked at a gate and you are idle. Reattach now with `no-mistakes axi run` (no flags) to read the gate and its findings, then follow your brief: report any ask-user finding as needs-decision with the findings file and stop. Do not answer, approve, merge or discard anything on behalf of firstmate.'
 
@@ -58,6 +64,12 @@ gate_park_due() { # <task> <key>
   [ $((now - last)) -ge "$FM_GATE_PARK_SECS" ]
 }
 
+# gate_park_worker_busy <key>: the worker is taking a turn, so a park seen after
+# it goes idle again is a new event even at the same run and gate.
+gate_park_worker_busy() {
+  rm -f "$STATE/.gate-park-sig-$1"
+}
+
 # gate_park_check <task> <key>: for an idle non-secondmate task. Returns 0 with
 # the wake reason in GATE_PARK_REASON and the wake key in GATE_PARK_KEY (set, not
 # printed, so a caller needs no subshell) when firstmate is owed a wake for a
@@ -71,7 +83,8 @@ gate_park_check() {
   gate_park_due "$task" "$key" || return 1
   : > "$STATE/.gate-park-eval-$key" 2>/dev/null || true
 
-  line=$("$FM_CREW_STATE_BIN" "$task" 2>/dev/null) || line=
+  line=$(FM_CREW_STATE_NO_FORGE=1 fm_run_timed "$FM_GATE_PARK_READ_TIMEOUT" \
+    "$FM_CREW_STATE_BIN" "$task" 2>/dev/null) || line=
   case "$line" in state:*) ;; *) return 1 ;; esac
   state=${line#state: }; state=${state%% *}
   src=${line#*source: }; src=${src%% *}

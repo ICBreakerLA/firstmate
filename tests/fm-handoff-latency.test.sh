@@ -111,6 +111,23 @@ test_report_axi_surface() {
   pass "the report has --help, a definitive empty state and refuses bad arguments with a reason"
 }
 
+test_report_labels_window_and_gate_keys_with_their_task() {
+  local dir state out now
+  dir=$(make_case report-task-keys)
+  state="$dir/state"
+  out="$dir/report.out"
+  now=$(date +%s)
+  printf 'window=test:fm-echo\nkind=ship\n' > "$state/echo.meta"
+  printf '%s\t7\tstale\ttest:fm-echo\tstale: test:fm-echo\n' $((now - 120)) > "$state/.wake-queue"
+  printf '%s\t8\tcheck\tgate-parked:echo:run-7\tcheck: gate-parked\n' $((now - 120)) >> "$state/.wake-queue"
+  FM_STATE_OVERRIDE="$state" "$LATENCY" --task echo > "$out" || fail "report failed"
+  [ "$(grep -cE '^ +2m0[0-9]s +wake-unhandled +echo ' "$out")" -eq 2 ] || fail "stale and gate-parked wakes were not labeled with their task: $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" >/dev/null 2>&1 || fail "drain failed"
+  [ "$(awk -F '\t' '$3 == "presented" && $4 == "echo"' "$state/.handoff-journal" | wc -l)" -eq 2 ] \
+    || fail "the journal did not record the task for stale and gate-parked wakes: $(cat "$state/.handoff-journal")"
+  pass "stale window names and gate-parked keys are reported under their task"
+}
+
 test_journal_stays_bounded() {
   local dir state i lines
   dir=$(make_case journal-trim)
@@ -129,4 +146,5 @@ test_report_orders_gaps_worst_first_by_stage
 test_report_lists_worst_gap_first
 test_report_covers_steering_messages_and_open_gaps
 test_report_axi_surface
+test_report_labels_window_and_gate_keys_with_their_task
 test_journal_stays_bounded

@@ -3042,7 +3042,9 @@ EOF
     # An idle worker whose run is parked at a gate needs action within a poll,
     # not after the wedge window; the check is bounded, idempotent per gate, and
     # sends only the mechanical reattach nudge (bin/fm-gate-park-lib.sh).
-    if [ "$busy_now" -ne 0 ] && [ "$kind" != secondmate ] && [ -n "$task" ] \
+    if [ "$busy_now" -eq 0 ]; then
+      gate_park_worker_busy "$key"
+    elif [ "$kind" != secondmate ] && [ -n "$task" ] \
        && gate_park_check "$task" "$key"; then
       fm_wake_append check "$GATE_PARK_KEY" "check: $GATE_PARK_REASON" || exit 1
       wake "check: $GATE_PARK_REASON"

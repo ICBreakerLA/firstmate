@@ -37,6 +37,10 @@ SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-handoff-journal-lib.sh
+. "$SCRIPT_DIR/fm-handoff-journal-lib.sh"
 
 usage() {
   printf 'usage: fm-handoff-latency.sh [--task ID] [--since SECONDS] [--limit N] [--min SECONDS]\n'
@@ -169,7 +173,7 @@ if [ -s "$STATE/.wake-queue" ]; then
     case "$seq" in ''|*[!0-9]*) continue ;; esac
     [ "$kind" != heartbeat ] || continue
     records=$((records + 1))
-    task=${key%.status}; task=${task%.turn-ended}
+    task=$(fm_hj_task_of_key "$kind" "$key")
     add_row $((NOW - epoch)) wake-unhandled "$task" "$epoch" "$kind $key (queued, not yet acknowledged)"
   done <"$STATE/.wake-queue"
 fi

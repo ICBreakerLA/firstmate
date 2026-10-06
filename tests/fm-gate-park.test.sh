@@ -31,7 +31,7 @@ run_check() { # <dir> <task> <key> ; env FM_FAKE_CREW_STATE selects the verdict
   STATE="$dir/state" FM_HOME="$dir" SCRIPT_DIR="$ROOT/bin" \
     FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
     FM_GATE_PARK_SEND_BIN="$dir/send-stub.sh" FM_TEST_SEND_LOG="$dir/send.log" \
-    FM_GATE_PARK_SECS="${FM_GATE_PARK_SECS:-30}" \
+    FM_GATE_PARK_SECS="${FM_GATE_PARK_SECS:-30}" FM_GATE_PARK_READ_TIMEOUT="${FM_GATE_PARK_READ_TIMEOUT:-10}" \
     bash -c '
       . "$1/bin/fm-wake-lib.sh"; . "$1/bin/fm-timeout-lib.sh"
       . "$1/bin/fm-classify-lib.sh"; . "$1/bin/fm-handoff-journal-lib.sh"
@@ -74,6 +74,32 @@ test_same_gate_is_idempotent_and_new_gate_fires_again() {
   [ "$(wc -l < "$dir/send.log")" -eq 2 ] || fail "the re-park was not nudged"
   unset FM_FAKE_CREW_STATE
   pass "a gate is nudged once; leaving it and parking again is a new event"
+}
+
+test_same_gate_after_worker_turn_is_new() {
+  local dir
+  dir=$(make_case gp-repark); make_send_stub "$dir" >/dev/null
+  export FM_FAKE_CREW_STATE="$PARKED_HUMAN"
+  run_check "$dir" t1 test_fm-t1 >/dev/null || fail "first check should wake"
+  STATE="$dir/state" bash -c '. "$1/bin/fm-gate-park-lib.sh"; gate_park_worker_busy "$2"' _ "$ROOT" test_fm-t1
+  touch "$dir/state/t1.turn-ended"
+  touch -d '5 seconds ago' "$dir/state/.gate-park-eval-test_fm-t1"
+  run_check "$dir" t1 test_fm-t1 >/dev/null || fail "a re-park at the same gate after the worker took a turn was not treated as new"
+  [ "$(wc -l < "$dir/send.log")" -eq 2 ] || fail "the re-park after a worker turn was not nudged"
+  unset FM_FAKE_CREW_STATE
+  pass "a worker seen busy makes a re-park at the same run and gate a new event"
+}
+
+test_slow_state_read_is_bounded() {
+  local dir start elapsed
+  dir=$(make_case gp-slow); make_send_stub "$dir" >/dev/null
+  printf '#!/usr/bin/env bash\nsleep 30\necho "%s"\n' "$PARKED_HUMAN" > "$dir/fakebin/fm-crew-state.sh"
+  start=$(date +%s)
+  FM_GATE_PARK_READ_TIMEOUT=1 run_check "$dir" t1 test_fm-t1 >/dev/null && fail "a timed-out state read produced a wake"
+  elapsed=$(( $(date +%s) - start ))
+  [ "$elapsed" -lt 10 ] || fail "the state read was not bounded: ${elapsed}s"
+  [ ! -s "$dir/send.log" ] || fail "a timed-out state read nudged the worker"
+  pass "a slow current-state read is bounded and never wakes or nudges"
 }
 
 test_reported_gate_is_left_alone() {
@@ -174,6 +200,8 @@ test_watcher_ignores_a_busy_worker_at_a_gate() {
 
 test_new_gate_nudges_once_and_wakes
 test_same_gate_is_idempotent_and_new_gate_fires_again
+test_same_gate_after_worker_turn_is_new
+test_slow_state_read_is_bounded
 test_reported_gate_is_left_alone
 test_cadence_and_non_gate_states
 test_failed_send_still_wakes_and_says_so

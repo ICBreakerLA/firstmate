@@ -903,15 +903,6 @@ portable_serial_unhinted() {
   rm -rf "$tmp"
 }
 
-# Sum serial weights for paths on stdin, including the unmeasured default.
-portable_serial_lane_weight() {
-  awk -v fallback="$PORTABLE_SERIAL_DEFAULT_WEIGHT_MS" '
-    NR == FNR { if (NF) { hint[$1] = $2 }; next }
-    NF { total += ($1 in hint) ? hint[$1] : fallback }
-    END { printf "%d\n", total + 0 }
-  ' <(portable_serial_weight_hints) -
-}
-
 portable_parallel_weight_for() {
   local want=$1 ms
   ms=$(portable_parallel_weight_hints | awk -v want="$want" '$1 == want { print $2; exit }')

@@ -15,11 +15,8 @@
 #
 # THE RULE. For one idle task, read the authoritative current state
 # ($FM_CREW_STATE_BIN). Only a `parked` verdict from a run step is a gate; every
-# other state clears the task's record so a later park is a new event, and so
-# does the worker being seen busy (gate_park_worker_busy): a worker that answered
-# a gate and went idle again with its run re-parked at the same gate is owed the
-# check again. For a gate that is new (its run id and gate name are the
-# signature):
+# other state clears the task's record so a later park is a new event. For a
+# gate that is new (its run id and gate name are the signature):
 #   - when the task's own status log holds no open needs-decision bound to that
 #     run, nobody has been told: send the worker the reattach nudge (read the
 #     gate with `no-mistakes axi run` and report it as its brief says) and wake
@@ -62,12 +59,6 @@ gate_park_due() { # <task> <key>
   [ "$turn" -le "$last" ] || return 0
   now=$(date +%s)
   [ $((now - last)) -ge "$FM_GATE_PARK_SECS" ]
-}
-
-# gate_park_worker_busy <key>: the worker is taking a turn, so a park seen after
-# it goes idle again is a new event even at the same run and gate.
-gate_park_worker_busy() {
-  rm -f "$STATE/.gate-park-sig-$1"
 }
 
 # gate_park_check <task> <key>: for an idle non-secondmate task. Returns 0 with

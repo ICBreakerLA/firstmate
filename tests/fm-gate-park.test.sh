@@ -76,18 +76,22 @@ test_same_gate_is_idempotent_and_new_gate_fires_again() {
   pass "a gate is nudged once; leaving it and parking again is a new event"
 }
 
-test_same_gate_after_worker_turn_is_new() {
+test_nudge_turn_does_not_rearm_the_same_gate() {
   local dir
-  dir=$(make_case gp-repark); make_send_stub "$dir" >/dev/null
-  export FM_FAKE_CREW_STATE="$PARKED_HUMAN"
+  dir=$(make_case gp-nudge-turn); make_send_stub "$dir" >/dev/null
+  export FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at awaiting_approval: 1 finding(s) · run: run-7'
   run_check "$dir" t1 test_fm-t1 >/dev/null || fail "first check should wake"
-  STATE="$dir/state" bash -c '. "$1/bin/fm-gate-park-lib.sh"; gate_park_worker_busy "$2"' _ "$ROOT" test_fm-t1
-  touch "$dir/state/t1.turn-ended"
   touch -d '5 seconds ago' "$dir/state/.gate-park-eval-test_fm-t1"
-  run_check "$dir" t1 test_fm-t1 >/dev/null || fail "a re-park at the same gate after the worker took a turn was not treated as new"
-  [ "$(wc -l < "$dir/send.log")" -eq 2 ] || fail "the re-park after a worker turn was not nudged"
+  touch "$dir/state/t1.turn-ended"
+  run_check "$dir" t1 test_fm-t1 >/dev/null && fail "the turn the nudge caused re-armed the same gate"
+  [ "$(wc -l < "$dir/send.log")" -eq 1 ] || fail "the same gate was nudged again after the nudge's own turn"
+  FM_FAKE_CREW_STATE='state: parked · source: run-step · parked at awaiting_approval: 3 finding(s) · run: run-7'
+  touch -d '5 seconds ago' "$dir/state/.gate-park-eval-test_fm-t1"
+  touch "$dir/state/t1.turn-ended"
+  run_check "$dir" t1 test_fm-t1 >/dev/null || fail "a changed gate after a worker turn was not treated as new"
+  [ "$(wc -l < "$dir/send.log")" -eq 2 ] || fail "the changed gate was not nudged"
   unset FM_FAKE_CREW_STATE
-  pass "a worker seen busy makes a re-park at the same run and gate a new event"
+  pass "a turn the nudge caused does not re-arm the same gate; a changed gate does"
 }
 
 test_slow_state_read_is_bounded() {
@@ -200,7 +204,7 @@ test_watcher_ignores_a_busy_worker_at_a_gate() {
 
 test_new_gate_nudges_once_and_wakes
 test_same_gate_is_idempotent_and_new_gate_fires_again
-test_same_gate_after_worker_turn_is_new
+test_nudge_turn_does_not_rearm_the_same_gate
 test_slow_state_read_is_bounded
 test_reported_gate_is_left_alone
 test_cadence_and_non_gate_states

@@ -131,21 +131,21 @@ test_sandboxed_worker() {
 }
 
 test_write_probe_sees_the_sbx_clone() {
-  local dir anchor
-  dir=$(new_case wl-probe); add_task "$dir" t1 sandbox=sbx sandbox_name=fm-t1-vm
-  mkdir -p "$dir/state/t1.sbx-clone"
-  anchor="$dir/anchor"; : > "$anchor"; age_file "$anchor" 60
+  local case_dir anchor
+  case_dir=$(new_case wl-probe); add_task "$case_dir" t1 sandbox=sbx sandbox_name=fm-t1-vm
+  mkdir -p "$case_dir/state/t1.sbx-clone"
+  anchor="$case_dir/anchor"; : > "$anchor"; age_file "$anchor" 60
   ( . "$ROOT/bin/fm-wake-lib.sh"; . "$ROOT/bin/fm-classify-lib.sh"
-    crew_worktree_written_since t1 "$dir/state" "$anchor" ) \
+    crew_worktree_written_since t1 "$case_dir/state" "$anchor" ) \
     && fail "a quiet host worktree and quiet clone must read as no write"
-  : > "$dir/state/t1.sbx-clone/edit.txt"
+  : > "$case_dir/state/t1.sbx-clone/edit.txt"
   ( . "$ROOT/bin/fm-wake-lib.sh"; . "$ROOT/bin/fm-classify-lib.sh"
-    crew_worktree_written_since t1 "$dir/state" "$anchor" ) \
+    crew_worktree_written_since t1 "$case_dir/state" "$anchor" ) \
     || fail "a write inside the sandbox clone must count as write evidence"
   # A task that is not sandboxed ignores a stray clone directory.
-  add_task "$dir" t2; mkdir -p "$dir/state/t2.sbx-clone"; : > "$dir/state/t2.sbx-clone/x"
+  add_task "$case_dir" t2; mkdir -p "$case_dir/state/t2.sbx-clone"; : > "$case_dir/state/t2.sbx-clone/x"
   ( . "$ROOT/bin/fm-wake-lib.sh"; . "$ROOT/bin/fm-classify-lib.sh"
-    crew_worktree_written_since t2 "$dir/state" "$anchor" ) \
+    crew_worktree_written_since t2 "$case_dir/state" "$anchor" ) \
     && fail "a non-sandboxed task must not read a stray clone directory"
   pass "the write probe counts the sandbox clone for sandboxed tasks only"
 }

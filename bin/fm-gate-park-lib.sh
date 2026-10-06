@@ -38,13 +38,16 @@
 # never stalls the poll; FM_GATE_PARK_SEND_TIMEOUT (default 12) bounds the nudge.
 set -u
 
+# shellcheck disable=SC2034 # output read by the sourcing script
 GATE_PARK_REASON=''
+# shellcheck disable=SC2034 # output read by the sourcing script
 GATE_PARK_KEY=''
 FM_GATE_PARK_SECS=${FM_GATE_PARK_SECS:-30}
 FM_GATE_PARK_NUDGE_SECS=${FM_GATE_PARK_NUDGE_SECS:-300}
 FM_GATE_PARK_SEND_TIMEOUT=${FM_GATE_PARK_SEND_TIMEOUT:-12}
 FM_GATE_PARK_READ_TIMEOUT=${FM_GATE_PARK_READ_TIMEOUT:-10}
 
+# shellcheck disable=SC2016 # literal backticks name a command for the worker
 FM_GATE_PARK_NUDGE='Your no-mistakes run is parked at a gate and you are idle. Reattach now with `no-mistakes axi run` (no flags) to read the gate and its findings, then follow your brief: report any ask-user finding as needs-decision with the findings file and stop. Do not answer, approve, merge or discard anything on behalf of firstmate.'
 
 gate_park_enabled() {
@@ -55,15 +58,17 @@ gate_park_enabled() {
 # Whether this idle task is due a state read now (0) or not (1): never inside
 # the nudge interval, else after a turn end or the read cadence.
 gate_park_due() { # <task> <key>
-  local task=$1 key=$2 eval_marker="$STATE/.gate-park-eval-$key" now last turn
+  local task=$1 key=$2 eval_marker now last turn_at
+  # shellcheck disable=SC2153 # STATE is set by the sourcing script
+  eval_marker="$STATE/.gate-park-eval-$key"
   now=$(date +%s)
   if last=$(fm_path_mtime "$STATE/.gate-park-nudged-$key"); then
     [ $((now - last)) -ge "$FM_GATE_PARK_NUDGE_SECS" ] || return 1
   fi
   [ -e "$eval_marker" ] || return 0
   last=$(fm_path_mtime "$eval_marker") || return 0
-  turn=$(fm_path_mtime "$STATE/$task.turn-ended") || turn=0
-  [ "$turn" -le "$last" ] || return 0
+  turn_at=$(fm_path_mtime "$STATE/$task.turn-ended") || turn_at=0
+  [ "$turn_at" -le "$last" ] || return 0
   [ $((now - last)) -ge "$FM_GATE_PARK_SECS" ]
 }
 
@@ -113,7 +118,9 @@ gate_park_check() {
     nudge="reattach nudge failed (exit $rc)"
   fi
   detail="parked at $gate${human:+, ask-user finding owed by firstmate}"
+  # shellcheck disable=SC2034 # output read by the sourcing script
   GATE_PARK_REASON="gate-parked: $task $detail; worker idle and has not reported it ($nudge); you own any decision, approval or ask-user answer"
+  # shellcheck disable=SC2034 # output read by the sourcing script
   GATE_PARK_KEY="gate-parked:$task:$run"
   return 0
 }

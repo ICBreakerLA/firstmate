@@ -147,6 +147,22 @@ test_journal_stays_bounded() {
   pass "the journal is trimmed to its bound and keeps the newest record, one record at a time or in a batch"
 }
 
+test_concurrent_appends_keep_whole_lines() {
+  local dir state lib i bad
+  dir=$(make_case journal-concurrent)
+  state="$dir/state"
+  lib="$ROOT/bin/fm-handoff-journal-lib.sh"
+  for i in $(seq 1 3000); do printf '1\t%s\tsignal\ttask-with-a-longer-name-%s.status\tsignal\n' "$i" "$i"; done > "$dir/rows"
+  STATE="$state" FM_HANDOFF_JOURNAL_KEEP=100000 bash -c '. "$1"; n=0; while [ ! -e "$2" ]; do n=$((n + 1)); fm_hj_record nudge 0 check "gate-parked:t:run-$n" 1 t; done' _ "$lib" "$dir/done" &
+  STATE="$state" FM_HANDOFF_JOURNAL_KEEP=100000 bash -c '. "$1"; fm_hj_record_rows presented; : > "$2"' _ "$lib" "$dir/done" < "$dir/rows"
+  wait
+  bad=$(awk -F '\t' 'NF != 8 || $1 != "v1"' "$state/.handoff-journal" | wc -l)
+  [ "$bad" -eq 0 ] || fail "$bad journal lines were split by a concurrent writer"
+  [ "$(awk -F '\t' '$3 == "presented"' "$state/.handoff-journal" | wc -l)" -eq 3000 ] || fail "the batch lost rows"
+  awk -F '\t' '$3 == "nudge"' "$state/.handoff-journal" | grep . >/dev/null || fail "the concurrent writer appended nothing"
+  pass "a large batch appended beside another writer leaves every journal line whole"
+}
+
 test_drain_journals_presented_and_acked_rows
 test_report_orders_gaps_worst_first_by_stage
 test_report_lists_worst_gap_first
@@ -154,3 +170,4 @@ test_report_covers_steering_messages_and_open_gaps
 test_report_axi_surface
 test_report_labels_window_and_gate_keys_with_their_task
 test_journal_stays_bounded
+test_concurrent_appends_keep_whole_lines

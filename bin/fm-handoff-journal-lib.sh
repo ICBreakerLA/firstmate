@@ -76,12 +76,17 @@ fm_hj_line() {
     "$(printf '%s' "$4" | LC_ALL=C tr '\t\r\n' '   ')" "$5"
 }
 
-# fm_hj_append <lines>: one append of whole lines, then one trim check.
+# fm_hj_append <lines>: one open, one write per whole line so a concurrent
+# writer can never split a row, then one trim check for the batch.
 fm_hj_append() {
-  local file lines
+  local file lines line
   [ -n "$1" ] || return 0
   file=$(fm_hj_path)
-  { printf '%s' "$1" >>"$file"; } 2>/dev/null || return 0
+  {
+    while IFS= read -r line; do
+      printf '%s\n' "$line"
+    done <<<"${1%$'\n'}"
+  } 2>/dev/null >>"$file" || return 0
   lines=$(awk 'END { print NR }' "$file" 2>/dev/null || printf '0')
   case "$lines" in ''|*[!0-9]*) return 0 ;; esac
   if [ "$lines" -gt $((FM_HANDOFF_JOURNAL_KEEP * 2)) ]; then

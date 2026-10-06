@@ -150,6 +150,24 @@ test_write_probe_sees_the_sbx_clone() {
   pass "the write probe counts the sandbox clone for sandboxed tasks only"
 }
 
+test_slow_run_read_does_not_suppress_other_alarms() {
+  local dir out start
+  dir=$(new_case wl-slow); add_task "$dir" slow; add_task "$dir" fast
+  cat > "$dir/fakebin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = slow ] && exec sleep 20
+printf 'state: idle · source: pane\n'
+SH
+  start=$(date +%s)
+  out=$(FM_TEST_AGENT_STATE=dead FM_LIVENESS_READ_TIMEOUT=1 live "$dir") || fail "check failed"
+  [ $(( $(date +%s) - start )) -lt 10 ] || fail "the slow run read was not bounded"
+  printf '%s\n' "$out" | grep -F 'worker-liveness: fast agent process gone' >/dev/null || fail "the other worker's alarm was lost: $out"
+  if printf '%s\n' "$out" | grep -F 'worker-liveness: slow' >/dev/null; then fail "a timed-out read must not raise: $out"; fi
+  out=$(FM_TEST_AGENT_STATE=dead FM_LIVENESS_READ_TIMEOUT=1 live "$dir" --task slow --explain) || fail "check failed"
+  printf '%s\n' "$out" | grep -P '^slow\tsilent\t.*timed out' >/dev/null || fail "explain should show the timed-out read: $out"
+  pass "a run read that times out stays silent for that worker and keeps the other workers' alarms"
+}
+
 test_help_and_usage
 test_alive_and_unproven_states_are_silent
 test_dead_plain_worker_raises_once
@@ -157,3 +175,4 @@ test_secondmate_and_remote_are_skipped
 test_declared_wait_and_active_run_suppress_with_bound
 test_sandboxed_worker
 test_write_probe_sees_the_sbx_clone
+test_slow_run_read_does_not_suppress_other_alarms

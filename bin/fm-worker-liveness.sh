@@ -30,7 +30,10 @@
 #               still working (bin/fm-crew-state.sh) is waiting on that run or its
 #               CI. Both are accounted for, the declared wait only for
 #               FM_LIVENESS_WAIT_MAX_SECS (default 3600), so a forgotten wait
-#               still surfaces.
+#               still surfaces. The run read is bounded by
+#               FM_LIVENESS_READ_TIMEOUT (default 5) seconds without the forge
+#               fallback; a read that times out cannot prove the agent is gone,
+#               so that worker stays silent and the others are still checked.
 #
 # Anything left is raised as:
 #   worker-liveness: <id> agent process gone (<state>; <what was checked>)
@@ -49,6 +52,7 @@ FM_HOME="${FM_HOME:-$FM_ROOT}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 FM_LIVENESS_ACTIVE_SECS=${FM_LIVENESS_ACTIVE_SECS:-900}
 FM_LIVENESS_WAIT_MAX_SECS=${FM_LIVENESS_WAIT_MAX_SECS:-3600}
+FM_LIVENESS_READ_TIMEOUT=${FM_LIVENESS_READ_TIMEOUT:-5}
 
 usage() {
   printf 'usage: fm-worker-liveness.sh [--task ID] [--explain]\n'
@@ -66,7 +70,7 @@ while [ "$#" -gt 0 ]; do
     *) printf 'fm-worker-liveness: unknown argument "%s"\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
-for _v in FM_LIVENESS_ACTIVE_SECS FM_LIVENESS_WAIT_MAX_SECS; do
+for _v in FM_LIVENESS_ACTIVE_SECS FM_LIVENESS_WAIT_MAX_SECS FM_LIVENESS_READ_TIMEOUT; do
   case "${!_v}" in
     ''|*[!0-9]*) printf 'fm-worker-liveness: %s must be a whole number of seconds, got "%s"\n' "$_v" "${!_v}" >&2; exit 2 ;;
   esac
@@ -121,10 +125,18 @@ declared_wait() { # <id> -> reason on stdout
   printf 'declared wait %s old: %s\n' "$(printf '%ss' "$age")" "$(printf '%s' "$line" | cut -c1-60)"
 }
 
-# 0 when the task's no-mistakes run is still working (waiting on its steps or CI).
+# 0 when the task's no-mistakes run is still working (waiting on its steps or CI),
+# 2 when the bounded read timed out, 1 otherwise.
 run_active() { # <id> -> reason on stdout
-  local id=$1 line
-  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || return 1
+  local id=$1 line rc
+  line=$(FM_CREW_STATE_NO_FORGE=1 fm_run_timed "$FM_LIVENESS_READ_TIMEOUT" \
+    "$FM_CREW_STATE_BIN" "$id" 2>/dev/null)
+  rc=$?
+  if fm_timed_out "$rc"; then
+    printf 'pipeline run state read timed out after %ss, so the agent cannot be proven gone\n' "$FM_LIVENESS_READ_TIMEOUT"
+    return 2
+  fi
+  [ "$rc" -eq 0 ] || return 1
   case "$line" in
     "state: working · source: run-step"*) printf 'pipeline run still working\n'; return 0 ;;
   esac
@@ -177,7 +189,11 @@ verdict() {
   fi
 
   if why_wait=$(declared_wait "$id"); then V_KIND=accounted; V_WHY=$why_wait; return 0; fi
-  if why_wait=$(run_active "$id"); then V_KIND=accounted; V_WHY=$why_wait; return 0; fi
+  why_wait=$(run_active "$id")
+  case $? in
+    0) V_KIND=accounted; V_WHY=$why_wait; return 0 ;;
+    2) V_WHY=$why_wait; return 0 ;;
+  esac
   V_KIND=raise
   V_WHY="$state; $why; no declared wait and no active pipeline run"
 }

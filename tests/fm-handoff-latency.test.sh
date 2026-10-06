@@ -138,7 +138,13 @@ test_journal_stays_bounded() {
   lines=$(awk 'END { print NR }' "$state/.handoff-journal")
   [ "$lines" -le 10 ] && [ "$lines" -ge 5 ] || fail "the journal was not trimmed to its bound: $lines lines"
   tail -n 1 "$state/.handoff-journal" | awk -F '\t' '$5 == 25 { ok = 1 } END { exit !ok }' || fail "trimming dropped the newest record"
-  pass "the journal is trimmed to its bound and keeps the newest record"
+  rm -f "$state/.handoff-journal"
+  for i in $(seq 1 25); do printf '1\t%s\tsignal\tt.status\tsignal: t.status\n' "$i"; done \
+    | STATE="$state" FM_HANDOFF_JOURNAL_KEEP=5 bash -c '. "$1"; fm_hj_record_rows presented' _ "$ROOT/bin/fm-handoff-journal-lib.sh"
+  lines=$(awk 'END { print NR }' "$state/.handoff-journal")
+  [ "$lines" -eq 5 ] || fail "a batch was not trimmed to its bound: $lines lines"
+  tail -n 1 "$state/.handoff-journal" | awk -F '\t' '$5 == 25 { ok = 1 } END { exit !ok }' || fail "batch trimming dropped the newest record"
+  pass "the journal is trimmed to its bound and keeps the newest record, one record at a time or in a batch"
 }
 
 test_drain_journals_presented_and_acked_rows

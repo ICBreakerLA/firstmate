@@ -68,17 +68,20 @@ fm_hj_task_of_key() { # <kind> <key>
   printf '%s\n' "$key"
 }
 
-# fm_hj_record <event> <seq> <kind> <key> <queued-epoch> [<task>]
-fm_hj_record() {
-  local event=$1 seq=${2:-0} kind=${3:--} key=${4:--} queued=${5:-0} task=${6:-} file lines
-  [ -n "$task" ] || task=$(fm_hj_task_of_key "$kind" "$key")
+# fm_hj_line <event> <seq> <kind> <key> <queued-epoch> <task>: one journal line.
+fm_hj_line() {
+  printf 'v1\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(fm_hj_now_ms)" "$1" \
+    "$(printf '%s' "$6" | LC_ALL=C tr '\t\r\n' '   ')" "$2" "$3" \
+    "$(printf '%s' "$4" | LC_ALL=C tr '\t\r\n' '   ')" "$5"
+}
+
+# fm_hj_append <lines>: one append of whole lines, then one trim check.
+fm_hj_append() {
+  local file lines
+  [ -n "$1" ] || return 0
   file=$(fm_hj_path)
-  {
-    printf 'v1\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$(fm_hj_now_ms)" "$event" \
-      "$(printf '%s' "$task" | LC_ALL=C tr '\t\r\n' '   ')" "$seq" "$kind" \
-      "$(printf '%s' "$key" | LC_ALL=C tr '\t\r\n' '   ')" "$queued" >>"$file"
-  } 2>/dev/null || return 0
+  { printf '%s' "$1" >>"$file"; } 2>/dev/null || return 0
   lines=$(awk 'END { print NR }' "$file" 2>/dev/null || printf '0')
   case "$lines" in ''|*[!0-9]*) return 0 ;; esac
   if [ "$lines" -gt $((FM_HANDOFF_JOURNAL_KEEP * 2)) ]; then
@@ -89,13 +92,52 @@ fm_hj_record() {
   return 0
 }
 
-# fm_hj_record_rows <event> <rows-file-or-stdin-text>: one record per tab-row
-# (epoch seq kind key payload) read from stdin.
+# fm_hj_record <event> <seq> <kind> <key> <queued-epoch> [<task>]
+fm_hj_record() {
+  local event=$1 seq=${2:-0} kind=${3:--} key=${4:--} queued=${5:-0} task=${6:-}
+  [ -n "$task" ] || task=$(fm_hj_task_of_key "$kind" "$key")
+  fm_hj_append "$(fm_hj_line "$event" "$seq" "$kind" "$key" "$queued" "$task")
+"
+}
+
+# The window and terminal names of every meta file as `name<TAB>task` lines, in
+# the order window_to_task scans them, so a batch resolves stale keys from one
+# read of the meta files.
+fm_hj_window_map() {
+  local meta line t
+  for meta in "${STATE:-${FM_HOME:-.}/state}"/*.meta; do
+    [ -e "$meta" ] || continue
+    t=${meta##*/}
+    t=${t%.meta}
+    {
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          window=*) printf '%s\t%s\n' "${line#window=}" "$t" ;;
+          terminal=*) printf '%s\t%s\n' "${line#terminal=}" "$t" ;;
+        esac
+      done < "$meta"
+    } 2>/dev/null
+  done
+}
+
+# fm_hj_record_rows <event>: one record per tab-row (epoch seq kind key payload)
+# read from stdin, appended and trimmed once for the whole batch.
 fm_hj_record_rows() { # <event>
-  local event=$1 epoch seq kind key _payload
+  local event=$1 epoch seq kind key _payload task map='' mapped=0 w t out=''
   while IFS=$'\t' read -r epoch seq kind key _payload; do
     case "$seq" in ''|*[!0-9]*) continue ;; esac
-    fm_hj_record "$event" "$seq" "$kind" "$key" "$epoch"
+    if [ "$kind" = stale ]; then
+      [ "$mapped" -eq 1 ] || { map=$(fm_hj_window_map); mapped=1; }
+      task=${key##*:}; task=${task#fm-}
+      while IFS=$'\t' read -r w t; do
+        [ "$w" = "$key" ] || continue
+        task=$t
+        break
+      done <<<"$map"
+    else
+      task=$(fm_hj_task_of_key "$kind" "$key")
+    fi
+    out+=$(fm_hj_line "$event" "$seq" "${kind:--}" "${key:--}" "${epoch:-0}" "$task")$'\n'
   done
-  return 0
+  fm_hj_append "$out"
 }

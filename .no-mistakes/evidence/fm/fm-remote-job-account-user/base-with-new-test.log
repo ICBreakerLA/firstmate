@@ -1,0 +1,20 @@
+ok - default: result and command samples use 0.25 seconds; dispatcher uses four 0.05-second waits then one second
+ok - legacy: result and command samples use 0.07 seconds; dispatcher uses four 0.07-second waits then one second
+ok - active: result and command samples use 0.12 seconds; dispatcher uses four 0.07-second waits then one second
+ok - default queue and execution bounds independently cover long polls
+ok - operator PATH excludes a symlinked local bin
+ok - operator PATH honors nvm defaults with a deterministic fallback
+ok - operator PATH resolves the authorized Nix profile bin link
+ok - operator PATH orders discovered tool installs deterministically
+not ok - the worker child did not receive the account USER that macOS Keychain lookups need (missing: 'user=agent')
+--- output ---
+home=/tmp/fm-remote-job.fcTsid/remote-home
+root=/tmp/fm-remote-job.fcTsid/remote-root
+active=1
+path=/tmp/fm-remote-job.fcTsid/remote-root/bin:/tmp/fm-remote-job.fcTsid/account/.local/bin:/tmp/fm-remote-job.fcTsid/account/.nvm/versions/node/v20.18.0/bin:/tmp/fm-remote-job.fcTsid/nix-profile-bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+user=
+logname=
+args: <two words> <$(not executed)>
+secret=absent
+stdin=first line
+stdin=second line

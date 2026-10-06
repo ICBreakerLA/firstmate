@@ -23,6 +23,7 @@
 #   fm-test-run.sh --list-concurrent-safe-families
 #   fm-test-run.sh --concurrent-safe-family-jobs-max <name>
 #   fm-test-run.sh --list-lanes
+#   fm-test-run.sh --list-split-hints
 #   fm-test-run.sh --check-coverage
 #
 # Aggregation (no suite execution):
@@ -199,7 +200,7 @@ CHANGED_DEFAULT_TIMEOUT_SECS=1500
 
 # How many separate-runner shards the portable serial remainder splits into.
 # One owner: CI lane names carry this count and are refused when they disagree.
-PORTABLE_SERIAL_SHARDS=9
+PORTABLE_SERIAL_SHARDS=12
 
 # Conservative balance hint for a portable-serial script with no measurement.
 # Rounded above the current CI mean, including the capability-skipped scripts.
@@ -932,11 +933,41 @@ portable_serial_weight_for() {
   printf '%s\n' "$PORTABLE_SERIAL_DEFAULT_WEIGHT_MS"
 }
 
+# Serial scripts too long for one runner, split into this many slices so the
+# slices land on different shards. A slice runs every n-th top-level bare
+# test_* call of the script, in call order (tests/fm-test-slice-gate.sh), so the
+# slices together run each call exactly once. Only scripts whose test_* calls
+# are independent of one another and listed flat at the end of the file belong
+# here; fm-test-run.test.sh proves the slices cover every call. A script that is
+# not listed runs whole on one shard.
+portable_serial_split_hints() {
+  cat <<'EOF'
+tests/fm-backlog-atomicity.test.sh 2
+tests/fm-bearings-snapshot.test.sh 2
+tests/fm-pr-check-security.test.sh 3
+tests/fm-public-followup.test.sh 4
+tests/fm-secondmate-harness.test.sh 2
+tests/fm-session-start.test.sh 3
+tests/fm-spawn-dispatch-profile.test.sh 2
+tests/fm-supervision-host.test.sh 6
+tests/fm-teardown.test.sh 2
+tests/fm-watch-triage.test.sh 8
+EOF
+}
+
+portable_serial_split_count_for() {
+  local want=$1 count
+  count=$(portable_serial_split_hints | awk -v want="$want" '$1 == want { print $2; exit }')
+  printf '%s\n' "${count:-1}"
+}
+
 # Longest-processing-time assignment of the serial remainder to
-# PORTABLE_SERIAL_SHARDS bins, printing "<shard>\t<script>" for every script.
+# PORTABLE_SERIAL_SHARDS bins, printing "<shard>\t<script>" for every script,
+# or "<shard>\t<script>@<k>of<n>" for each slice of a split script, each
+# followed by its packed weight in milliseconds.
 # Deterministic: candidates are ordered by hint descending then path, and ties
 # between equally loaded bins always take the lowest bin index.
-portable_serial_assignments() {
+portable_serial_assignments_compute() {
   local ms script i best best_load
   local -a loads=()
   i=1
@@ -957,13 +988,33 @@ portable_serial_assignments() {
       i=$((i + 1))
     done
     loads[best]=$((best_load + ms))
-    printf '%s\t%s\n' "$best" "$script"
+    printf '%s\t%s\t%s\n' "$best" "$script" "$ms"
   done < <(
-    while IFS= read -r script; do
-      [ -n "$script" ] || continue
-      printf '%s\t%s\n' "$(portable_serial_weight_for "$script")" "$script"
-    done < <(list_portable_serial) | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2
+    awk -F '\t' -v fallback="$PORTABLE_SERIAL_DEFAULT_WEIGHT_MS" '
+      FILENAME != seen { seen = FILENAME; stage++ }
+      stage == 1 { split($0, f, " "); if (f[1] != "") hint[f[1]] = f[2]; next }
+      stage == 2 { split($0, f, " "); if (f[1] != "") slices[f[1]] = f[2]; next }
+      $0 != "" {
+        weight = ($0 in hint) ? hint[$0] : fallback
+        count = ($0 in slices) ? slices[$0] : 1
+        if (count <= 1) { printf "%d\t%s\n", weight, $0; next }
+        for (k = 1; k <= count; k++) printf "%d\t%s@%sof%s\n", int(weight / count), $0, k, count
+      }
+    ' <(portable_serial_weight_hints) <(portable_serial_split_hints) <(list_portable_serial) |
+      LC_ALL=C sort -t$'\t' -k1,1nr -k2,2
   )
+}
+
+# The assignment is deterministic and costs a full packing pass, so each runner
+# process computes it once and replays it.
+SERIAL_ASSIGNMENTS_CACHE=
+portable_serial_assignments_prime() {
+  [ -n "$SERIAL_ASSIGNMENTS_CACHE" ] || SERIAL_ASSIGNMENTS_CACHE=$(portable_serial_assignments_compute)
+}
+
+portable_serial_assignments() {
+  portable_serial_assignments_prime
+  printf '%s\n' "$SERIAL_ASSIGNMENTS_CACHE"
 }
 
 # Parse "<k>of<n>" from a portable-serial shard lane and echo <k>, refusing when
@@ -1028,9 +1079,16 @@ select_lane() {
     portable-serial-*)
       # One separate-runner shard of the same remainder, still serial in itself.
       shard=$(portable_serial_shard_index "$want")
-      while IFS=$'\t' read -r idx s; do
+      portable_serial_assignments_prime
+      while IFS=$'\t' read -r idx s _; do
         [ -n "$s" ] || continue
         if [ "$idx" = "$shard" ]; then
+          case "$s" in
+            *@*of*)
+              record_slice "${s%@*}" "${s##*@}"
+              s=${s%@*}
+              ;;
+          esac
           add_script "$s"
           found=1
         fi
@@ -1048,10 +1106,11 @@ select_lane() {
 }
 
 run_coverage_guard() {
-  local tmp missing extra a b shard unhinted serial_total serial_ms serial_max_ms=0
+  local tmp missing extra a b shard unhinted serial_total serial_ms serial_max_ms=0 script count k
   local p1_ms p1_unhinted p2_ms p2_unhinted parallel_max_ms parallel_imbalance_ms
   local -a saved_scripts=()
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-coverage.XXXXXX")
+  portable_serial_assignments_prime
 
   all_repo_tests | LC_ALL=C sort -u >"$tmp/all"
   list_proven_isolated | LC_ALL=C sort -u >"$tmp/proven"
@@ -1094,7 +1153,7 @@ run_coverage_guard() {
       return 1
     fi
     printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" >>"$tmp/serial_shards_raw"
-    serial_ms=$(printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | portable_serial_lane_weight)
+    serial_ms=$(portable_serial_assignments | awk -F '\t' -v want="$shard" '$1 == want { total += $3 } END { printf "%d\n", total + 0 }')
     [ "$serial_ms" -le "$serial_max_ms" ] || serial_max_ms=$serial_ms
     shard=$((shard + 1))
   done
@@ -1105,7 +1164,29 @@ run_coverage_guard() {
 
   # Every serial script runs in exactly one CI shard: no duplicate work across
   # runners, and no script silently left out of the required lane.
-  LC_ALL=C sort "$tmp/serial_shards_raw" | uniq -d >"$tmp/serial_shard_dups"
+  # A split script appears on several shards by design, once per slice, so
+  # duplicates and omissions are judged per slice unit rather than per path.
+  portable_serial_assignments | cut -f2 | LC_ALL=C sort >"$tmp/serial_units_raw"
+  LC_ALL=C sort "$tmp/serial_units_raw" | uniq -d >"$tmp/serial_shard_dups"
+  while IFS= read -r script; do
+    [ -n "$script" ] || continue
+    count=$(portable_serial_split_count_for "$script")
+    if [ "$count" -le 1 ]; then
+      printf '%s\n' "$script"
+    else
+      k=1
+      while [ "$k" -le "$count" ]; do
+        printf '%s@%sof%s\n' "$script" "$k" "$count"
+        k=$((k + 1))
+      done
+    fi
+  done <"$tmp/serial" | LC_ALL=C sort >"$tmp/serial_units_expected"
+  if ! cmp -s "$tmp/serial_units_raw" "$tmp/serial_units_expected"; then
+    log "coverage guard: portable serial shards must run every script and every slice of a split script exactly once"
+    comm -3 "$tmp/serial_units_expected" "$tmp/serial_units_raw" >&2 || true
+    rm -rf "$tmp"
+    return 1
+  fi
   if [ -s "$tmp/serial_shard_dups" ]; then
     log "coverage guard: portable serial shards share scripts:"
     cat "$tmp/serial_shard_dups" >&2
@@ -1301,6 +1382,24 @@ normalize_script_path() {
       printf '%s\n' "$p"
       ;;
   esac
+}
+
+# Slices selected for a split script, as "<path> <k>of<n>" lines. A shard that
+# receives several slices of one script runs them as a single comma-listed slice.
+SLICE_RECORDS=
+record_slice() {  # <script> <k>of<n>
+  SLICE_RECORDS="${SLICE_RECORDS}${1} ${2}"$'\n'
+}
+
+slice_spec_for() {  # <script>; prints "k[,k]...of<n>" or nothing
+  printf '%s' "$SLICE_RECORDS" | awk -v want="$1" '
+    $1 == want {
+      split($2, part, "of")
+      list = list (list == "" ? "" : ",") part[1]
+      count = part[2]
+    }
+    END { if (list != "") print list "of" count }
+  '
 }
 
 # Append unique relative-or-absolute script paths to SCRIPTS.
@@ -2034,6 +2133,10 @@ while [ "$#" -gt 0 ]; do
       LIST_LANES=1
       shift
       ;;
+    --list-split-hints)
+      portable_serial_split_hints
+      exit 0
+      ;;
     --check-coverage)
       CHECK_COVERAGE=1
       shift
@@ -2456,10 +2559,19 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   # call and its child script, so the runner's own environment is left as the
   # caller had it.
   local GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
+  local BASH_ENV FM_TEST_SLICE FM_TEST_SLICE_SCRIPT FM_TEST_SLICE_LOG slice note
   # shellcheck source=tests/git-config-helpers.sh
   . "$ROOT/tests/git-config-helpers.sh" || return
   local rc
-  : "$id"
+  slice=$(slice_spec_for "$script")
+  if [ -n "$slice" ]; then
+    FM_TEST_SLICE_LOG="$RUN_TMP/slice.$id"
+    : >"$FM_TEST_SLICE_LOG"
+    FM_TEST_SLICE=$slice
+    FM_TEST_SLICE_SCRIPT=$script
+    BASH_ENV="$ROOT/tests/fm-test-slice-gate.sh"
+    export BASH_ENV FM_TEST_SLICE FM_TEST_SLICE_SCRIPT FM_TEST_SLICE_LOG
+  fi
   set +e
   if [ "$stream" -eq 1 ]; then
     if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
@@ -2483,6 +2595,18 @@ run_script_bounded() {  # <script> <out> <stream> <id>
     printf 'not ok - %s exceeded the per-script bound of %ss and was terminated\n' \
       "$script" "$PER_SCRIPT_TIMEOUT_SECS" >>"$out"
     [ "$stream" -eq 1 ] && tail -1 "$out"
+  fi
+  if [ -n "$slice" ] && [ "$rc" -eq 0 ]; then
+    note=$(printf 'fm-test-run: %s slice %s ran %s test calls and skipped %s' "$script" "$slice" \
+      "$(grep -c '^ran ' "$FM_TEST_SLICE_LOG")" "$(grep -c '^skipped ' "$FM_TEST_SLICE_LOG")")
+    # A script that declares its own capability skip before any test call is the
+    # existing gate-skip accounting's to judge, not a vacuous slice.
+    if ! grep -q '^ran ' "$FM_TEST_SLICE_LOG" && ! grep -Eq '^(ok - )?skip(ped)?[: ]' "$out"; then
+      note="$note"$'\n'"not ok - $script slice $slice ran no test calls"
+      rc=1
+    fi
+    printf '%s\n' "$note" >>"$out"
+    [ "$stream" -ne 1 ] || printf '%s\n' "$note"
   fi
   return "$rc"
 }

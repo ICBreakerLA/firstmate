@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # fm-test-slice-gate.sh - runs one slice of a test script's top-level test_* calls.
 # bin/fm-test-run.sh points BASH_ENV at this file for exactly one sliced script
 # (FM_TEST_SLICE_SCRIPT) with FM_TEST_SLICE=<k[,k]...>of<n>. Every top-level bare

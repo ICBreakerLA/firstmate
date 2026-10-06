@@ -1,0 +1,59 @@
+$ fm_wake_append signal t1.status / stale fm-t1 (watcher queue)
+rc=0
+$ bin/fm-wake-drain.sh  (presents rows)
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  After draining queued wakes, watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.
+[exit 0]
+$ cat state/.handoff-journal
+v1	1791324352361	presented	t1	1	signal	t1.status	1791324352
+v1	1791324352370	presented	t1	2	stale	fm-t1	1791324352
+$ bin/fm-handoff-latency.sh --min 0
+handoff latency  window=24h00m  now=22:05:59
+watcher beat: 2h00m ago
+
+WORST GAPS
+  GAP      STAGE            TASK                     WHEN      DETAIL
+  7s       wake-unhandled   t1                       22:05:52  signal t1.status (queued, not yet acknowledged)
+  7s       wake-unhandled   t1                       22:05:52  stale fm-t1 (queued, not yet acknowledged)
+
+BY STAGE
+  STAGE             COUNT   MEDIAN      MAX
+  wake-unhandled        2       7s       7s
+$ bin/fm-handoff-latency.sh --task t1 --min 0
+handoff latency  window=24h00m  task=t1  now=22:05:59
+watcher beat: 2h00m ago
+
+WORST GAPS
+  GAP      STAGE            TASK                     WHEN      DETAIL
+  7s       wake-unhandled   t1                       22:05:52  signal t1.status (queued, not yet acknowledged)
+  7s       wake-unhandled   t1                       22:05:52  stale fm-t1 (queued, not yet acknowledged)
+
+BY STAGE
+  STAGE             COUNT   MEDIAN      MAX
+  wake-unhandled        2       7s       7s
+$ bin/fm-wake-drain.sh --ack-through 2 --recovery-generation 1930081.1791324352.A86tGJ
+$ cat state/.handoff-journal
+v1	1791324352361	presented	t1	1	signal	t1.status	1791324352
+v1	1791324352370	presented	t1	2	stale	fm-t1	1791324352
+v1	1791324366810	presented	t1	1	signal	t1.status	1791324352
+v1	1791324366820	presented	t1	2	stale	fm-t1	1791324352
+v1	1791324367574	acked	t1	1	signal	t1.status	1791324352
+v1	1791324367580	acked	t1	2	stale	fm-t1	1791324352
+$ bin/fm-handoff-latency.sh --min 0
+handoff latency  window=24h00m  now=22:06:07
+watcher beat: 2h00m ago
+
+WORST GAPS
+  GAP      STAGE            TASK                     WHEN      DETAIL
+  15s      shown->handled   t1                       22:05:52  signal t1.status
+  15s      shown->handled   t1                       22:05:52  stale fm-t1
+  0s       wake->shown      t1                       22:05:52  signal t1.status
+  0s       wake->shown      t1                       22:05:52  stale fm-t1
+
+BY STAGE
+  STAGE             COUNT   MEDIAN      MAX
+  wake->shown           2       0s       0s
+  shown->handled        2      15s      15s

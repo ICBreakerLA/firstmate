@@ -1,0 +1,8 @@
+ok - a new parked gate sends one reattach nudge and wakes firstmate with the gate and owner
+ok - a parked gate is nudged once per interval, again after it, and an identical re-park after it is nudged
+ok - a slow current-state read is bounded and never wakes or nudges
+ok - a gate whose run the worker already reported is left alone; another run's decision does not count
+ok - only a run-step parked verdict is a gate, and the state read follows its cadence, turn ends and kill switch
+ok - a failed nudge still wakes firstmate, says so, and is not journaled as sent
+ok - a real watcher wakes within a poll for an idle worker parked at a gate and nudges it once
+ok - a worker that is still busy is never nudged or reported as parked

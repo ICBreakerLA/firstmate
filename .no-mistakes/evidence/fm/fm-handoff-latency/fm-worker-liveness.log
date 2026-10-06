@@ -1,0 +1,8 @@
+ok - help, unknown argument and a bad bound are refused with usage
+ok - only a dead or missing endpoint can raise; every other probe answer is silent
+ok - a dead worker with no wait and no run raises one alarm line, and --task narrows it
+ok - secondmates and remote tasks are left to their own liveness paths
+ok - a declared wait (bounded) or an active run keeps a pane-less worker from alarming
+ok - a sandboxed worker is accounted for only while its VM is listed and still active
+ok - the write probe counts the sandbox clone for sandboxed tasks only
+ok - a run read that times out stays silent for that worker and keeps the other workers' alarms

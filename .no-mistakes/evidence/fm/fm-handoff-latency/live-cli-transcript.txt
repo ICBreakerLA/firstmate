@@ -1,0 +1,25 @@
+$ bin/fm-watcher-beat-check.sh --always
+watcher-idle: no task, check or source needs a watcher in this home
+[exit 0]
+$ bin/fm-watcher-beat-check.sh --always
+watcher-down: the primary watcher has never beaten in this home while 1 task(s) are in flight; no wake can be delivered. Re-arm with bin/fm-watch-arm.sh
+[exit 1]
+$ bin/fm-watcher-beat-check.sh --always
+watcher-ok: the primary watcher beat is 0s ago (grace 300s)
+[exit 0]
+$ bin/fm-watcher-beat-check.sh
+watcher-down: the primary watcher beat is 7200s old (grace 300s) with 1 task(s) in flight; no wake can be delivered. Re-arm with bin/fm-watch-arm.sh
+[exit 1]
+$ bin/fm-watcher-beat-check.sh --grace abc
+fm-watcher-beat-check: grace must be a positive whole number of seconds, got "abc"
+[exit 2]
+$ bin/fm-handoff-latency.sh
+handoff latency  window=24h00m  now=22:05:42
+watcher beat: 2h00m ago
+
+no handoff records yet
+records come from the wake drain (/tmp/fm-lab.0TfLcl/state/.handoff-journal), worker status logs and steering inboxes under /tmp/fm-lab.0TfLcl/state; run firstmate for a while and ask again
+[exit 0]
+$ bin/fm-worker-liveness.sh --explain
+t1	silent	endpoint state is unreadable; only dead or missing proves the agent is gone
+[exit 0]

@@ -1,0 +1,8 @@
+ok - the drain journals a presented row at presentation and an acked row at acknowledgement
+ok - the report derives each stage's gap from the status log and the journal
+ok - the worst gap leads the list
+ok - steering messages and still-waiting wakes appear, and --task narrows them
+ok - the report has --help, a definitive empty state and refuses bad arguments with a reason
+ok - stale window names and gate-parked keys are reported under their task
+ok - the journal is trimmed to its bound and keeps the newest record, one record at a time or in a batch
+ok - a large batch appended beside another writer leaves every journal line whole

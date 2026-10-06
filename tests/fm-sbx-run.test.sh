@@ -348,7 +348,7 @@ test_nm_ship_gets_the_pinned_host_lint_tools() {
 }
 
 test_lint_tools_of_the_wrong_version_or_that_do_not_run_are_left_out_loudly() {
-  local out sc al
+  local out sc al base
   new_world lintbad
   fake_nm "$W" v1.79.0
   sc=$("$ROOT/bin/fm-lint.sh" --required-version)
@@ -365,7 +365,8 @@ test_lint_tools_of_the_wrong_version_or_that_do_not_run_are_left_out_loudly() {
   assert_contains "$(log)" "rm -f /usr/local/bin/actionlint" "the unusable copy is removed"
   : >"$LOG"
   rm -f "$FAKE/shellcheck" "$FAKE/actionlint"
-  out=$(PATH="$FAKE:/usr/bin:/bin" wrap --root "$ROOT" --nm -- claude 2>&1) || fail "absent host tools must not stop the worker: $out"
+  base=$(fm_test_base_path_sans "${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" shellcheck actionlint)
+  out=$(PATH="$FAKE:$base" wrap --root "$ROOT" --nm -- claude 2>&1) || fail "absent host tools must not stop the worker: $out"
   assert_contains "$out" "the host shellcheck reports 'nothing'" "an absent tool is reported"
   assert_contains "$(log)" "run --name" "claude still starts"
   pass "a host tool at another version, absent or unable to run is never installed and the lint step still fails naming it"

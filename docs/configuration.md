@@ -12,6 +12,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Running Claude workers in a microVM | [Worker sandbox](#worker-sandbox-configworker-sandbox) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
+| Secrets or personal data in worker output | [Output scan](#output-scan-configoutput-scan-denytxt) |
 | Runaway spend or a noisy worker | [Quota burn-rate alert](#quota-burn-rate-alert-configquota-burn-percent-per-hour) and [status flood cap](#status-flood-cap-fm_status_flood_max) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
@@ -640,6 +641,35 @@ The history lives under `state/quota-burn/` rather than the source registry, and
 
 Spend by a worker that edits its own hooks or transcripts is still visible here because the figure comes from the provider's quota, not from per-call counting.
 
+## Output scan (config/output-scan-deny.txt)
+
+`bin/fm-output-scan.sh` checks text that is about to leave the fleet for secrets and for the captain's personal data.
+It takes a file path or `-` for standard input, and `--diff [<base>]` scans only the lines `git diff <base>...HEAD` adds.
+It exits `0` when the text is clean, `1` when at least one shape matched, and `2` on a usage or configuration error; every caller refuses on any non-zero exit.
+Each hit prints as `<shape> line <N>` (`<shape> <path>:<N>` for a diff) and nothing else, so the scan never writes the matched value into a log, a status line, or a worker's context.
+It never redacts or rewrites text.
+
+### Shapes
+
+The secret shapes are always on: AWS key ids, GitHub tokens, `sk-ant-` and `sk-` keys, Slack tokens, private-key headers, JWTs, bearer headers, and `key=value` secrets whose value contains a digit.
+Emails, phone numbers, and home paths false-positive on ordinary work, so those shapes apply only through the optional local, gitignored `config/output-scan-deny.txt`.
+The file holds one entry per line, with blank lines and `#` comments ignored and case-insensitive matching.
+An entry containing `@` reports as `email`, an entry of digits and phone punctuation reports as `phone` and matches however the digits are spaced and with or without a country code, an entry containing `/home/` or `/Users/` reports as `home-path`, and anything else (a name, a street address, an employer string) reports as `personal-term`.
+An absent file means no personal-data rules; an unreadable file or an entry shorter than three characters exits `2` rather than passing silently.
+The scanner looks in `$FM_CONFIG_OVERRIDE`, else `$FM_HOME/config`, so a worker in a project worktree that has no `config/` is checked against the secret shapes only.
+
+### Where it runs
+
+- `bin/fm-x-reply.sh` scans the reply text before the post or dry-run record and refuses with exit `7` on any non-zero scan.
+- The scout completion gate in `bin/fm-teardown.sh` scans `data/<id>/report.md` and refuses cleanup on a hit, leaving the task held for the captain; `--force` still discards the scout.
+- Ship delivery scans the branch diff through `commands.lint` in `.no-mistakes.yaml`, ahead of `bin/fm-lint.sh`, so the scan adds no manual gate and still runs where the lint tools cannot.
+
+### Honest limit
+
+This is a pattern scan.
+It stops accidental pastes, not a worker that deliberately splits, encodes, or obfuscates what it sends.
+The audit prototype of these shapes caught 12 of 12 plain shapes and 0 of 4 evasions, and this scan does not claim more.
+
 ## Status flood cap (FM_STATUS_FLOOD_MAX)
 
 The status fold in `bin/fm-classify-lib.sh` caps how many captain-relevant lines one task can turn into wakes.
@@ -652,7 +682,7 @@ The cap is not a rate limit on tool calls and does not touch the busy-turn or we
 
 ## Gate defaults (.no-mistakes.yaml)
 
-The tracked `.no-mistakes.yaml` sets `test.evidence.store_in_repo: true` and pins `commands.lint` to `bin/fm-lint.sh`, the same owner CI invokes.
+The tracked `.no-mistakes.yaml` sets `test.evidence.store_in_repo: true` and pins `commands.lint` to the [output scan](#output-scan-configoutput-scan-denytxt) of the branch diff followed by `bin/fm-lint.sh`, the same lint owner CI invokes.
 Storing evidence in the repo publishes each run's test artifacts to the orphan `no-mistakes/evidence` branch and links them from the PR body, instead of keeping them on local disk under the no-mistakes home.
 
 That branch shares no history with code branches, so evidence never enters a pushed feature branch or the default branch; the worktree's `.no-mistakes/` stays local and CI rejects tracked entries under that path.

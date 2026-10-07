@@ -79,6 +79,12 @@
 # (required), FMX_RELAY_URL (default https://myfirstmate.io). Auth:
 # Authorization: Bearer <token>.
 #
+# Output scan: before anything is recorded or posted the reply text goes through
+# bin/fm-output-scan.sh. A secret or deny-listed personal-data hit (or a scanner
+# configuration error) refuses with exit 7 and names only the shape and line, never
+# the matched text, so the reply must be rewritten by the caller. The dry-run path
+# is refused the same way.
+#
 # Preview / dry-run: with FMX_DRY_RUN set (truthy), the reply is NOT posted.
 # Instead the would-be POST body ({request_id, text}, or {request_id, text,
 # texts} for a thread) is recorded to state/x-outbox/<request_id>.json and a "DRY
@@ -236,6 +242,17 @@ esac
 if [ -z "$TEXT" ]; then
   echo "fm-x-reply: empty reply text" >&2
   exit 2
+fi
+
+# The text is about to go to a public thread, so a secret or deny-listed personal
+# term in it refuses the reply before anything is recorded or posted. The scanner
+# prints only shape names and line numbers, never the matched text.
+SCAN_OUT=$("$SCRIPT_DIR/fm-output-scan.sh" - <<<"$TEXT" 2>&1)
+SCAN_RC=$?
+if [ "$SCAN_RC" -ne 0 ]; then
+  echo "fm-x-reply: refusing to post: output scan reported a hit or error (bin/fm-output-scan.sh)" >&2
+  [ -z "$SCAN_OUT" ] || printf '%s\n' "$SCAN_OUT" >&2
+  exit 7
 fi
 
 # The endpoint is the only behavioral difference between an answer and a

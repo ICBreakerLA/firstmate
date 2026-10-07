@@ -187,9 +187,10 @@ fi
 
 # A key that matches the specific anthropic-key shape is not also an openai-key.
 sort -t' ' -k1,1n -k2,2 -u "$HITS" >"$HITS.sorted"
+ANTHROPIC_LINES=$(awk '$2 == "anthropic-key" { print $1 }' "$HITS.sorted")
 HIT_COUNT=0
 while read -r line shape; do
-  if [ "$shape" = openai-key ] && grep -qx "$line anthropic-key" "$HITS.sorted"; then
+  if [ "$shape" = openai-key ] && grep -qx "$line" <<<"$ANTHROPIC_LINES"; then
     continue
   fi
   HIT_COUNT=$((HIT_COUNT + 1))

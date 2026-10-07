@@ -115,17 +115,30 @@ record_hits() {
   done <<<"$2"
 }
 
+# run_scan_grep <grep-args-after-"-a -n -o">: sets GREP_OUT, returns 0 for a
+# match or 1 for none; a grep failure (exit > 1) exits the script with 2.
+run_scan_grep() {
+  local rc
+  GREP_OUT=$(grep -a -n -o "$@" "$TEXT" 2>/dev/null)
+  rc=$?
+  if [ "$rc" -gt 1 ]; then
+    echo "fm-output-scan: grep failed (exit $rc) while scanning" >&2
+    exit 2
+  fi
+  [ "$rc" -eq 0 ]
+}
+
 scan() {
-  local shape=$1 regex=$2 flags=${3:--E} validator=${4:-} out
-  out=$(grep -a -n -o "$flags" -e "$regex" "$TEXT" 2>/dev/null) || return 0
-  record_hits "$shape" "$out" "$validator"
+  local shape=$1 regex=$2 flags=${3:--E} validator=${4:-}
+  run_scan_grep "$flags" -e "$regex" || return 0
+  record_hits "$shape" "$GREP_OUT" "$validator"
 }
 
 B='(^|[^A-Za-z0-9])'
 scan aws-key-id "${B}(AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[0-9A-Z]{16}([^A-Za-z0-9]|\$)"
 scan github-token "${B}(gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"
 scan anthropic-key "${B}sk-ant-[A-Za-z0-9_-]{20,}"
-scan openai-key "${B}sk-(?!ant-)[A-Za-z0-9_-]{31,}" -P
+scan openai-key "${B}sk-([B-Zb-z0-9_-]|[Aa][^Nn]|[Aa][Nn][^Tt]|[Aa][Nn][Tt][^-])[A-Za-z0-9_-]{30,}"
 scan slack-token "${B}(xox[abprs]-[A-Za-z0-9-]{10,}|xapp-[0-9]-[A-Za-z0-9-]{10,})"
 scan private-key '-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----'
 scan jwt "${B}eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"
@@ -163,12 +176,12 @@ if [ -e "$DENY_FILE" ]; then
       fi
       [ "${#digits}" -le 10 ] || digits=${digits: -10}
       regex=$(printf '%s' "$digits" | sed 's/./&[^0-9]*/g; s/\[\^0-9\]\*$//')
-      out=$(grep -a -n -o -E -e "$regex" "$TEXT" 2>/dev/null) || continue
+      run_scan_grep -E -e "$regex" || continue
     else
       [ -n "$shape" ] || shape=personal-term
-      out=$(grep -a -n -o -i -F -e "$entry" "$TEXT" 2>/dev/null) || continue
+      run_scan_grep -i -F -e "$entry" || continue
     fi
-    record_hits "$shape" "$out"
+    record_hits "$shape" "$GREP_OUT"
   done <"$DENY_FILE"
 fi
 

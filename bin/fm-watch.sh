@@ -2291,6 +2291,31 @@ heartbeat_scan_finds_actionable() {
   return "$found"
 }
 
+# watcher_beacon_touch: the single writer of the liveness beacon.
+watcher_beacon_touch() { touch "$STATE/.last-watcher-beat"; }
+
+# watcher_run_with_beacon <cmd...>: run a blocking wait while keeping the
+# liveness beacon fresh, then return the command's own status and output. The
+# terminal wait can block a whole POLL with no other beacon write, so without
+# this the beacon ages past the guard grace late in every long cycle. The
+# ticker stops with the command and also when this watcher process dies, so a
+# killed watcher can never leave a ticker keeping its beacon falsely fresh.
+watcher_run_with_beacon() {
+  local owner=$$ ticker rc
+  (
+    while kill -0 "$owner" 2>/dev/null; do
+      sleep "${FM_WATCHER_BEACON_INTERVAL:-30}"
+      watcher_beacon_touch
+    done
+  ) >/dev/null 2>&1 &
+  ticker=$!
+  "$@"
+  rc=$?
+  kill "$ticker" 2>/dev/null
+  wait "$ticker" 2>/dev/null
+  return "$rc"
+}
+
 # event_wait_or_sleep: the terminal wait of each supervision cycle. For a home
 # with push-capable windows (herdr), it replaces the blind `sleep POLL` with a
 # bounded wait on the backend's native transition stream, so a crew going
@@ -2325,7 +2350,7 @@ event_wait_or_sleep() {
   done < <(recorded_windows)
 
   if [ "${#windows[@]}" -eq 0 ]; then
-    sleep "$POLL"
+    watcher_run_with_beacon sleep "$POLL"
     return
   fi
 
@@ -2341,11 +2366,11 @@ event_wait_or_sleep() {
     _event_cap_fails=0
   fi
   if [ "$_event_cap_ok" != 1 ]; then
-    sleep "$POLL"
+    watcher_run_with_beacon sleep "$POLL"
     return
   fi
 
-  rec=$(FM_BACKEND_EVENTS_CAPABILITY_CONFIRMED=1 fm_backend_wait_transition "$first_backend" "$first_session" "$POLL" "$STATE" "${windows[@]}")
+  rec=$(FM_BACKEND_EVENTS_CAPABILITY_CONFIRMED=1 watcher_run_with_beacon fm_backend_wait_transition "$first_backend" "$first_session" "$POLL" "$STATE" "${windows[@]}")
   rc=$?
   case "$rc" in
     0)
@@ -2358,7 +2383,7 @@ event_wait_or_sleep() {
       # pure polling for the rest of this watcher process.
       _event_cap_fails=$((_event_cap_fails + 1))
       [ "$_event_cap_fails" -ge "$EVENT_CAP_FAIL_MAX" ] && _event_cap_ok=0
-      sleep "$POLL"
+      watcher_run_with_beacon sleep "$POLL"
       ;;
     *)
       # 1: a clean full-budget wait with no actionable edge - the reader already
@@ -2667,7 +2692,7 @@ while :; do
 
   # Liveness beacon for fm-guard.sh: a fresh mtime here means a watcher is
   # alive. Supervision scripts warn when this goes stale with tasks in flight.
-  touch "$STATE/.last-watcher-beat"
+  watcher_beacon_touch
 
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.

@@ -16,6 +16,30 @@ beat_check() { # <dir> [args...]; prints stdout, returns the check's exit code
 
 set_beat_age() { : > "$1/state/.last-watcher-beat"; touch -d "@$(( $(date +%s) - $2 ))" "$1/state/.last-watcher-beat"; }
 
+test_blocking_wait_keeps_beacon_fresh() {
+  local dir out maxage age beat i rc
+  dir=$(make_case wb-wait); beat="$dir/state/.last-watcher-beat"
+  : > "$beat"
+  out=$(
+    export FM_STATE_OVERRIDE="$dir/state" FM_HOME="$dir" FM_WATCHER_BEACON_INTERVAL=1
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-watch.sh"
+    watcher_run_with_beacon bash -c 'sleep 7; echo waited; exit 3' &
+    wpid=$!
+    maxage=0
+    for i in $(seq 1 12); do
+      sleep 0.5
+      age=$(( $(date +%s) - $(stat -c %Y "$beat" 2>/dev/null || stat -f %m "$beat") ))
+      [ "$age" -le "$maxage" ] || maxage=$age
+    done
+    wait "$wpid"; rc=$?
+    echo "maxage=$maxage rc=$rc"
+  ) || fail "the wait fixture failed: $out"
+  printf '%s\n' "$out" | grep -F 'waited' >/dev/null || fail "the wrapped wait's own output was lost: $out"
+  printf '%s\n' "$out" | grep -E 'maxage=[0-2] rc=3' >/dev/null || fail "beacon aged past the interval during a blocking wait, or the exit status was lost: $out"
+  pass "a blocking wait keeps the beacon fresh and preserves the wait's status"
+}
+
 test_usage() {
   local dir rc
   dir=$(make_case wb-usage)
@@ -76,3 +100,4 @@ test_idle_home_is_quiet
 test_fresh_beat_is_healthy
 test_stale_beat_alarms
 test_missing_beat_alarms_when_work_exists
+test_blocking_wait_keeps_beacon_fresh

@@ -610,7 +610,12 @@ ok "the limit file sets the rate, and a missing or malformed file uses the defau
 seed_burn 1800 95
 out=$(burn_poll 50 5) || fail "a low reading ended in no wake: $out"
 printf '%s\n' "$out" | grep -qx 'status: low' || fail "a low reading did not keep its own outcome: $out"
-ok "a below-threshold reading still reports low, not burn"
+[ ! -e "$BURN_MARK" ] || fail "a low-precedence reading consumed the burn episode"
+ok "a below-threshold reading still reports low, not burn, and leaves the episode unconsumed"
+
+out=$(burn_poll 50 80) || fail "a later healthy reading over the same limit did not wake: $out"
+printf '%s\n' "$out" | grep -qx 'status: burn' || fail "a later healthy reading over the limit did not report burn: $out"
+ok "a later healthy reading over the limit still wakes once, after a low reading discarded burn"
 
 printf 'off\n' > "$BURN_CFG"
 

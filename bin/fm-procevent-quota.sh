@@ -285,10 +285,12 @@ burn_consumed() {
   ' "$file"
 }
 
-# burn_check <source-id> <json> <provider>
+# burn_check <source-id> <json> <provider> <can-fire>
 # Return 0 and print the burn detail JSON when this read starts a burn episode.
+# History is recorded on every call; the episode marker is only consumed when
+# <can-fire> is true, i.e. when burn is the status this poll will actually report.
 burn_check() {
-  local id=$1 json=$2 provider=$3 limit samples now consumed key marker over
+  local id=$1 json=$2 provider=$3 can_fire=${4:-true} limit samples now consumed key marker over
   limit=$(burn_limit)
   [ -n "$limit" ] || return 1
   samples=$(burn_samples "$json" "$provider")
@@ -301,6 +303,7 @@ burn_check() {
     rm -f "$marker"
     return 1
   fi
+  [ "$can_fire" = true ] || return 1
   [ ! -e "$marker" ] || return 1
   : > "$marker" || return 1
   jq -cn --arg c "$consumed" --arg l "$limit" --arg k "$key" --argjson w "$BURN_WINDOW_SECS" \
@@ -380,7 +383,9 @@ cmd_poll() {
     status=$(condition_status "$json" "$PROVIDER" "$threshold")
     burn_detail=
     if [ "$status" != error ]; then
-      burn_detail=$(burn_check "$CANONICAL_SOURCE_ID" "$json" "$PROVIDER") || burn_detail=
+      local can_fire=false
+      [ "$status" = healthy ] && can_fire=true
+      burn_detail=$(burn_check "$CANONICAL_SOURCE_ID" "$json" "$PROVIDER" "$can_fire") || burn_detail=
     fi
     case "$status" in
       healthy)

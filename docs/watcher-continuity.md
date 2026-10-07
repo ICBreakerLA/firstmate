@@ -398,8 +398,9 @@ The file is size-capped through `FM_WATCH_CYCLE_LOG_MAX_BYTES` and `FM_WATCH_CYC
 ### Grace, beacon, and stop signals
 
 The default 300-second grace is unchanged.
-Only the watcher process touches `state/.last-watcher-beat`.
-No helper process can make a wedged watcher appear healthy.
+`state/.last-watcher-beat` is touched by the watcher process at the top of each cycle and, during its terminal wait, by the ticker `watcher_run_with_beacon` forks for exactly that wait (`bin/fm-watch.sh`).
+That ticker tracks the watcher's own pid and exits the moment the watcher does, so a killed watcher can never leave a ticker keeping its beacon falsely fresh.
+No other, unrelated process can make a wedged watcher appear healthy.
 An arm whose own script path sits under a disposable no-mistakes validation checkout (`.no-mistakes/worktrees/`) refuses with the typed failure line before touching any state, because a watcher started there outlives the validation step and keeps writing the real home's state from a checkout about to be deleted.
 Once per poll the watcher checks that its home, its state directory, and its own code root still exist, and exits with a logged reason when one is gone, scoped to itself alone, so a torn-down temporary home or a discarded checkout never leaves an orphan watcher behind.
 The watcher uses bash's native fatal handling for HUP and TERM, including during a blocked poll, so both run its EXIT cleanup.

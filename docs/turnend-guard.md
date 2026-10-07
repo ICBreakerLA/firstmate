@@ -206,12 +206,12 @@ With `state/.afk` absent the daemon lock proves nothing and the strict watcher p
 
 ### Guard grace and the poll cadence
 
-`bin/fm-watch.sh` touches `state/.last-watcher-beat` once per cycle, immediately before its terminal wait (`event_wait_or_sleep`) as well as at the top of the next cycle.
-A healthy watcher's beacon can therefore legitimately age up to `FM_POLL` seconds between touches.
+`bin/fm-watch.sh` touches `state/.last-watcher-beat` at the top of every cycle.
+Its terminal wait (`event_wait_or_sleep`), whether a plain `sleep POLL` or a bounded herdr event wait, runs under `watcher_run_with_beacon`, whose forked ticker re-touches the beacon every `FM_WATCHER_BEACON_INTERVAL` seconds (default 30) for as long as that wait blocks.
+A healthy watcher's beacon therefore ages by at most about `FM_WATCHER_BEACON_INTERVAL` seconds even mid-wait, not by the full cycle length.
 
-A fixed 300-second grace default stops correctly bounding staleness once a home's `FM_POLL` reaches or exceeds it.
-A perfectly healthy watcher mid-wait would then read stale at the edge of every full poll cycle by definition.
-That is exactly what a long-poll home (`FM_POLL=300`) hit against the Claude Stop-hook auto-arm (`bin/fm-claude-stop-autoarm.sh`).
+A fixed 300-second grace default still would not correctly bound staleness once a home's `FM_POLL` reaches or exceeds it, because the ticker only covers the terminal wait: other per-cycle work (pane capture, backend calls, heartbeat scans) still runs beacon-less between touches.
+A long-poll home (`FM_POLL=300`) hit exactly that gap against the Claude Stop-hook auto-arm (`bin/fm-claude-stop-autoarm.sh`) before the ticker existed, when the terminal wait itself was the uncovered stretch.
 
 Two readers derive their default grace from the configured poll instead of a bare constant:
 

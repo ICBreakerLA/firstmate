@@ -2360,9 +2360,73 @@ _fm_status_open_decision_origins() {  # <status-file> [<kind>]
   printf '%s' "$origins"
 }
 
+# Status flood cap. More than FM_STATUS_FLOOD_MAX captain-relevant lines from one
+# task inside FM_STATUS_FLOOD_WINDOW_SECS fold into ONE "noisy" event, and the
+# lines after it that are not terminal verbs are absorbed. Terminal verbs
+# (done, failed, blocked, needs-decision) always surface, and still count toward
+# the window. The rank of a line is derived only from the status file's own
+# [at=<epoch>] stamps, so the watcher, the heartbeat backstop, and the daemon
+# read the same verdict for the same bytes, whatever offset each starts from; a
+# line with no well-formed stamp has unknown time and is never counted. A rank
+# only needs the lines just before the span, so the seed reads at most
+# FM_STATUS_FLOOD_SEED_BYTES of them. 0 disables the cap.
+FM_STATUS_FLOOD_WINDOW_SECS=600
+FM_STATUS_FLOOD_MAX_DEFAULT=20
+FM_STATUS_FLOOD_SEED_BYTES=32768
+
+_fm_flood_max() {  # -> the configured cap on stdout
+  case "${FM_STATUS_FLOOD_MAX:-}" in
+    '') printf '%s' "$FM_STATUS_FLOOD_MAX_DEFAULT" ;;
+    0) printf 0 ;;
+    [1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9]) printf '%s' "$FM_STATUS_FLOOD_MAX" ;;
+    *) printf '%s' "$FM_STATUS_FLOOD_MAX_DEFAULT" ;;
+  esac
+}
+
+# Count <line> into the rolling window held in _fm_flood_epochs and set
+# _fm_flood_rank to its 1-based position among the stamped lines within the
+# window, or 0 when it has no usable stamp. At most <max>+1 epochs are kept: a
+# rank beyond that is already suppressed and needs no exact value.
+_fm_flood_count() {  # <status-line> <max>
+  local at e kept='' n=0
+  _fm_flood_rank=0
+  _fm_status_at_epoch "$1" at || return 0
+  for e in $_fm_flood_epochs; do
+    [ $((at - e)) -lt "$FM_STATUS_FLOOD_WINDOW_SECS" ] || continue
+    kept="${kept:+$kept }$e"
+    n=$((n + 1))
+  done
+  _fm_flood_rank=$((n + 1))
+  kept="${kept:+$kept }$at"
+  [ "$n" -le "$2" ] || kept=${kept#* }
+  _fm_flood_epochs=$kept
+}
+
+# Replay the captain-relevant lines just before <start> into the window.
+_fm_flood_seed() {  # <status-file> <start-offset> <max>
+  local f=$1 start=$2 max=$3 from=0 chunk line first=1
+  _fm_flood_epochs=''
+  [ "$start" -gt 0 ] || return 0
+  [ "$start" -le "$FM_STATUS_FLOOD_SEED_BYTES" ] || from=$((start - FM_STATUS_FLOOD_SEED_BYTES))
+  chunk=$(_fm_status_read_span "$f" "$from" "$((start - from))" 2>/dev/null) || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$first" -eq 1 ] && [ "$from" -gt 0 ]; then first=0; continue; fi
+    first=0
+    case "$line" in *[![:space:]]*) ;; *) continue ;; esac
+    status_is_captain_held "$line" && continue
+    status_is_captain_relevant "$line" || continue
+    _fm_flood_count "$line" "$max"
+  done <<EOF
+$chunk
+EOF
+}
+
 status_span_first_actionable_record() {  # <status-file> <start-offset> [record-var] [needs-decision-var]
   local f=$1 start=${2:-0} output_var=${3-} needs_var=${4-} size ident cur_ident scratch chunk_file result
   local line verb key origins='' folded=0 rc=1 failed=0 line_number=0 live_line='' events='' _line _key _fm_span_needs_decision=0
+  local flood_max flood_seeded=0 _fm_flood_probe='' _fm_flood_epochs='' _fm_flood_rank=0 task_name
+  flood_max=$(_fm_flood_max)
+  task_name=${f##*/}; task_name=${task_name%.status}
   [ -e "$f" ] || { [ -L "$f" ] && return 2; return 1; }
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 2
   ident=$(_fm_open_decisions_file_ident "$f") || return 2
@@ -2401,6 +2465,21 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
       continue
     fi
     status_is_captain_relevant "$line" || continue
+    if [ "$flood_max" -gt 0 ]; then
+      if [ "$flood_seeded" -eq 0 ] && _fm_status_at_epoch "$line" _fm_flood_probe; then
+        flood_seeded=1
+        _fm_flood_seed "$f" "$start" "$flood_max"
+      fi
+      _fm_flood_count "$line" "$flood_max"
+      if [ "$_fm_flood_rank" -eq $((flood_max + 1)) ]; then
+        [ -n "$events" ] && events="${events} ; "
+        events="${events}noisy: ${task_name} appended more than ${flood_max} captain-relevant status lines within $((FM_STATUS_FLOOD_WINDOW_SECS / 60)) minutes, so later lines other than done, failed, blocked and needs-decision are folded into this event"
+        rc=0
+      fi
+      if [ "$_fm_flood_rank" -gt "$flood_max" ] && ! status_is_terminal_verb "$line"; then
+        continue
+      fi
+    fi
     verb=$(status_line_verb "$line")
     case "$verb" in
       needs-decision|blocked)

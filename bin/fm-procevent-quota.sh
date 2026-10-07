@@ -17,11 +17,12 @@
 #            registered through `bin/fm-procevent.sh register`.
 # poll       The blocking child the generic runner executes; never run this
 #            directly in a conversational turn. It polls `quota-axi --json`
-#            until quota drops below the threshold, invalid quota data stops
-#            the watch, or three consecutive transient command failures stop
-#            it. Missing or incompatible tools stop it immediately, and a
-#            successful read resets the command-failure streak.
-# classify   Print the captured outcome class: low, exhausted, error, or unknown.
+#            until quota drops below the threshold, quota burns faster than
+#            the configured hourly rate, invalid quota data stops the watch,
+#            or three consecutive transient command failures stop it. Missing
+#            or incompatible tools stop it immediately, and a successful read
+#            resets the command-failure streak.
+# classify   Print the captured outcome class: low, exhausted, burn, error, or unknown.
 # terminal   Every quota poll is terminal because the source fires at most once.
 # source-id  Print the canonical source id.
 # retire     Stop the aggregate watch, or the matching provider watch when
@@ -30,6 +31,18 @@
 # The canonical source id is `quota` for the aggregate tracked provider.
 # A provider named with --provider sets the tracked provider and the source id
 # becomes `quota-<provider>`.
+#
+# Burn-rate alert: every successful read also records each known scope's
+# effectivePercentRemaining in $STATE/quota-burn/<source-id>.tsv, pruned to the
+# last hour. The percent consumed over that hour is the sum of the positive
+# drops between consecutive samples of one provider, account and scope, so a
+# window reset never counts as spend, and the largest per-scope total is the
+# burn. When it exceeds the limit in config/quota-burn-percent-per-hour
+# (percent per hour, default 50, `off` or 0 disables, read on every poll) the
+# poll ends with status burn. One wake per episode: an episode marker keeps a
+# re-armed poll silent until the burn has fallen back to the limit. The alert
+# only wakes firstmate; nothing is approved, answered or stopped. It adds no
+# data source beyond the same quota-axi snapshot.
 #
 # Snapshots may be quota-axi schema 5 or 6 (bin/fm-quota-axi-lib.sh owns the
 # validator). Both watches read every matching account row independently,
@@ -58,6 +71,12 @@ DEFAULT_THRESHOLD=10
 # Consecutive transient quota-axi read failures before poll goes terminal.
 # Missing and incompatible tools bypass this budget. No config knob on purpose.
 MAX_CONSECUTIVE_READ_FAILURES=3
+
+# Burn-rate alert: the one-hour window is fixed, the limit is configurable.
+BURN_WINDOW_SECS=3600
+DEFAULT_BURN_LIMIT=50
+BURN_DIR="$STATE/quota-burn"
+BURN_CONFIG_FILE="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/quota-burn-percent-per-hour"
 
 SOURCE_ID_BASE=quota
 
@@ -196,6 +215,101 @@ details() {
   ' 2>/dev/null
 }
 
+# burn_limit
+# Print the configured percent-per-hour limit, or nothing when the alert is off.
+# A missing or unreadable file uses the default and a malformed value does too,
+# so a typo never silently disables the guard.
+burn_limit() {
+  local raw=
+  if [ -f "$BURN_CONFIG_FILE" ]; then
+    IFS= read -r raw < "$BURN_CONFIG_FILE" || true
+    raw=${raw//[[:space:]]/}
+  fi
+  case "$raw" in
+    '') printf '%s\n' "$DEFAULT_BURN_LIMIT" ;;
+    off|OFF|Off) return 0 ;;
+    *) if positive_number "$raw"; then printf '%s\n' "$raw"
+       elif [[ "$raw" =~ ^0+(\.0+)?$ ]]; then return 0
+       else printf '%s\n' "$DEFAULT_BURN_LIMIT"
+       fi ;;
+  esac
+}
+
+# burn_samples <json> [provider]
+# Print one `key<TAB>percent` line per known scope, tightest value per key.
+burn_samples() {
+  printf '%s\n' "$1" | jq -r --arg provider "${2:-}" '
+    [.providers[]? | select($provider == "" or .provider == $provider) as $p
+     | $p.quotaSemantics.effectiveAvailability[]?
+     | select(.status == "known")
+     | {key: ([$p.provider, ($p.accountKey // ""), .scope] | join("|")), pct: .effectivePercentRemaining}]
+    | group_by(.key) | map({key: .[0].key, pct: (map(.pct) | min)})[]
+    | [.key, (.pct | tostring)] | @tsv
+  ' 2>/dev/null
+}
+
+# burn_record <source-id> <samples> <now>
+# Append this read to the hourly history and prune what has aged out of the
+# window. The rewrite is atomic so a killed poll never leaves a torn file.
+burn_record() {
+  local id=$1 samples=$2 now=$3 file tmp
+  file="$BURN_DIR/$id.tsv"
+  tmp="$file.tmp.$$"
+  mkdir -p "$BURN_DIR" 2>/dev/null || return 1
+  {
+    [ ! -f "$file" ] || awk -F'\t' -v cutoff=$((now - BURN_WINDOW_SECS)) '
+      $1 ~ /^[0-9]+$/ && $1 > cutoff && NF == 3 { print }
+    ' "$file"
+    [ -z "$samples" ] || printf '%s\n' "$samples" | awk -F'\t' -v now="$now" 'NF == 2 { print now "\t" $1 "\t" $2 }'
+  } > "$tmp" || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$file" || { rm -f "$tmp"; return 1; }
+}
+
+# burn_consumed <source-id>
+# Print `consumed<TAB>key` for the scope that spent the most over the window.
+burn_consumed() {
+  local file="$BURN_DIR/$1.tsv"
+  [ -f "$file" ] || { printf '0\t\n'; return; }
+  awk -F'\t' '
+    $1 ~ /^[0-9]+$/ && NF == 3 {
+      k = $2
+      if ((k in last) && last[k] > $3 + 0) sum[k] += last[k] - $3
+      last[k] = $3 + 0
+      if (!(k in sum)) sum[k] = sum[k] + 0
+    }
+    END {
+      best = 0; bk = ""
+      for (k in sum) if (sum[k] > best) { best = sum[k]; bk = k }
+      printf "%.2f\t%s\n", best, bk
+    }
+  ' "$file"
+}
+
+# burn_check <source-id> <json> <provider> <can-fire>
+# Return 0 and print the burn detail JSON when this read starts a burn episode.
+# History is recorded on every call; the episode marker is only consumed when
+# <can-fire> is true, i.e. when burn is the status this poll will actually report.
+burn_check() {
+  local id=$1 json=$2 provider=$3 can_fire=${4:-true} limit samples now consumed key marker over
+  limit=$(burn_limit)
+  [ -n "$limit" ] || return 1
+  samples=$(burn_samples "$json" "$provider")
+  now=$(date +%s)
+  burn_record "$id" "$samples" "$now" || return 1
+  IFS=$'\t' read -r consumed key <<<"$(burn_consumed "$id")"
+  marker="$BURN_DIR/$id.burn-episode"
+  over=$(jq -en --arg c "${consumed:-0}" --arg l "$limit" '($c | tonumber) > ($l | tonumber)' 2>/dev/null) || over=false
+  if [ "$over" != true ]; then
+    rm -f "$marker"
+    return 1
+  fi
+  [ "$can_fire" = true ] || return 1
+  [ ! -e "$marker" ] || return 1
+  : > "$marker" || return 1
+  jq -cn --arg c "$consumed" --arg l "$limit" --arg k "$key" --argjson w "$BURN_WINDOW_SECS" \
+    '{consumed: ($c | tonumber), limit: ($l | tonumber), windowSecs: $w, key: $k}'
+}
+
 cmd_source_id() {
   resolve_provider "${1-}"
   printf '%s\n' "$CANONICAL_SOURCE_ID"
@@ -242,7 +356,7 @@ cmd_poll() {
   valid_percent "$threshold" || die "--threshold needs a percent 0-100"
   [ -z "$timeout" ] || positive_int "$timeout" || die "--timeout needs a positive integer"
   resolve_provider "$PROVIDER"
-  local json detail status polls=0 consecutive_failures=0 read_rc detail_msg
+  local json detail status polls=0 consecutive_failures=0 read_rc detail_msg burn_detail
   while :; do
     polls=$((polls + 1))
     json=$(quota_json "${timeout:-}") && read_rc=0 || read_rc=$?
@@ -267,12 +381,20 @@ cmd_poll() {
     fi
     consecutive_failures=0
     status=$(condition_status "$json" "$PROVIDER" "$threshold")
+    burn_detail=
+    if [ "$status" != error ]; then
+      local can_fire=false
+      [ "$status" = healthy ] && can_fire=true
+      burn_detail=$(burn_check "$CANONICAL_SOURCE_ID" "$json" "$PROVIDER" "$can_fire") || burn_detail=
+    fi
     case "$status" in
-      healthy) sleep "$interval"; continue ;;
+      healthy)
+        if [ -z "$burn_detail" ]; then sleep "$interval"; continue; fi
+        status=burn ;;
       low|exhausted) : ;;
       *) status=error ;;
     esac
-    detail=$(details "$json" "$PROVIDER")
+    if [ "$status" = burn ]; then detail=$burn_detail; else detail=$(details "$json" "$PROVIDER"); fi
     printf 'quota: %s\n' "$CANONICAL_SOURCE_ID"
     printf 'status: %s\n' "$status"
     printf 'detail: %s\n' "$detail"
@@ -290,7 +412,7 @@ cmd_classify() {
     /^status: / { sub(/^status: /, ""); print; exit }
   ' "$file")
   case "$status" in
-    low|exhausted|error) printf '%s\n' "$status" ;;
+    low|exhausted|burn|error) printf '%s\n' "$status" ;;
     *) printf 'unknown\n' ;;
   esac
 }
@@ -313,7 +435,8 @@ cmd_retire() {
   done
   resolve_provider "$provider"
   id=$CANONICAL_SOURCE_ID
-  "$SCRIPT_DIR/fm-procevent.sh" retire "$id"
+  "$SCRIPT_DIR/fm-procevent.sh" retire "$id" || return $?
+  rm -f "$BURN_DIR/$id.tsv" "$BURN_DIR/$id.burn-episode"
 }
 
 case "${1-}" in

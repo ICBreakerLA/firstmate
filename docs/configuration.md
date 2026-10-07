@@ -669,6 +669,8 @@ The scanner looks in `$FM_CONFIG_OVERRIDE`, else `$FM_HOME/config`, so a worker 
 This is a pattern scan.
 It stops accidental pastes, not a worker that deliberately splits, encodes, or obfuscates what it sends.
 The audit prototype of these shapes caught 12 of 12 plain shapes and 0 of 4 evasions, and this scan does not claim more.
+PR title and body text are not scanned, including for direct-PR tasks: the diff scan covers only added lines of the branch, and direct-PR tasks skip the no-mistakes lint command that runs it.
+Fleet-ledger status text is not scanned: it is copied into the ledger verbatim.
 
 ## Status flood cap (FM_STATUS_FLOOD_MAX)
 

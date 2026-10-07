@@ -236,6 +236,12 @@ WATCH_HOME_EXISTED=0
 # and wake emission (secondmate_liveness_tick below).
 # shellcheck source=/dev/null # Analyzed separately as a canonical lint root.
 . "$SCRIPT_DIR/fm-secondmate-liveness-lib.sh"
+# Parked-gate detection and the interval-bounded reattach nudge (gate_park_check); the
+# journal lib records the nudge for bin/fm-handoff-latency.sh.
+# shellcheck source=bin/fm-handoff-journal-lib.sh
+. "$SCRIPT_DIR/fm-handoff-journal-lib.sh"
+# shellcheck source=bin/fm-gate-park-lib.sh
+. "$SCRIPT_DIR/fm-gate-park-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -3033,6 +3039,14 @@ EOF
     # content cannot suppress stale detection. Read once per window per poll and
     # reused below so a busy verdict is consistent within one cycle.
     if window_is_busy "$w" "$tail40"; then busy_now=0; else busy_now=1; fi
+    # An idle worker whose run is parked at a gate needs action within a poll,
+    # not after the wedge window; the check is bounded, nudges once per interval, and
+    # sends only the mechanical reattach nudge (bin/fm-gate-park-lib.sh).
+    if [ "$busy_now" -ne 0 ] && [ "$kind" != secondmate ] && [ -n "$task" ] \
+       && gate_park_check "$task" "$key"; then
+      fm_wake_append check "$GATE_PARK_KEY" "check: $GATE_PARK_REASON" || exit 1
+      wake "check: $GATE_PARK_REASON"
+    fi
     if [ "$h" = "$prev" ]; then
       n=$(( $(cat "$cf" 2>/dev/null || echo 0) + 1 ))
       echo "$n" > "$cf"

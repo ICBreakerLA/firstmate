@@ -20,8 +20,9 @@ test_blocking_wait_keeps_beacon_fresh() {
   local dir out maxage age beat i rc
   dir=$(make_case wb-wait); beat="$dir/state/.last-watcher-beat"
   : > "$beat"
+  local -x FM_STATE_OVERRIDE="$dir/state" FM_HOME="$dir"
   out=$(
-    export FM_STATE_OVERRIDE="$dir/state" FM_HOME="$dir" FM_WATCHER_BEACON_INTERVAL=1
+    export FM_WATCHER_BEACON_INTERVAL=1
     # shellcheck source=/dev/null
     . "$ROOT/bin/fm-watch.sh"
     watcher_run_with_beacon bash -c 'sleep 7; echo waited; exit 3' &
@@ -43,8 +44,8 @@ test_blocking_wait_keeps_beacon_fresh() {
 test_ticker_stop_does_not_depend_on_its_signal_handling() {
   local dir bg i
   dir=$(make_case wb-stop)
+  local -x FM_STATE_OVERRIDE="$dir/state" FM_HOME="$dir"
   (
-    export FM_STATE_OVERRIDE="$dir/state" FM_HOME="$dir"
     # shellcheck source=/dev/null
     . "$ROOT/bin/fm-watch.sh"
     trap '' TERM

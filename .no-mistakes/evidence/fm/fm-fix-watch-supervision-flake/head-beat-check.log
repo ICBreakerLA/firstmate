@@ -1,0 +1,9 @@
+== HEAD (cb463d2) ==
+ok - help, an unknown argument and a bad grace are handled with usage
+ok - a home with nothing in flight needs no watcher and stays quiet
+ok - a beat inside the grace is healthy
+ok - a beat older than the grace raises one clear alarm and honours --grace and FM_GUARD_GRACE
+ok - work in flight with no beacon at all raises the never-beaten alarm
+ok - a blocking wait keeps the beacon fresh and preserves the wait's status
+ok - the beacon ticker is stopped even when its inherited TERM disposition is ignored
+rc=0

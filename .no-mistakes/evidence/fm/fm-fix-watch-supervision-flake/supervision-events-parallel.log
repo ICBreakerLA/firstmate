@@ -1,0 +1,5 @@
+head: 0/18 runs failed
+base: 13/18 runs failed
+     11 not ok - a tmux-only home must sleep POLL exactly as before
+      2 not ok - after EVENT_CAP_FAIL_MAX connect failures the event path must be disabled for the process (expected 2 wait_transition calls, got )
+head extra: 0/80 failed

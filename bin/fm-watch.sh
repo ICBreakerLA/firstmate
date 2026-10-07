@@ -2304,7 +2304,7 @@ watcher_run_with_beacon() {
   local owner=$$ ticker rc
   (
     while kill -0 "$owner" 2>/dev/null; do
-      sleep "${FM_WATCHER_BEACON_INTERVAL:-30}"
+      command sleep "${FM_WATCHER_BEACON_INTERVAL:-30}"
       watcher_beacon_touch
     done
   ) >/dev/null 2>&1 &

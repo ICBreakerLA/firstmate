@@ -20,8 +20,9 @@ test_blocking_wait_keeps_beacon_fresh() {
   local dir out maxage age beat i rc
   dir=$(make_case wb-wait); beat="$dir/state/.last-watcher-beat"
   : > "$beat"
+  local -x FM_STATE_OVERRIDE="$dir/state" FM_HOME="$dir"
   out=$(
-    export FM_STATE_OVERRIDE="$dir/state" FM_HOME="$dir" FM_WATCHER_BEACON_INTERVAL=1
+    export FM_WATCHER_BEACON_INTERVAL=1
     # shellcheck source=/dev/null
     . "$ROOT/bin/fm-watch.sh"
     watcher_run_with_beacon bash -c 'sleep 7; echo waited; exit 3' &
@@ -38,6 +39,31 @@ test_blocking_wait_keeps_beacon_fresh() {
   printf '%s\n' "$out" | grep -F 'waited' >/dev/null || fail "the wrapped wait's own output was lost: $out"
   printf '%s\n' "$out" | grep -E 'maxage=[0-2] rc=3' >/dev/null || fail "beacon aged past the interval during a blocking wait, or the exit status was lost: $out"
   pass "a blocking wait keeps the beacon fresh and preserves the wait's status"
+}
+
+test_ticker_stop_does_not_depend_on_its_signal_handling() {
+  local dir bg i
+  dir=$(make_case wb-stop)
+  local -x FM_STATE_OVERRIDE="$dir/state" FM_HOME="$dir"
+  (
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-watch.sh"
+    trap '' TERM
+    watcher_run_with_beacon true
+    : > "$dir/returned"
+  ) &
+  bg=$!
+  for i in $(seq 1 100); do
+    [ -e "$dir/returned" ] && break
+    sleep 0.1
+  done
+  if [ ! -e "$dir/returned" ]; then
+    # shellcheck disable=SC2046
+    kill -KILL $(pgrep -P "$bg") "$bg" 2>/dev/null
+    fail "stopping the beacon ticker hung because the ticker ignored the stop signal"
+  fi
+  wait "$bg"
+  pass "the beacon ticker is stopped even when its inherited TERM disposition is ignored"
 }
 
 test_usage() {
@@ -101,3 +127,4 @@ test_fresh_beat_is_healthy
 test_stale_beat_alarms
 test_missing_beat_alarms_when_work_exists
 test_blocking_wait_keeps_beacon_fresh
+test_ticker_stop_does_not_depend_on_its_signal_handling

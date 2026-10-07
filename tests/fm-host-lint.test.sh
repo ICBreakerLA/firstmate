@@ -110,18 +110,24 @@ test_uncommitted_edits_are_reported_not_linted() {
   pass "uncommitted clone edits are reported but not linted"
 }
 
-# fake_no_mistakes <fakebin> <pipeline-head>
+# fake_no_mistakes <fakebin> <pipeline-head> [<stale-flat-head-sha>]
+# Emits the real `axi status` shape: a flat run.head_sha scalar alongside the
+# nested branch_sync.pipeline.current_head the pipeline advances to on its own
+# fix commits. Defaults the flat field to the same value as the nested one;
+# pass a third arg to make the flat field lag behind, as it does whenever the
+# pipeline committed a fix round the task worktree never fetched.
 fake_no_mistakes() {
-  mkdir -p "$1"
-  cat > "$1/no-mistakes" <<SH
+  local fakebin=$1 pipe=$2 flat=${3:-$2}
+  mkdir -p "$fakebin"
+  cat > "$fakebin/no-mistakes" <<SH
 #!/usr/bin/env bash
 if [ "\$1 \$2" = "axi status" ]; then
-  printf 'run:\n  id: "01RUN"\n  branch: fm/x\n  status: running\n  head: "$2"\n  findings: none\n'
+  printf 'run:\n  id: "01RUN"\n  branch: fm/x\n  status: running\n  head_sha: "$flat"\n  findings: none\nbranch_sync:\n  state: pipeline_owned\n  pipeline:\n    current_head: "$pipe"\n'
   exit 0
 fi
 exit 9
 SH
-  chmod +x "$1/no-mistakes"
+  chmod +x "$fakebin/no-mistakes"
 }
 
 test_exported_pipeline_patch_is_linted_on_top_of_the_head() {
@@ -175,6 +181,33 @@ test_export_with_nothing_to_export_says_so() {
   assert_contains "$out" "no pipeline fix to export" "no-op export is explicit"
   assert_absent "$FIX_HOME/data/t5/pipeline-fix.patch" "no patch is written"
   pass "export reports when the pipeline made no fix"
+}
+
+test_export_prefers_pipeline_current_head_over_stale_flat_head_sha() {
+  FIX_HOME=$TMP/precedence-home
+  mkdir -p "$FIX_HOME/state"
+  local clone=$FIX_HOME/state/t6.sbx-clone gate=$TMP/gate6.git work=$TMP/gatework6 pipe head out
+  make_fixture "$clone"
+  git init -q --bare "$gate"
+  git -C "$clone" push -q "$gate" HEAD:refs/heads/fm/x
+  # The pipeline's fix commit exists only in the gate repo, never in the clone.
+  git clone -q -b fm/x "$gate" "$work"
+  write_bad_script "$work/bin/fixed-by-pipeline.sh"
+  git -C "$work" add -A
+  git -C "$work" commit -qm "pipeline fix"
+  git -C "$work" push -q origin HEAD:refs/heads/fm/x
+  pipe=$(git -C "$work" rev-parse HEAD)
+  head=$(git -C "$clone" rev-parse HEAD)
+  git -C "$clone" remote add no-mistakes "$gate"
+  # The flat head_sha field lags at the clone's own HEAD (as it can in a
+  # parked-lint-gate state); only branch_sync.pipeline.current_head names the
+  # pipeline's actual fix commit.
+  fake_no_mistakes "$TMP/fakebin6" "$pipe" "$head"
+  out=$( (cd "$clone" && PATH="$TMP/fakebin6:$PATH" FM_HOME=$FIX_HOME "$HOST_LINT" --export-patch t6) 2>&1) \
+    || fail "export-patch should succeed: $out"
+  assert_contains "$out" "exported pipeline fix" "export follows the nested pipeline head, not the stale flat one"
+  assert_present "$FIX_HOME/data/t6/pipeline-fix.patch" "patch is written despite a stale flat head_sha"
+  pass "export-patch prefers branch_sync.pipeline.current_head over a stale flat head_sha"
 }
 
 test_missing_clone_and_bad_options_are_usage_errors() {
@@ -283,6 +316,7 @@ test_findings_yield_fix_text_with_file_and_line
 test_uncommitted_edits_are_reported_not_linted
 test_exported_pipeline_patch_is_linted_on_top_of_the_head
 test_export_with_nothing_to_export_says_so
+test_export_prefers_pipeline_current_head_over_stale_flat_head_sha
 test_missing_clone_and_bad_options_are_usage_errors
 test_rerun_only_failed_jobs_of_latest_failed_run
 test_rerun_refuses_unsafe_states

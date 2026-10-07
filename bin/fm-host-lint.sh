@@ -49,6 +49,9 @@ FM_HOME="${FM_HOME:-$FM_ROOT}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
+# shellcheck source=bin/fm-nm-run-lib.sh
+. "$SCRIPT_DIR/fm-nm-run-lib.sh"
+
 usage() { sed -n '2,/^set -u$/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 die() { echo "fm-host-lint.sh: $*" >&2; exit 2; }
 
@@ -60,7 +63,8 @@ export_patch() {
   head=$(git rev-parse --verify --quiet HEAD) || die "run this inside the worker's clone"
   command -v no-mistakes >/dev/null 2>&1 || die "no-mistakes is not installed"
   status=$(no-mistakes axi status 2>&1) || die "no-mistakes axi status failed: $status"
-  pipe=$(printf '%s\n' "$status" | sed -n 's/^[[:space:]]*head\(_sha\)\{0,1\}:[[:space:]]*"\{0,1\}\([0-9a-f]\{40\}\)"\{0,1\}[[:space:]]*$/\2/p' | head -1)
+  pipe=$(fm_nm_branch_sync_nested "$status" pipeline current_head)
+  [ -n "$pipe" ] || pipe=$(fm_nm_strip_quotes "$(fm_nm_field "$status" head_sha)")
   out=$DATA/$id/pipeline-fix.patch
   if [ -z "$pipe" ]; then
     echo "no pipeline head readable from 'no-mistakes axi status'; nothing exported" >&2

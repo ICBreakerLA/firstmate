@@ -1057,6 +1057,9 @@ test_sandboxed_home_briefs_name_the_sandbox_boundaries() {
   done
   assert_grep "The no-mistakes pipeline also runs inside this sandbox" "$home/data/brief-sbx-ship/brief.md" "a no-mistakes ship is told where the pipeline runs"
   assert_no_grep "pipeline also runs inside this sandbox" "$home/data/brief-sbx-direct/brief.md" "a direct-PR ship has no pipeline note"
+  assert_grep "fm-host-lint.sh" "$home/data/brief-sbx-ship/brief.md" "a no-mistakes ship is told how to export the pipeline fix at a lint park"
+  assert_grep "--export-patch brief-sbx-ship" "$home/data/brief-sbx-ship/brief.md" "the export command names the task"
+  assert_no_grep "fm-host-lint.sh" "$home/data/brief-sbx-direct/brief.md" "a direct-PR ship has no lint-park instruction"
   assert_grep "no-mistakes doctor" "$home/data/brief-sbx-ship/brief.md" "the doctor/init step stays"
   printf 'off\n' > "$home/config/worker-sandbox"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-sbx-off some-proj --mode no-mistakes >/dev/null 2>&1 \

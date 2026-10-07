@@ -601,7 +601,11 @@ Never try to widen them, never look for host credentials, and never ask for a wi
 Every path named in this brief, including the status file, works unchanged from inside the sandbox."
   if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
     SANDBOX_SECTION="$SANDBOX_SECTION
-The no-mistakes pipeline also runs inside this sandbox, and it pushes your branch and opens the pull request from there under the rules below."
+The no-mistakes pipeline also runs inside this sandbox, and it pushes your branch and opens the pull request from there under the rules below.
+This sandbox cannot run ShellCheck, so the pipeline may park at its lint step: that is not a failure of your change.
+At that park, run \`$(shell_quote "$FM_ROOT/bin/fm-host-lint.sh") --export-patch $ID\` inside your clone, which saves the pipeline's own fix commit, if it made one, for the host to lint.
+Then append \`blocked [at=<epoch>]: lint gate parked, host lint needed\` and stop; firstmate lints on the host and answers the gate.
+Never approve or skip that gate yourself."
   fi
 fi
 

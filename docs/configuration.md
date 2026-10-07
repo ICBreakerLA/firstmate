@@ -12,6 +12,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Running Claude workers in a microVM | [Worker sandbox](#worker-sandbox-configworker-sandbox) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
+| Runaway spend or a noisy worker | [Quota burn-rate alert](#quota-burn-rate-alert-configquota-burn-percent-per-hour) and [status flood cap](#status-flood-cap-fm_status_flood_max) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
 | Per-run overrides and tuning | [Environment variables](#environment-variables) |
@@ -616,6 +617,38 @@ With the flag absent the wedge timer spends no fold or current-state read for it
 The flag is a home-local supervision-noise preference and is not inherited by secondmate homes, which supervise their own crew and own that trade separately.
 
 [`architecture.md`](architecture.md) owns the wait-evidence contract and which records may take the ladder away; `bin/fm-watch.sh`'s `wedge_wait_evidence` owns the exact derivation and its fail-closed boundaries.
+
+## Quota burn-rate alert (config/quota-burn-percent-per-hour)
+
+The quota watch (`bin/fm-procevent-quota.sh`) also wakes when spend is running away, so one stuck worker cannot drain the single plan before anyone looks.
+The optional local, gitignored `config/quota-burn-percent-per-hour` file holds the limit as one number: the percent of a single quota window that may be consumed over the last hour.
+With the file absent or malformed the limit is `50`, and a value of `off` or `0` disables the alert; the file is read on every poll, so a change applies without re-arming the watch.
+
+### What counts as burn
+
+The alert uses the same `quota-axi --json` snapshot as the existing low and exhausted conditions and adds no data source.
+Each successful read records every known scope's `effectivePercentRemaining` in `state/quota-burn/<source-id>.tsv`, pruned to the last hour; nothing is written while the alert is off.
+The percent consumed is the sum of the positive drops between consecutive samples of one provider, account, and scope, so a window reset never counts as spend, and the largest per-scope total is compared with the limit.
+A low or exhausted reading keeps its own outcome and takes precedence over burn.
+
+### One wake per episode
+
+The poll ends with a `burn` outcome carrying the consumed percent, the limit, the window, and the scope key, and the generic runner wakes firstmate and retires the source as it does for the other outcomes.
+An episode marker next to the history keeps a re-armed watch silent while the hour is still over the limit, and it clears on the first later read at or under the limit.
+The alert only wakes firstmate; it never approves, answers, pauses, or stops a worker.
+The history lives under `state/quota-burn/` rather than the source registry, and `fm-procevent-quota.sh retire` removes it.
+
+Spend by a worker that edits its own hooks or transcripts is still visible here because the figure comes from the provider's quota, not from per-call counting.
+
+## Status flood cap (FM_STATUS_FLOOD_MAX)
+
+The status fold in `bin/fm-classify-lib.sh` caps how many captain-relevant lines one task can turn into wakes.
+When one task appends more than `FM_STATUS_FLOOD_MAX` stamped captain-relevant lines within ten minutes, the lines past that count fold into one `noisy:` event, so firstmate sees one wake naming the task instead of one per line.
+`done`, `failed`, `blocked`, and `needs-decision` lines always surface and still count toward the window, so a flood can delay nothing a decision depends on.
+The verdict is derived only from the status file's own `[at=<epoch>]` stamps, so the watcher, heartbeat, and away daemon agree and the noisy event is reported once per episode.
+A line without a stamp has no known time and is neither counted nor suppressed, and a worker that forges or omits stamps defeats the cap; the stamp contract forbids inferring time from file or observation time.
+The default is `20`, `0` disables the cap, and an invalid value uses the default.
+The cap is not a rate limit on tool calls and does not touch the busy-turn or wedge bounds.
 
 ## Gate defaults (.no-mistakes.yaml)
 
@@ -2500,6 +2533,7 @@ FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals
 FM_WATCHER_CLEANUP_LOCK_BOUND=   # optional watcher EXIT marker-lock wait; default and validation: docs/watcher-continuity.md
 FM_TURNEND_CHURN_ABSORB_SECS=900   # longest one endpoint's bare turn-ends may be deferred on pane-churn evidence alone; only consulted when config/turnend-churn-absorb is present
 FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'   # captain-relevant status regex; nonterminal progress verbs remain excluded even when their prose matches
+FM_STATUS_FLOOD_MAX=20   # distinct stamped captain-relevant status lines one task may append inside ten minutes before the rest fold into one noisy event (terminal verbs always surface; 0 disables, invalid uses 20); see the status flood cap section
 FM_CLASSIFY_PAUSED_VERB=paused     # leading declared-wait status verb; bin/fm-classify-lib.sh owns its meaning and legacy external-wait label; excluded from FM_CAPTAIN_RE and distinct from blocked
 FM_STALE_ESCALATE_SECS=240         # idle seconds before a provably-working stale pane escalates, unless that pane's own worker declared a wait that has not elapsed, or, where config/wedge-defer-parked-gate arms it, that pane's crew is parked at a validation gate awaiting the supervisor's decision on it that the crew raised under that run's key and nobody has answered yet, either of which takes the FM_PAUSE_RESURFACE_SECS recheck below instead; stale panes whose crew is not provably working surface immediately unless admitted directly to the declared-wait cadence, while a live idle declared wait still surfaces once before that cadence bounds repeats; at that same escalation moment a recovery-grade agent-state probe (docs/architecture.md owns that dead-record contract) reports a pane whose endpoint is proven `dead` or `missing` once and stops re-escalating it while it stays that way
 FM_BUSY_TURN_MAX_SECS=3600         # maximum age without a completed turn or explicit native-harness progress (bin/fm-watch.sh owns marker selection), before the same wedge escalation used for a provably-working non-busy stale takes over; inspection-only, never an automatic interrupt or restart; a declared external wait, an attended verified captain-held transfer, or - where config/wedge-defer-parked-gate arms it - a validation gate of the crew's own awaiting the supervisor's still-unanswered decision takes the FM_PAUSE_RESURFACE_SECS recheck below instead

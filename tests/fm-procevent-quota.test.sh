@@ -13,7 +13,12 @@ VERSION_COUNT="$LAB/version-count"
 
 cleanup() { rm -rf "$LAB"; }
 trap cleanup EXIT
-mkdir -p "$FAKEBIN" "$NO_QUOTA_BIN"
+mkdir -p "$FAKEBIN" "$NO_QUOTA_BIN" "$LAB/config" "$LAB/state"
+# The burn-rate alert records history under state/ and reads its limit from
+# config/. Keep both inside the lab and switch the alert off for the exhaustion
+# tests, which reuse one source id and would otherwise accumulate spend.
+export FM_STATE_OVERRIDE="$LAB/state" FM_CONFIG_OVERRIDE="$LAB/config"
+printf 'off\n' > "$LAB/config/quota-burn-percent-per-hour"
 for command_name in dirname jq mkdir sleep; do
   ln -s "$(command -v "$command_name")" "$NO_QUOTA_BIN/$command_name"
 done
@@ -138,6 +143,16 @@ if [ "${QUOTA_AXI_RESET_STREAK:-0}" = 1 ]; then
       exit 0
       ;;
   esac
+fi
+# Burn-rate sequence: QUOTA_AXI_REMAINING_SEQ is a space-separated list of
+# all_models percentRemaining values, one per read, repeating the last.
+if [ -n "${QUOTA_AXI_REMAINING_SEQ:-}" ] && [ "${1:-}" != "--version" ]; then
+  # shellcheck disable=SC2206
+  seq_values=($QUOTA_AXI_REMAINING_SEQ)
+  idx=$((count - 1))
+  [ "$idx" -lt "${#seq_values[@]}" ] || idx=$((${#seq_values[@]} - 1))
+  printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":%s,"runway":{"status":"through_reset"}}]}}]}\n' "${seq_values[$idx]}"
+  exit 0
 fi
 if [ "${QUOTA_AXI_UNKNOWN_FIRST:-0}" = 1 ] && [ "$count" -eq 1 ]; then
   printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"unknown","effectiveAvailability":[]}}]}\n'
@@ -495,5 +510,108 @@ printf '%s\n' "$out" | grep -Fq 'incompatible' \
 [ "$(cat "$VERSION_COUNT")" = 4 ] \
   || fail "expected exactly four version launches across the slow streak, got $(cat "$VERSION_COUNT" 2>/dev/null)"
 ok "later slow version probe reports timeout not incompatible"
+
+
+# Burn-rate alert. quota-axi is not installed where these run, so every
+# snapshot comes from the stub above; the poll is a real process reading it.
+# History is seeded with epochs relative to now so the one-hour window is real.
+BURN_HIST="$LAB/state/quota-burn/quota-codex.tsv"
+BURN_MARK="$LAB/state/quota-burn/quota-codex.burn-episode"
+BURN_CFG="$LAB/config/quota-burn-percent-per-hour"
+seed_burn() {  # <age-secs> <percent> [<age-secs> <percent>]...
+  local now
+  now=$(date +%s)
+  mkdir -p "$LAB/state/quota-burn"
+  : > "$BURN_HIST"
+  while [ "$#" -ge 2 ]; do
+    printf '%s\tcodex||all_models\t%s\n' "$((now - $1))" "$2" >> "$BURN_HIST"
+    shift 2
+  done
+  rm -f "$BURN_MARK"
+}
+burn_poll() {  # <limit-file-content> <sequence> [<timeout-secs>] -> poll output
+  printf '%s\n' "$1" > "$BURN_CFG"
+  rm -f "$COUNT"
+  QUOTA_AXI_REMAINING_SEQ="$2" QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" \
+    timeout "${3:-10}" "$BIN/fm-procevent-quota.sh" poll --interval 0.05 --threshold 10 --provider codex --timeout 2
+}
+
+seed_burn 1800 95
+out=$(burn_poll 50 30) || fail "a fast burn did not end the poll: $out"
+printf '%s\n' "$out" | grep -qx 'status: burn' || fail "a fast burn did not report status burn: $out"
+printf '%s\n' "$out" | grep -qx 'quota: quota-codex' || fail "burn used the wrong source: $out"
+detail=$(printf '%s\n' "$out" | sed -n 's/^detail: //p')
+printf '%s\n' "$detail" | jq -e '.consumed == 65 and .limit == 50 and .windowSecs == 3600 and .key == "codex||all_models"' >/dev/null \
+  || fail "burn detail is wrong: $detail"
+printf '%s\n' "$out" > "$LAB/burn-result"
+[ "$("$BIN/fm-procevent-quota.sh" classify "$LAB/burn-result")" = burn ] || fail "classify did not name the burn outcome"
+"$BIN/fm-procevent-quota.sh" terminal "$LAB/burn-result" || fail "a burn result was not terminal"
+ok "a fast burn ends the poll once with a burn outcome and detail"
+
+out=$(burn_poll 50 30 2); rc=$?
+[ "$rc" -eq 124 ] && [ -z "$out" ] || fail "a re-armed poll woke again inside the same episode (rc=$rc): $out"
+ok "a re-armed poll stays silent while the same episode is still burning"
+
+seed_burn 1800 40
+: > "$BURN_MARK"
+out=$(burn_poll 50 30 2); rc=$?
+[ "$rc" -eq 124 ] && [ -z "$out" ] || fail "a calm hour woke firstmate (rc=$rc): $out"
+[ ! -e "$BURN_MARK" ] || fail "the episode marker survived a calm read"
+seed_burn 1800 95
+out=$(burn_poll 50 30) || fail "the next episode did not fire"
+printf '%s\n' "$out" | grep -qx 'status: burn' || fail "the next episode did not report burn: $out"
+ok "the episode clears once the hour is calm, so the next burn wakes again"
+
+seed_burn 1800 95
+out=$(burn_poll off 30 2); rc=$?
+[ "$rc" -eq 124 ] && [ -z "$out" ] || fail "an off alert woke firstmate (rc=$rc): $out"
+[ ! -e "$BURN_MARK" ] || fail "an off alert recorded an episode"
+seed_burn 1800 95
+out=$(burn_poll 0 30 2); rc=$?
+[ "$rc" -eq 124 ] && [ -z "$out" ] || fail "a zero limit woke firstmate (rc=$rc): $out"
+ok "off and 0 disable the alert"
+
+seed_burn 1800 60
+out=$(burn_poll 50 40 2); rc=$?
+[ "$rc" -eq 124 ] && [ -z "$out" ] || fail "a burn under the limit woke firstmate (rc=$rc): $out"
+ok "a burn under the limit stays silent"
+
+seed_burn 3000 10 2400 95 1200 90
+out=$(burn_poll 50 90 2); rc=$?
+[ "$rc" -eq 124 ] && [ -z "$out" ] || fail "a window reset was counted as spend (rc=$rc): $out"
+ok "a window reset is not spend"
+
+seed_burn 7200 95
+out=$(burn_poll 50 30 2); rc=$?
+[ "$rc" -eq 124 ] && [ -z "$out" ] || fail "a sample older than an hour was counted (rc=$rc): $out"
+awk -F'\t' -v cutoff=$(( $(date +%s) - 3600 )) '$1 <= cutoff { bad = 1 } END { exit bad }' "$BURN_HIST" \
+  || fail "history kept a sample older than the window"
+ok "samples older than the hour are ignored and pruned"
+
+seed_burn 1800 50
+out=$(burn_poll 10 35) || fail "a custom limit did not fire: $out"
+printf '%s\n' "$out" | grep -qx 'status: burn' || fail "a custom limit did not report burn: $out"
+printf '%s\n' "$out" | sed -n 's/^detail: //p' | jq -e '.limit == 10 and .consumed == 15' >/dev/null || fail "custom limit detail is wrong: $out"
+seed_burn 1800 95
+out=$(burn_poll banana 30) || fail "a malformed limit disabled the alert: $out"
+printf '%s\n' "$out" | sed -n 's/^detail: //p' | jq -e '.limit == 50' >/dev/null || fail "a malformed limit did not use the default: $out"
+rm -f "$BURN_CFG"
+seed_burn 1800 95
+out=$(burn_poll 50 30) || fail "a limit file at the default did not fire: $out"
+rm -f "$BURN_CFG"
+seed_burn 1800 95
+rm -f "$COUNT"
+out=$(QUOTA_AXI_REMAINING_SEQ=30 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" \
+  timeout 10 "$BIN/fm-procevent-quota.sh" poll --interval 0.05 --threshold 10 --provider codex --timeout 2) \
+  || fail "a missing limit file did not use the default: $out"
+printf '%s\n' "$out" | grep -qx 'status: burn' || fail "a missing limit file did not report burn: $out"
+ok "the limit file sets the rate, and a missing or malformed file uses the default"
+
+seed_burn 1800 95
+out=$(burn_poll 50 5) || fail "a low reading ended in no wake: $out"
+printf '%s\n' "$out" | grep -qx 'status: low' || fail "a low reading did not keep its own outcome: $out"
+ok "a below-threshold reading still reports low, not burn"
+
+printf 'off\n' > "$BURN_CFG"
 
 printf '# all fm-procevent-quota tests passed\n'

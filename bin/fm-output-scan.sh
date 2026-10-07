@@ -138,7 +138,7 @@ B='(^|[^A-Za-z0-9])'
 scan aws-key-id "${B}(AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ANVA|AIPA)[0-9A-Z]{16}([^A-Za-z0-9]|\$)"
 scan github-token "${B}(gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"
 scan anthropic-key "${B}sk-ant-[A-Za-z0-9_-]{20,}"
-scan openai-key "${B}sk-([B-Zb-z0-9_-]|[Aa][^Nn]|[Aa][Nn][^Tt]|[Aa][Nn][Tt][^-])[A-Za-z0-9_-]{30,}"
+scan openai-key "${B}sk-([B-Zb-z0-9_-][A-Za-z0-9_-]{30,}|[Aa][^Nn][A-Za-z0-9_-]{29,}|[Aa][Nn][^Tt][A-Za-z0-9_-]{28,}|[Aa][Nn][Tt][^-][A-Za-z0-9_-]{27,})"
 scan slack-token "${B}(xox[abprs]-[A-Za-z0-9-]{10,}|xapp-[0-9]-[A-Za-z0-9-]{10,})"
 scan private-key '-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY( BLOCK)?-----'
 scan jwt "${B}eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}"

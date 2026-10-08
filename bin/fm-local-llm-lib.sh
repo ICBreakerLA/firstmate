@@ -26,9 +26,11 @@ FM_LOCAL_LLM_MODEL=qwen3.8-27b-gsq-rco
 # Seen from inside an sbx microVM the host's loopback is host.docker.internal;
 # the sbx proxy names the same resource localhost:<port> in its policy.
 FM_LOCAL_LLM_VM_URL=http://host.docker.internal:8080
+# shellcheck disable=SC2034 # Read by the sourcing script (fm-sbx-run.sh).
 FM_LOCAL_LLM_POLICY_HOST=localhost:8080
 # The Anthropic API stays closed to a local-model sandbox, so the sbx proxy can
 # never attach the captain's sign-in to a request from it.
+# shellcheck disable=SC2034 # Read by the sourcing script (fm-sbx-run.sh).
 FM_LOCAL_LLM_ANTHROPIC_HOST=api.anthropic.com
 # The server context is 96,256 tokens; compacting at 88,000 leaves room for a
 # reply and the compaction call itself.
@@ -104,6 +106,7 @@ fm_local_llm_claim() {
     trap '' HUP
     exec cat "$f.handoff"
   ) </dev/null >/dev/null 2>&1 &
+  # shellcheck disable=SC2034 # Read by the sourcing script (fm-spawn.sh).
   FM_LOCAL_LLM_HOLDER=$!
   exec 9>&-
 }

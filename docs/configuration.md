@@ -1029,7 +1029,8 @@ The profile is selected per spawn by the model id alone: a Claude launch whose m
 No new flag or config file exists, so a dispatch rule that names that model needs nothing more.
 `local-llm up|down|status` starts and stops the server, and Firstmate never does either.
 
-The profile runs only inside the worker sandbox, so the sandbox is what keeps the captain's Claude login and every host secret away from it.
+The profile runs only inside the worker sandbox, so the sandbox is what keeps the captain's Claude login and every other host secret away from it.
+Its one credential is the same scoped GitHub token every other sandboxed worker gets (the fork-only token for a fork ship, otherwise the home's token), stored per sandbox as [above](#worker-sandbox-configworker-sandbox).
 A launch with that model refuses, before any endpoint, clone, or task record exists, when any of these holds:
 
 - The worker is not a task worker on the claude harness with `config/worker-sandbox` set to `sbx`.
@@ -1039,7 +1040,7 @@ A launch with that model refuses, before any endpoint, clone, or task record exi
 The server has one slot, so one local-model worker runs at a time across the whole host.
 `bin/fm-sbx-run.sh` holds an exclusive `flock` on `$XDG_STATE_HOME/firstmate/local-llm.lock` (`FM_LOCAL_LLM_LOCK`) for the life of the sandbox, and the kernel drops it on any exit, including a crash.
 The spawn only probes that lock, so two spawns close enough together can both pass the probe and both record their task.
-The later wrapper then waits for the lock with a notice in its pane, and creates its sandbox only once the first local-model worker ends, so neither task is left with a dead pane.
+The later wrapper then refuses before its sandbox exists, naming the one-at-a-time rule in its pane, and that task's record stays in flight until it is relaunched or torn down.
 
 The sandbox gets this environment on top of the usual allowlist, built by `fm_local_llm_env` in `bin/fm-local-llm-lib.sh`:
 

@@ -98,22 +98,16 @@ test_the_claim_is_released_when_the_holder_ends() {
   pass "the lock is free after the holder exits"
 }
 
-test_a_second_claim_waits_for_the_first_to_end() {
-  local rc out
+test_a_second_claim_fails_while_the_first_lives() {
+  local rc
   (
     fm_local_llm_lock_acquire || exit 3
-    # shellcheck disable=SC2016 # the library path expands in the child shell
-    out=$(timeout 2 bash -c '. "$1"; fm_local_llm_lock_acquire' sh "$ROOT/bin/fm-local-llm-lib.sh" 2>&1 9>&-)
-    [ "$?" = 124 ] || exit 4
-    case "$out" in *"waits for it to finish"*) ;; *) exit 5 ;; esac
+    (fm_local_llm_lock_acquire >/dev/null 2>&1) && exit 4
     exit 0
   )
   rc=$?
-  expect_code 0 "$rc" "the second claim in another process must wait, with a notice, while the first lives"
-  # shellcheck disable=SC2016 # the library path expands in the child shell
-  timeout 5 bash -c '. "$1"; fm_local_llm_lock_acquire' sh "$ROOT/bin/fm-local-llm-lib.sh" >/dev/null 2>&1 ||
-    fail "the second claim must succeed once the first holder ended"
-  pass "a second claim waits while the first is held and succeeds after it ends"
+  expect_code 0 "$rc" "the second claim in another process must fail at once"
+  pass "a second claim fails while the first is held"
 }
 
 test_a_background_job_without_the_descriptor_does_not_keep_the_claim() {
@@ -136,7 +130,7 @@ test_health_accepts_a_server_listing_the_model
 test_env_maps_every_tier_and_carries_no_host_secret
 test_a_second_local_worker_is_refused
 test_the_claim_is_released_when_the_holder_ends
-test_a_second_claim_waits_for_the_first_to_end
+test_a_second_claim_fails_while_the_first_lives
 test_a_background_job_without_the_descriptor_does_not_keep_the_claim
 
 echo "# all fm-local-llm-lib tests passed"

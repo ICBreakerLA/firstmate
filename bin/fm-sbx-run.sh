@@ -45,9 +45,8 @@
 #                   worker talks to the host's llama-server instead of the
 #                   Anthropic API.
 #                   The host-wide one-local-worker lock is held for the life of
-#                   this script (waiting first for any other local worker), the
-#                   sandbox gets the local-model environment (a placeholder
-#                   token, never a host credential), loses its inherited
+#                   this script, the sandbox gets the local-model environment
+#                   (a placeholder token, never a host credential), loses its inherited
 #                   anthropic secret, gets a sandbox-scoped deny for
 #                   api.anthropic.com and one sandbox-scoped allow for the
 #                   server's port, and the launch stops if the VM cannot reach
@@ -152,8 +151,8 @@ fm_sbx_preflight || exit 1
 # The claim outlives everything below; the kernel drops it when this script
 # ends, however it ends, and the relay and broker are started without it.
 if [ "$LOCAL_LLM" = 1 ]; then
-  fm_local_llm_lock_acquire || exit 1
   fm_local_llm_health || exit 1
+  fm_local_llm_lock_acquire || exit 1
 fi
 
 CHANNEL=$(fm_sbx_channel_dir "$STATE" "$ID")

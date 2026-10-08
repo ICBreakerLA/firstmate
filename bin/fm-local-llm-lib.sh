@@ -69,9 +69,7 @@ fm_local_llm_health() {
 
 # fm_local_llm_lock_probe
 # 0 when no local-model worker holds the lock. It takes and releases the lock
-# at once, so it only reports; fm_local_llm_lock_acquire is the real claim, and
-# a launch that passed this probe alongside another waits there rather than
-# failing.
+# at once, so it only reports; fm_local_llm_lock_acquire is the real claim.
 fm_local_llm_lock_probe() {
   local f
   f=$(fm_local_llm_lock_file)
@@ -102,9 +100,8 @@ fm_local_llm_lock_probe() {
 
 # fm_local_llm_lock_acquire
 # Claim the lock on file descriptor 9 of the calling shell for as long as that
-# shell lives (the kernel drops it on any exit), waiting first for any other
-# local-model worker to end. Start background jobs with `9>&-` so they do not
-# inherit the claim.
+# shell lives (the kernel drops it on any exit). Start background jobs with
+# `9>&-` so they do not inherit the claim.
 fm_local_llm_lock_acquire() {
   local f
   f=$(fm_local_llm_lock_file)
@@ -114,11 +111,9 @@ fm_local_llm_lock_acquire() {
   }
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 1
   exec 9>>"$f" || return 1
-  flock -n 9 && return 0
-  echo "notice: another local-model worker is running; the local server has one slot, so this worker waits for it to finish before its sandbox is created" >&2
-  flock 9 || {
+  flock -n 9 || {
     exec 9>&-
-    echo "error: could not claim the local-model lock $f" >&2
+    echo "error: another local-model worker is already running; the local server has one slot, so only one local-model worker runs at a time" >&2
     return 1
   }
 }

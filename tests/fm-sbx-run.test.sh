@@ -673,28 +673,22 @@ test_local_llm_refuses_before_any_sandbox_exists() {
 }
 
 # Two spawns close enough together both pass the spawn's probe; the later
-# wrapper must wait for the first worker rather than die with a dead pane.
-test_local_llm_second_close_spawn_waits_for_the_first() {
-  local wpid rc
+# wrapper must refuse at once, before any sandbox exists, while the first
+# worker holds the lock.
+test_local_llm_second_close_spawn_is_refused_before_a_sandbox() {
+  local out rc
   new_world llm-race
   fake_local_server "$W" up
   exec 7>"$W/llm.lock"
   flock -n 7 || fail "test could not take the lock"
-  (FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude >"$W/wait.out" 2>&1) 7>&- &
-  wpid=$!
-  for _ in $(seq 1 100); do
-    grep -q "waits for it to finish" "$W/wait.out" 2>/dev/null && break
-    sleep 0.1
-  done
-  assert_contains "$(cat "$W/wait.out")" "waits for it to finish" "the waiting wrapper says why"
-  kill -0 "$wpid" 2>/dev/null || fail "the second wrapper must still be waiting, not refused: $(cat "$W/wait.out")"
-  assert_not_contains "$(log)" "create " "no sandbox is created while the first worker runs"
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" HOME="$W/userhome" PATH="$FAKE:$PATH" timeout 10 "$RUNSH" --id t1 --config "$CONFIG" \
+    --state "$STATE" --data "$DATA" --root "$HOMEDIR" --wt "$WT" --clone "$CLONE" --name "$NAME" \
+    --kind scout --local-llm -- claude 2>&1 7>&-); rc=$?
   exec 7>&-
-  wait "$wpid"; rc=$?
-  expect_code 0 "$rc" "the second worker runs once the first ends: $(cat "$W/wait.out")"
-  assert_contains "$(log)" "create --name $NAME" "the sandbox is created after the first worker ended"
-  assert_contains "$(log)" "LOCK-HELD-AT-RUN" "the second worker holds the lock while it runs"
-  pass "a second close-together local spawn waits for the first worker and then runs"
+  expect_code 1 "$rc" "the second local worker must refuse at once, not wait: $out"
+  assert_contains "$out" "only one local-model worker runs at a time" "the refusal names the rule"
+  assert_not_contains "$(log)" "create " "no sandbox is created"
+  pass "a second close-together local spawn is refused at once before a sandbox exists"
 }
 
 test_local_llm_reachable_anthropic_stops_the_launch() {
@@ -758,7 +752,7 @@ test_verify_signal_stops_the_broker_and_forces_down
 test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock
 test_local_llm_off_changes_nothing
 test_local_llm_refuses_before_any_sandbox_exists
-test_local_llm_second_close_spawn_waits_for_the_first
+test_local_llm_second_close_spawn_is_refused_before_a_sandbox
 test_local_llm_reachable_anthropic_stops_the_launch
 test_local_llm_unreachable_from_the_vm_removes_the_sandbox
 

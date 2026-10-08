@@ -12,7 +12,7 @@
 #   claude-sbx --id ID --config DIR --state DIR --data DIR
 #       --root DIR --wt DIR --clone DIR --name SANDBOX [--cpus N] [--memory Ng]
 #       [--busy-gen GEN] [--kind ship|scout] [--nm] [--nm-pin VERSION]
-#       [--allow HOSTS] [--npm-cache DIR] [--verify app] -- CLAUDE_ARGS...
+#       [--allow HOSTS] [--npm-cache DIR] [--verify app] [--local-llm] -- CLAUDE_ARGS...
 #
 #   --wt, --clone   the host worktree and the standalone clone bin/fm-sbx-bridge.sh
 #                   made of it; only the clone is mounted, and the VM sees a
@@ -40,6 +40,15 @@
 #                   FM_SBX_VERIFY_SPOOL, and the broker runs on the host for the
 #                   life of the sandbox.
 #                   Without this flag nothing changes.
+#   --local-llm     the local-model profile (bin/fm-local-llm-lib.sh,
+#                   docs/configuration.md "Local-model worker profile"): the
+#                   worker talks to the host's llama-server instead of the
+#                   Anthropic API.
+#                   The host-wide one-local-worker lock is held for the life of
+#                   this script, the sandbox gets the local-model environment
+#                   (a placeholder token, never a host credential) and one
+#                   sandbox-scoped network rule for the server's port, and the
+#                   launch stops if the VM cannot reach the server.
 #   CLAUDE_ARGS     the claude command line, exactly as the launch built it.
 #
 # What this script does, in order: remove any sandbox of the same name, create
@@ -80,12 +89,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-sbx-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-local-llm-lib.sh
+. "$SCRIPT_DIR/fm-local-llm-lib.sh"
 # shellcheck source=bin/fm-operational-input.sh
 . "$SCRIPT_DIR/fm-operational-input.sh"
 
 ID='' CONFIG='' STATE='' DATA='' ROOT='' WT='' CLONE='' NAME=''
 CPUS=4 MEMORY=4g BUSY_GEN='' KIND=ship NM=0 NM_PIN='' ALLOW='' NPM_CACHE=''
-RELAY_PID='' CLEANED=0 VERIFY='' VERIFY_PID=''
+RELAY_PID='' CLEANED=0 VERIFY='' VERIFY_PID='' LOCAL_LLM=0
 BROKER="$SCRIPT_DIR/fm-sbx-verify-broker.sh"
 CLAUDE_USER_HOME=/home/agent
 
@@ -113,6 +124,7 @@ while [ "$#" -gt 0 ]; do
   --allow) ALLOW=${2:-}; shift 2 ;;
   --npm-cache) NPM_CACHE=${2:-}; shift 2 ;;
   --verify) VERIFY=${2:-}; shift 2 ;;
+  --local-llm) LOCAL_LLM=1; shift ;;
   --) shift; break ;;
   *) die "unknown argument '$1' (see the script header)" ;;
   esac
@@ -134,6 +146,12 @@ done
 [ -d "$CLONE/.git" ] || die "no standalone clone at $CLONE (bin/fm-spawn.sh creates it with fm-sbx-bridge.sh clone)"
 fm_sbx_preflight || exit 1
 [ -z "$VERIFY" ] || "$BROKER" check --config "$CONFIG" --state "$STATE" || exit 1
+# The claim outlives everything below; the kernel drops it when this script
+# ends, however it ends, and the relay and broker are started without it.
+if [ "$LOCAL_LLM" = 1 ]; then
+  fm_local_llm_health || exit 1
+  fm_local_llm_lock_acquire || exit 1
+fi
 
 CHANNEL=$(fm_sbx_channel_dir "$STATE" "$ID")
 RELAY=$(fm_sbx_relay_dir "$STATE" "$ID")
@@ -218,6 +236,9 @@ if [ -n "$git_name" ] && [ -n "$git_email" ]; then
   add_env GIT_AUTHOR_EMAIL "$git_email"
   add_env GIT_COMMITTER_NAME "$git_name"
   add_env GIT_COMMITTER_EMAIL "$git_email"
+fi
+if [ "$LOCAL_LLM" = 1 ]; then
+  while IFS= read -r kv; do add_env "${kv%%=*}" "${kv#*=}"; done < <(fm_local_llm_env)
 fi
 if [ "$NM" = 1 ]; then
   add_env NM_HOME "$CLAUDE_USER_HOME/nm"
@@ -340,6 +361,12 @@ if [ -n "$ALLOW" ]; then
   sbx policy allow network --sandbox "$NAME" "$ALLOW" >/dev/null 2>&1 ||
     die "could not add the per-sandbox network rules ($ALLOW) for $NAME"
 fi
+if [ "$LOCAL_LLM" = 1 ]; then
+  sbx policy allow network --sandbox "$NAME" "$FM_LOCAL_LLM_POLICY_HOST" >/dev/null 2>&1 ||
+    die "could not add the per-sandbox network rule ($FM_LOCAL_LLM_POLICY_HOST) for $NAME"
+  sbx exec "$NAME" curl -fsS --max-time 10 "$FM_LOCAL_LLM_VM_URL/v1/models" >/dev/null 2>&1 ||
+    die "$NAME cannot reach the local model server at $FM_LOCAL_LLM_VM_URL; no worker was started"
+fi
 
 # A sandboxed validation ship needs its clone prepared for the in-VM pipeline
 # (fm_sbx_nm_prepare) before the worker starts.
@@ -351,14 +378,14 @@ relay_args=(--id "$ID" --state "$STATE" --config "$CONFIG" --channel "$CHANNEL" 
 [ -z "$BUSY_GEN" ] || relay_args+=(--busy-gen "$BUSY_GEN")
 [ "$KIND" != ship ] || relay_args+=(--wt "$WT" --clone "$CLONE")
 [ "$NM" != 1 ] || [ "$KIND" != ship ] || relay_args+=(--sandbox "$NAME")
-"$SCRIPT_DIR/fm-sbx-relay.sh" "${relay_args[@]}" &
+"$SCRIPT_DIR/fm-sbx-relay.sh" "${relay_args[@]}" 9>&- &
 RELAY_PID=$!
 
 if [ -n "$VERIFY" ]; then
-  "$BROKER" run --id "$ID" --state "$STATE" --config "$CONFIG" --sandbox "$NAME" &
+  "$BROKER" run --id "$ID" --state "$STATE" --config "$CONFIG" --sandbox "$NAME" 9>&- &
   VERIFY_PID=$!
 fi
 
-sbx run --name "$NAME" -- "$@"
+sbx run --name "$NAME" -- "$@" 9>&-
 rc=$?
 exit "$rc"

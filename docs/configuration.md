@@ -1022,6 +1022,53 @@ The broker runs only the pinned command, builds every argument itself, and ends 
 Every request and verdict is appended to `state/<id>.sbx-verify/host/audit.log`, which no sandbox mount reaches.
 The worker-authored bundle it serves runs in the app signed in as the verify account, which the captain accepted as a residual risk.
 
+### Local-model worker profile
+
+A sandboxed Claude worker can run against a llama.cpp `llama-server` on the host instead of the Anthropic API, so small tasks stop drawing on the Claude plan.
+The profile is selected per spawn by the model id alone: a Claude launch whose model is `qwen3.8-27b-gsq-rco`, given as `--model` or as the model of a [dispatch profile](#crew-dispatch-profiles-configcrew-dispatchjson), is a local-model worker.
+No new flag or config file exists, so a dispatch rule that names that model needs nothing more.
+`local-llm up|down|status` starts and stops the server, and Firstmate never does either.
+
+The profile runs only inside the worker sandbox, so the sandbox is what keeps the captain's Claude login and every other host secret away from it.
+Its one credential is the same scoped GitHub token every other sandboxed worker gets (the fork-only token for a fork ship, otherwise the home's token), stored per sandbox as [above](#worker-sandbox-configworker-sandbox).
+A launch with that model refuses, before any endpoint, clone, or task record exists, when any of these holds:
+
+- The worker is not a task worker on the claude harness with `config/worker-sandbox` set to `sbx`.
+- The server at `http://127.0.0.1:8080` does not answer `/v1/models` with that model listed (`FM_LOCAL_LLM_URL` overrides only this host-side check, for tests; the sandbox always uses port 8080).
+- Another local-model spawn or worker holds the one local slot.
+
+The server has one slot, so one local-model worker runs at a time across the whole host.
+The spawn claims that slot itself, with an exclusive non-blocking `flock` on `$XDG_STATE_HOME/firstmate/local-llm.lock` (`FM_LOCAL_LLM_LOCK`), before it creates anything, so of two spawns close together the second is refused and leaves no worktree, clone, or record.
+The claim names the task in the lock file and passes to a small detached holder, which keeps the lock until the task's `bin/fm-sbx-run.sh` has taken it over through the lock's `.handoff` FIFO and then ended, however it ends, including a crash.
+The wrapper never takes or waits for the lock itself: it refuses to start unless the held claim names its own task.
+A spawn that fails before its launch is live releases the claim at once.
+A launched pane that never starts its wrapper leaves the claim with the holder, a `cat` of the `.handoff` FIFO, until that process is ended.
+
+The sandbox gets this environment on top of the usual allowlist, built by `fm_local_llm_env` in `bin/fm-local-llm-lib.sh`:
+
+| Variable | Value |
+| --- | --- |
+| `ANTHROPIC_BASE_URL` | `http://host.docker.internal:8080`, the host's loopback as an `sbx` microVM sees it. |
+| `ANTHROPIC_AUTH_TOKEN` | A placeholder the server ignores. |
+| `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL` | `qwen3.8-27b-gsq-rco`, so every tier, the background model, and subagents use the one local model. |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `88000`, under the server's 96,256-token context, for this sandbox only. |
+| `CLAUDE_CODE_ATTRIBUTION_HEADER` | `0`, so the start of every request stays byte-identical and the server's prompt cache can reuse it. |
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1`. |
+
+No `--effort` is passed, because the server fixes its own reasoning effort.
+The sandbox's own network rule is `sbx policy allow network --sandbox <name> localhost:8080`, the name the `sbx` proxy uses for the host's port 8080; it is removed with the sandbox and never touches the global policy.
+
+The sandbox no longer carries the captain's Claude sign-in.
+Like the fork ship's `github` secret, the sandbox's inherited `anthropic` secret is removed for this sandbox alone with `sbx secret rm anthropic --sandbox <name>`, and `sbx policy deny network --sandbox <name> api.anthropic.com` closes the Anthropic API to it.
+The global secret store, the global policy, and the sign-in itself are never touched, and no secret is stored in their place.
+Before the worker starts, the wrapper checks from inside the VM that `/v1/models` answers through the allow rule and that `https://api.anthropic.com/v1/models` does not answer, and stops the launch and removes the sandbox when either check fails.
+
+Processed-start-prompt reuse through `llama-server --slot-save-path` is not implemented.
+Slot save and restore are separate `/slots/<id>?action=save|restore` routes of the server, not part of the Messages API that Claude Code speaks, and `--slot-save-path` is a start flag of the host's server script, which this profile does not edit or restart.
+What does exist is the server's own prefix cache: with one slot, a worker whose request starts with the same tokens as the previous one skips re-reading them, and `CLAUDE_CODE_ATTRIBUTION_HEADER=0` removes the per-request change that would otherwise break that match.
+How much of the roughly 30,000-token start prompt is byte-identical across tasks is unmeasured here, because the working directory, the git status, and the brief differ per task.
+A slot restore before launch is the next step once that has been measured on the host.
+
 ### Lifecycle
 
 `bin/fm-sbx-run.sh` (reached as `bin/claude-sbx`, so the pane's foreground command classifies as a Claude launch) runs as a child of the pane shell, and its exit, hangup, terminate, and interrupt traps remove the sandbox, stop the relay after a final drain, and bring the clone's commits back.
@@ -1045,7 +1092,7 @@ These steps are the owner's and are not automated.
 
 ### Failures
 
-A missing `sbx` CLI, a stopped daemon, a failed create, a version mismatch, or a failed in-VM setup step is a blocker that names the missing requirement; no spawn silently falls back to running on the host.
+A missing `sbx` CLI, a stopped daemon, a failed create, a version mismatch, an unreachable local model server, or a failed in-VM setup step is a blocker that names the missing requirement; no spawn silently falls back to running on the host.
 
 ## Worker account pin (config/claude-account, config/pi-account)
 

@@ -145,6 +145,129 @@ test_malformed_config_refuses() {
   pass "a malformed worker-sandbox refuses"
 }
 
+# local_server <up|down>: a host curl standing in for llama-server, and a lock
+# file private to the case.
+local_server() {
+  cat >"$FAKEBIN/curl" <<SH
+#!/usr/bin/env bash
+[ "$1" = up ] || exit 7
+echo '{"data":[{"id":"qwen3.8-27b-gsq-rco"}]}'
+SH
+  chmod +x "$FAKEBIN/curl"
+  export FM_LOCAL_LLM_LOCK="$CASE/llm.lock"
+}
+
+# release_slot: what the task wrapper's exit does to the spawn's claim.
+release_slot() {
+  exec 6<>"$FM_LOCAL_LLM_LOCK.handoff"
+  exec 6>&-
+}
+
+# slot_free: 0 once nothing holds the local slot (a released holder may take a
+# moment to exit).
+slot_free() {
+  local _
+  for _ in $(seq 1 50); do
+    flock -n "$FM_LOCAL_LLM_LOCK" true 2>/dev/null && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+test_the_local_model_profile_launches_through_the_wrapper() {
+  local out rc
+  new_case llm 'sbx'
+  local_server up
+  out=$(spawn_task sbx-llm --model qwen3.8-27b-gsq-rco --effort high); rc=$?
+  expect_code 0 "$rc" "the local profile should spawn: $out"
+  assert_grep "bin/claude-sbx" "$CASE/launch.log" "the launch goes through the wrapper"
+  assert_grep "--local-llm" "$CASE/launch.log" "the wrapper is asked for the local profile"
+  assert_grep "--model 'qwen3.8-27b-gsq-rco'" "$CASE/launch.log" "the local model is the worker's model"
+  assert_no_grep "--effort" "$CASE/launch.log" "the local server fixes its own effort"
+  assert_grep "sandbox=sbx" "$HOME_DIR/state/sbx-llm.meta" "the task is a sandboxed task"
+  assert_equals "sbx-llm" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the claim names the spawned task"
+  ! flock -n "$FM_LOCAL_LLM_LOCK" true || fail "the claim must outlive the spawn for its wrapper to take over"
+  release_slot
+  slot_free || fail "the claim must end once its wrapper is gone"
+  pass "the local-model profile claims the slot and launches the sandboxed wrapper with the local model and no effort flag"
+}
+
+test_an_ordinary_sandboxed_spawn_is_not_the_local_profile() {
+  local out rc
+  new_case llm-not sbx
+  local_server down
+  out=$(spawn_task sbx-plain --model claude-fable-5-1 --effort high); rc=$?
+  expect_code 0 "$rc" "an ordinary model must not need the local server: $out"
+  assert_grep "--effort" "$CASE/launch.log" "an ordinary model keeps its effort flag"
+  assert_no_grep "--local-llm" "$CASE/launch.log" "no local flag for another model"
+  pass "a non-local model neither needs the server nor gets the local flag"
+}
+
+test_the_local_profile_refuses_before_any_side_effect() {
+  local out rc
+  new_case llm-refuse sbx
+  local_server down
+  out=$(spawn_task llm-down --model qwen3.8-27b-gsq-rco); rc=$?
+  expect_code 1 "$rc" "a silent server must refuse"
+  assert_refused_cleanly llm-down "$out" "local model server is not answering"
+  local_server up
+  exec 7>"$CASE/llm.lock"
+  flock -n 7 || fail "test could not take the lock"
+  out=$(spawn_task llm-busy --model qwen3.8-27b-gsq-rco); rc=$?
+  exec 7>&-
+  expect_code 1 "$rc" "a running local worker must refuse a second"
+  assert_refused_cleanly llm-busy "$out" "only one local-model worker runs at a time"
+  out=$(spawn_task llm-codex --model qwen3.8-27b-gsq-rco --harness codex); rc=$?
+  expect_code 1 "$rc" "another harness must refuse"
+  assert_refused_cleanly llm-codex "$out" "supports only the claude harness"
+  pass "a silent server, a busy server slot, or another harness refuses before anything is created"
+}
+
+# Two spawns close together: the first holds the slot until its wrapper takes
+# it over, so the second is refused at spawn and leaves nothing behind.
+test_a_second_close_local_spawn_leaves_no_worktree_or_record() {
+  local out rc
+  new_case llm-race sbx
+  local_server up
+  out=$(spawn_task llm-a --model qwen3.8-27b-gsq-rco); rc=$?
+  expect_code 0 "$rc" "the first local spawn should succeed: $out"
+  git -C "$PROJ" worktree add --quiet -b wt-llm-b "$CASE/wt-b"
+  fm_test_spawn_brief "$HOME_DIR" llm-b
+  out=$(FM_FAKE_LAUNCH_LOG="$CASE/launch-b.log" fm_test_run_spawn "$HOME_DIR" "$CASE/wt-b" "$FAKEBIN" llm-b "$PROJ" \
+    --mode no-mistakes --yolo off --model qwen3.8-27b-gsq-rco 2>&1); rc=$?
+  expect_code 1 "$rc" "the second local spawn must refuse: $out"
+  assert_contains "$out" "only one local-model worker runs at a time" "the refusal names the rule"
+  assert_absent "$HOME_DIR/state/llm-b.meta" "the refused spawn leaves no task record"
+  assert_absent "$HOME_DIR/state/llm-b.sbx-clone" "the refused spawn leaves no clone"
+  [ ! -s "$CASE/launch-b.log" ] || fail "the refused spawn must not launch a worker: $(cat "$CASE/launch-b.log")"
+  assert_equals "llm-a" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the first task keeps the claim"
+  release_slot
+  slot_free || fail "the first claim must end once its wrapper is gone"
+  pass "a second close-together local spawn is refused at spawn and leaves no worktree, clone or record"
+}
+
+test_a_failed_local_spawn_releases_the_slot() {
+  local out rc
+  new_case llm-fail sbx
+  local_server up
+  printf 'not a clone\n' >"$HOME_DIR/state/llm-fail.sbx-clone"
+  out=$(spawn_task llm-fail --model qwen3.8-27b-gsq-rco 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || fail "a spawn whose clone cannot be made must fail: $out"
+  assert_absent "$HOME_DIR/state/llm-fail.meta" "the failed spawn leaves no task record"
+  slot_free || fail "a failed spawn must release its claim"
+  pass "a local spawn that fails before its launch releases the slot"
+}
+
+test_the_local_profile_needs_the_sandbox() {
+  local out rc
+  new_case llm-bare - none
+  local_server up
+  out=$(spawn_task llm-nosbx --model qwen3.8-27b-gsq-rco); rc=$?
+  expect_code 1 "$rc" "no sandbox must refuse"
+  assert_refused_cleanly llm-nosbx "$out" "runs only inside the worker sandbox"
+  pass "the local profile refuses to run outside the sandbox"
+}
+
 test_absent_config_keeps_the_launch_unchanged
 test_explicit_off_is_the_same_as_absent
 test_sbx_rewrites_the_launch_and_records_the_sandbox
@@ -152,5 +275,11 @@ test_a_scout_is_sandboxed_without_the_pipeline
 test_unsupported_launches_refuse_before_any_side_effect
 test_a_missing_or_stopped_daemon_refuses
 test_malformed_config_refuses
+test_the_local_model_profile_launches_through_the_wrapper
+test_an_ordinary_sandboxed_spawn_is_not_the_local_profile
+test_the_local_profile_refuses_before_any_side_effect
+test_the_local_profile_needs_the_sandbox
+test_a_second_close_local_spawn_leaves_no_worktree_or_record
+test_a_failed_local_spawn_releases_the_slot
 
 echo "# all fm-spawn-sandbox tests passed"

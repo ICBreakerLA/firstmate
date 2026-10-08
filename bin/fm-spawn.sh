@@ -651,6 +651,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-worker-account-lib.sh"
 # shellcheck source=bin/fm-sbx-lib.sh
 . "$SCRIPT_DIR/fm-sbx-lib.sh"
+# shellcheck source=bin/fm-local-llm-lib.sh
+. "$SCRIPT_DIR/fm-local-llm-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -1276,6 +1278,10 @@ parse_orca_worktree_result() {
 
 spawn_abort_cleanup() {
   local status=$?
+  if [ "$status" -ne 0 ] && [ -n "${FM_LOCAL_LLM_HOLDER:-}" ] &&
+    { [ "$SPAWN_LAUNCH_SENT" = 0 ] || [ "$SPAWN_ENDPOINT_CLOSED" = 1 ]; }; then
+    kill "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  fi
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] &&
     [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] &&
     [ -n "$SPAWN_META_TMP" ] &&
@@ -2491,6 +2497,32 @@ if [ "$KIND" != secondmate ]; then
     SBX_ACTIVE=1
     SBX_NAME=$(fm_sbx_name "$FM_HOME" "$ID")
   fi
+fi
+
+# Local-model profile (bin/fm-local-llm-lib.sh): selected by the model id. It
+# runs only as a sandboxed Claude worker, so the sandbox, not this launch, is
+# what keeps host credentials away from it. Every refusal below happens before
+# any endpoint, worktree, clone, or record exists, and the one local slot is
+# claimed here for the wrapper to take over (spawn_abort_cleanup releases a
+# claim no launched wrapper will take).
+LOCAL_LLM_ACTIVE=0
+FM_LOCAL_LLM_HOLDER=
+if fm_local_llm_is_model "$MODEL"; then
+  [ "$KIND" != secondmate ] || {
+    echo "error: the local-model profile ($MODEL) runs only sandboxed task workers, not a persistent secondmate" >&2
+    exit 1
+  }
+  [ "$HARNESS" = claude ] || {
+    echo "error: the local-model profile ($MODEL) runs only on the claude harness, not $HARNESS" >&2
+    exit 1
+  }
+  [ "$SBX_ACTIVE" -eq 1 ] || {
+    echo "error: the local-model profile ($MODEL) runs only inside the worker sandbox; set config/worker-sandbox to sbx (a relaunch follows the task's recorded sandbox)" >&2
+    exit 1
+  }
+  fm_local_llm_health || exit 1
+  fm_local_llm_claim "$ID" || exit 1
+  LOCAL_LLM_ACTIVE=1
 fi
 
 secondmate_registry_value() {
@@ -5190,6 +5222,8 @@ MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 # A pinned Pi launch confines Pi's model lookup to the declared provider.
 [ -z "$WORKER_ACCOUNT_PROVIDER" ] || MODELFLAG="--provider $(shell_quote "$WORKER_ACCOUNT_PROVIDER") $MODELFLAG"
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL") || exit 1
+# The local server fixes its own reasoning effort, so no --effort is passed.
+[ "$LOCAL_LLM_ACTIVE" -eq 0 ] || EFFORTFLAG=
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 # Relaunch session continuity. Computed here, where the adopted endpoint (T) is
@@ -5212,6 +5246,7 @@ if [ "$SBX_ACTIVE" -eq 1 ]; then
   [ "$KIND" != ship ] || [ "$MODE" != no-mistakes ] || [ -z "$FM_SBX_NM_PIN" ] || CLAUDE_BIN="$CLAUDE_BIN --nm-pin $(shell_quote "$FM_SBX_NM_PIN")"
   [ -z "$FM_SBX_ALLOW" ] || CLAUDE_BIN="$CLAUDE_BIN --allow $(shell_quote "$FM_SBX_ALLOW")"
   [ "$FM_SBX_VERIFY" != app ] || CLAUDE_BIN="$CLAUDE_BIN --verify app"
+  [ "$LOCAL_LLM_ACTIVE" -eq 0 ] || CLAUDE_BIN="$CLAUDE_BIN --local-llm"
   [ ! -d "$DATA/sbx-npm-cache" ] || CLAUDE_BIN="$CLAUDE_BIN --npm-cache $(shell_quote "$DATA/sbx-npm-cache")"
   CLAUDE_BIN="$CLAUDE_BIN --"
 fi

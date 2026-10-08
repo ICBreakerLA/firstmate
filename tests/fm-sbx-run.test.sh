@@ -41,7 +41,7 @@ new_world() {
 #!/usr/bin/env bash
 printf '%s\\n' "\$*" >>"$LOG"
 case "\$1" in
-daemon) echo "Status: running" ;;
+daemon) [ ! -f "$W/daemon.down" ] || { echo "Status: stopped"; exit 1; }; echo "Status: running" ;;
 ls) cat "$LIVE" ;;
 create) printf '%s\\n' "\$3" >>"$LIVE" ;;
 rm) grep -Fxv -- "\$3" "$LIVE" >"$LIVE.new"; mv "$LIVE.new" "$LIVE" ;;
@@ -50,6 +50,8 @@ secret)
   if [ "\$6" = --command ]; then sh -c "\$7" >"$W/secret.stdin"; else cat >"$W/secret.stdin"; fi ;;
 exec)
   case "\$*" in
+  *"api.anthropic.com"*) [ -f "$W/vm.anthropic" ] || exit 22 ;;
+  *"host.docker.internal"*) [ ! -f "$W/vm.unreachable" ] || exit 7 ;;
   *"no-mistakes --version"*) cat "$W/vm.nmver" 2>/dev/null; exit 0 ;;
   *"no-mistakes init"*) [ ! -f "$W/init.fail" ] || exit 1 ;;
   *"gh --version"*) [ ! -f "$W/gh.fail" ] || exit 1 ;;
@@ -58,6 +60,7 @@ exec)
   esac
   ;;
 run)
+  [ -z "\${FM_LOCAL_LLM_LOCK:-}" ] || { flock -n "\$FM_LOCAL_LLM_LOCK" true && echo LOCK-FREE-AT-RUN || echo LOCK-HELD-AT-RUN; } >>"$LOG"
   printf '%s\\n' "ENV-AT-RUN: \$(env | grep -c -F -e "$SECRET" -e "$FORK_SECRET")" >>"$LOG"
   if [ -f "$W/run.hang" ]; then : >"$W/run.started"; sleep 30 & wait \$!; fi
   exit "\$(cat "$W/run.rc" 2>/dev/null || echo 0)"
@@ -609,6 +612,157 @@ test_verify_signal_stops_the_broker_and_forces_down() {
   pass "terminating a verifying sandbox stops the broker with a forced emulator shutdown"
 }
 
+# fake_local_server <world> up|down: a host curl standing in for llama-server.
+fake_local_server() {
+  cat >"$FAKE/curl" <<SH
+#!/usr/bin/env bash
+[ "$2" = up ] || exit 7
+echo '{"data":[{"id":"qwen3.8-27b-gsq-rco"}]}'
+SH
+  chmod +x "$FAKE/curl"
+}
+
+# claim_slot <task>: the spawn's claim of the one local slot, taken the way
+# bin/fm-spawn.sh takes it, for the wrapper to take over.
+claim_slot() {
+  (
+    # shellcheck source=bin/fm-local-llm-lib.sh
+    . "$ROOT/bin/fm-local-llm-lib.sh"
+    FM_LOCAL_LLM_LOCK="$W/llm.lock" fm_local_llm_claim "$1"
+  ) || fail "the test could not claim the local slot"
+}
+
+# release_slot: what a wrapper's exit does to a claim nobody took over.
+release_slot() {
+  exec 6<>"$W/llm.lock.handoff"
+  exec 6>&-
+}
+
+# slot_free: 0 once nothing holds the local slot (a released holder may take a
+# moment to exit).
+slot_free() {
+  local _
+  for _ in $(seq 1 50); do
+    flock -n "$W/llm.lock" true 2>/dev/null && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock() {
+  local create
+  new_world llm
+  fake_local_server "$W" up
+  claim_slot t1
+  FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude --model qwen3.8-27b-gsq-rco >/dev/null 2>&1
+  create=$(grep '^create ' "$LOG")
+  assert_contains "$create" "-e ANTHROPIC_BASE_URL=http://host.docker.internal:8080" "the worker talks to the host server"
+  assert_contains "$create" "-e ANTHROPIC_AUTH_TOKEN=local-llm-no-credential" "the token is a placeholder"
+  assert_contains "$create" "-e ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen3.8-27b-gsq-rco" "the background tier maps to the local model"
+  assert_contains "$create" "-e CLAUDE_CODE_SUBAGENT_MODEL=qwen3.8-27b-gsq-rco" "subagents map to the local model"
+  assert_contains "$create" "-e CLAUDE_CODE_AUTO_COMPACT_WINDOW=88000" "auto-compact is set for this sandbox only"
+  assert_contains "$(log)" "policy allow network --sandbox $NAME localhost:8080" "the server port is allowed for this sandbox only"
+  assert_not_contains "$(log)" "policy allow network localhost" "no global policy change"
+  assert_contains "$(log)" "secret rm anthropic --sandbox $NAME -f" "the sandbox's inherited Claude sign-in is removed for this sandbox only"
+  assert_not_contains "$(log)" "secret set anthropic" "no Anthropic secret is stored in its place"
+  assert_contains "$(log)" "policy deny network --sandbox $NAME api.anthropic.com" "the Anthropic API is denied for this sandbox only"
+  assert_not_contains "$(log)" "policy deny network api.anthropic.com" "no global deny"
+  assert_contains "$(log)" "exec $NAME curl -fsS --max-time 10 https://api.anthropic.com/v1/models" "the sandbox's lack of Anthropic access is checked"
+  [ "$(grep -n 'secret rm anthropic' "$LOG" | cut -d: -f1)" -lt "$(grep -n '^run ' "$LOG" | head -1 | cut -d: -f1)" ] ||
+    fail "the sign-in must be gone before the worker starts"
+  assert_contains "$(log)" "exec $NAME curl" "the sandbox's reach of the server is checked before the worker starts"
+  assert_contains "$(log)" "LOCK-HELD-AT-RUN" "the one-local-worker lock is held while the worker runs"
+  [ "$(grep -n 'policy allow' "$LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n '^run ' "$LOG" | head -1 | cut -d: -f1)" ] ||
+    fail "the rule must exist before the worker starts"
+  slot_free || fail "the slot must be free after the wrapper exits"
+  pass "the local profile gets its environment, a sandbox-scoped rule and the spawn's claim for the worker's life"
+}
+
+test_local_llm_off_changes_nothing() {
+  local create
+  new_world llm-off
+  wrap --kind scout -- claude >/dev/null 2>&1
+  create=$(grep '^create ' "$LOG")
+  assert_not_contains "$create" "ANTHROPIC_BASE_URL" "no local environment without the flag"
+  assert_not_contains "$(log)" "localhost:8080" "no local rule without the flag"
+  assert_not_contains "$(log)" "LOCK-" "no lock without the flag"
+  pass "without --local-llm nothing local is added"
+}
+
+test_local_llm_refuses_before_any_sandbox_exists() {
+  local out rc
+  new_world llm-down
+  fake_local_server "$W" down
+  claim_slot t1
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  expect_code 1 "$rc" "a silent server must refuse"
+  assert_contains "$out" "local model server is not answering" "the refusal says why"
+  assert_not_contains "$(log)" "create " "no sandbox is created"
+  slot_free || fail "the refusing wrapper's exit must release the slot"
+  pass "a down server refuses before a sandbox exists and releases the slot"
+}
+
+test_local_llm_failed_preflight_releases_the_slot() {
+  local out rc
+  new_world llm-preflight
+  fake_local_server "$W" up
+  : >"$W/daemon.down"
+  claim_slot t1
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || fail "a stopped daemon must stop the wrapper: $out"
+  assert_not_contains "$(log)" "create " "no sandbox is created"
+  slot_free || fail "a wrapper that fails its preflight must release the slot"
+  pass "a wrapper that fails its preflight releases the spawn's claim"
+}
+
+test_local_llm_without_its_spawns_claim_is_refused() {
+  local out rc
+  new_world llm-noclaim
+  fake_local_server "$W" up
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  expect_code 1 "$rc" "a wrapper with no claim must refuse: $out"
+  assert_contains "$out" "task t1 holds no local-model claim" "the refusal says why"
+  claim_slot t2
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  expect_code 1 "$rc" "another task's claim must refuse: $out"
+  assert_contains "$out" "task t1 holds no local-model claim" "the refusal says why"
+  ! flock -n "$W/llm.lock" true || fail "a refused wrapper must leave the other task's claim held"
+  release_slot
+  slot_free || fail "the other task's claim must end"
+  assert_not_contains "$(log)" "create " "no sandbox is created"
+  pass "a wrapper without its own spawn's claim is refused before a sandbox exists"
+}
+
+test_local_llm_reachable_anthropic_stops_the_launch() {
+  local out rc
+  new_world llm-anthropic
+  fake_local_server "$W" up
+  : >"$W/vm.anthropic"
+  claim_slot t1
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "a sandbox that still reaches Anthropic must stop the launch"
+  assert_contains "$out" "can still reach api.anthropic.com" "the refusal says why"
+  ! grep -q '^run ' "$LOG" || fail "no worker may be started"
+  [ ! -s "$LIVE" ] || fail "no sandbox may remain: $(cat "$LIVE")"
+  pass "a sandbox that can still reach the Anthropic API stops the launch and is removed"
+}
+
+test_local_llm_unreachable_from_the_vm_removes_the_sandbox() {
+  local out rc
+  new_world llm-vm
+  fake_local_server "$W" up
+  : >"$W/vm.unreachable"
+  claim_slot t1
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "an unreachable server must stop the launch"
+  assert_contains "$out" "cannot reach the local model server" "the refusal says why"
+  ! grep -q '^run ' "$LOG" || fail "no worker may be started"
+  assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed"
+  [ ! -s "$LIVE" ] || fail "no sandbox may remain: $(cat "$LIVE")"
+  pass "a VM that cannot reach the server stops the launch and removes the sandbox"
+}
+
+
 test_creates_with_minimal_mounts_and_cleans_up
 test_environment_is_an_explicit_allowlist
 test_the_commit_identity_reaches_the_sandbox_environment
@@ -639,5 +793,12 @@ test_verify_flag_mounts_the_spool_and_runs_the_broker
 test_verify_flag_off_changes_nothing
 test_verify_refusals_happen_before_any_sandbox_exists
 test_verify_signal_stops_the_broker_and_forces_down
+test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock
+test_local_llm_off_changes_nothing
+test_local_llm_refuses_before_any_sandbox_exists
+test_local_llm_failed_preflight_releases_the_slot
+test_local_llm_without_its_spawns_claim_is_refused
+test_local_llm_reachable_anthropic_stops_the_launch
+test_local_llm_unreachable_from_the_vm_removes_the_sandbox
 
 echo "# all fm-sbx-run tests passed"

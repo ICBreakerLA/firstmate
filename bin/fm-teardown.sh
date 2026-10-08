@@ -74,8 +74,10 @@
 # for the common case where there is no remote at all.
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
 # declared scratch and the report at data/<task-id>/report.md is the work
-# product. Teardown proceeds only once the report exists and the shared
-# unresolved-decision completion gate verifies its captain-held inventory.
+# product. Teardown proceeds only once the report exists, the shared
+# unresolved-decision completion gate verifies its captain-held inventory, and
+# bin/fm-output-scan.sh finds no secret or deny-listed personal data in it (a hit
+# refuses and keeps the task for the captain; --force discards instead).
 # Before destructive cleanup, teardown validates task check artifacts as
 # ordinary single-link files on the state device. It refuses and preserves
 # task state when that proof fails; otherwise it removes the task's check,
@@ -3482,6 +3484,17 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
       FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-captain-hold.sh" verify "$ID" >/dev/null; then
     echo "REFUSED: scout task $ID has not passed the captain-call completion gate." >&2
     echo "Inventory its report and any visual review through bin/fm-captain-hold.sh before teardown." >&2
+    exit 1
+  fi
+  # The report leaves the fleet to the captain, so a secret or deny-listed personal
+  # term in it holds the task instead of cleaning it up. The scanner names only the
+  # shape and line, never the matched text.
+  SCOUT_SCAN_RC=0
+  SCOUT_SCAN_OUT=$(FM_HOME="$FM_HOME" FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-output-scan.sh" "$REPORT" 2>&1) || SCOUT_SCAN_RC=$?
+  if [ "$SCOUT_SCAN_RC" -ne 0 ]; then
+    echo "REFUSED: scout task $ID's report did not pass the output scan (bin/fm-output-scan.sh exit $SCOUT_SCAN_RC)." >&2
+    [ -z "$SCOUT_SCAN_OUT" ] || printf '%s\n' "$SCOUT_SCAN_OUT" >&2
+    echo "Hold the task for the captain through bin/fm-captain-hold.sh, or have the report cleaned of the named lines, then retry; --force discards the scout instead." >&2
     exit 1
   fi
 fi

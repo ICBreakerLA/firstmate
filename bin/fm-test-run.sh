@@ -297,7 +297,7 @@ family_for_basename() {
     fm-harness-precedence.test.sh|\
     fm-kimi-harness.test.sh|fm-devin-harness.test.sh|fm-muse-harness.test.sh|fm-rovo-harness.test.sh|fm-agy-harness.test.sh|fm-omp-harness.test.sh|fm-herdr-lab.test.sh|fm-lint.test.sh|fm-host-lint.test.sh|\
     fm-lint-workflows.test.sh|\
-    fm-operational-input.test.sh|fm-pi-primary-types.test.sh|\
+    fm-operational-input.test.sh|fm-output-scan.test.sh|fm-pi-primary-types.test.sh|\
     fm-calm-claude-mod.test.sh|\
     fm-harness-adapter-references.test.sh|\
     fm-send-popup-settle.test.sh|fm-send-settle.test.sh|\
@@ -791,6 +791,7 @@ tests/fm-omp-primary-live-e2e.test.sh 74
 tests/fm-on.test.sh 11473
 tests/fm-opencode-primary-live-e2e.test.sh 47
 tests/fm-operational-input.test.sh 2404
+tests/fm-output-scan.test.sh 4000
 tests/fm-peek-remote.test.sh 1082
 tests/fm-pending-reply.test.sh 41090
 tests/fm-pi-branch-extension.test.sh 77218
@@ -1613,6 +1614,9 @@ families_for_changed_path() {
       ;;
     bin/fm-procevent-quota.sh)
       printf '%s\n' "__script__:fm-procevent-quota.test.sh"
+      ;;
+    bin/fm-output-scan.sh)
+      printf '%s\n' "__script__:fm-output-scan.test.sh"
       ;;
     bin/fm-quota-choose.sh)
       printf '%s\n' "__script__:fm-quota-choose.test.sh"

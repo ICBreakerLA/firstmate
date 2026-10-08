@@ -622,10 +622,38 @@ SH
   chmod +x "$FAKE/curl"
 }
 
+# claim_slot <task>: the spawn's claim of the one local slot, taken the way
+# bin/fm-spawn.sh takes it, for the wrapper to take over.
+claim_slot() {
+  (
+    # shellcheck source=bin/fm-local-llm-lib.sh
+    . "$ROOT/bin/fm-local-llm-lib.sh"
+    FM_LOCAL_LLM_LOCK="$W/llm.lock" fm_local_llm_claim "$1"
+  ) || fail "the test could not claim the local slot"
+}
+
+# release_slot: what a wrapper's exit does to a claim nobody took over.
+release_slot() {
+  exec 6<>"$W/llm.lock.handoff"
+  exec 6>&-
+}
+
+# slot_free: 0 once nothing holds the local slot (a released holder may take a
+# moment to exit).
+slot_free() {
+  local _
+  for _ in $(seq 1 50); do
+    flock -n "$W/llm.lock" true 2>/dev/null && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
 test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock() {
   local create
   new_world llm
   fake_local_server "$W" up
+  claim_slot t1
   FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude --model qwen3.8-27b-gsq-rco >/dev/null 2>&1
   create=$(grep '^create ' "$LOG")
   assert_contains "$create" "-e ANTHROPIC_BASE_URL=http://host.docker.internal:8080" "the worker talks to the host server"
@@ -646,8 +674,8 @@ test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock() {
   assert_contains "$(log)" "LOCK-HELD-AT-RUN" "the one-local-worker lock is held while the worker runs"
   [ "$(grep -n 'policy allow' "$LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n '^run ' "$LOG" | head -1 | cut -d: -f1)" ] ||
     fail "the rule must exist before the worker starts"
-  FM_LOCAL_LLM_LOCK="$W/llm.lock" flock -n "$W/llm.lock" true || fail "the lock must be free after the wrapper exits"
-  pass "the local profile gets its environment, a sandbox-scoped rule and the lock for the worker's life"
+  slot_free || fail "the slot must be free after the wrapper exits"
+  pass "the local profile gets its environment, a sandbox-scoped rule and the spawn's claim for the worker's life"
 }
 
 test_local_llm_off_changes_nothing() {
@@ -665,30 +693,31 @@ test_local_llm_refuses_before_any_sandbox_exists() {
   local out rc
   new_world llm-down
   fake_local_server "$W" down
+  claim_slot t1
   out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
   expect_code 1 "$rc" "a silent server must refuse"
   assert_contains "$out" "local model server is not answering" "the refusal says why"
   assert_not_contains "$(log)" "create " "no sandbox is created"
-  pass "a down server refuses before a sandbox exists"
+  slot_free || fail "the refusing wrapper's exit must release the slot"
+  pass "a down server refuses before a sandbox exists and releases the slot"
 }
 
-# Two spawns close enough together both pass the spawn's probe; the later
-# wrapper must refuse at once, before any sandbox exists, while the first
-# worker holds the lock.
-test_local_llm_second_close_spawn_is_refused_before_a_sandbox() {
+test_local_llm_without_its_spawns_claim_is_refused() {
   local out rc
-  new_world llm-race
+  new_world llm-noclaim
   fake_local_server "$W" up
-  exec 7>"$W/llm.lock"
-  flock -n 7 || fail "test could not take the lock"
-  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" HOME="$W/userhome" PATH="$FAKE:$PATH" timeout 10 "$RUNSH" --id t1 --config "$CONFIG" \
-    --state "$STATE" --data "$DATA" --root "$HOMEDIR" --wt "$WT" --clone "$CLONE" --name "$NAME" \
-    --kind scout --local-llm -- claude 2>&1 7>&-); rc=$?
-  exec 7>&-
-  expect_code 1 "$rc" "the second local worker must refuse at once, not wait: $out"
-  assert_contains "$out" "only one local-model worker runs at a time" "the refusal names the rule"
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  expect_code 1 "$rc" "a wrapper with no claim must refuse: $out"
+  assert_contains "$out" "task t1 holds no local-model claim" "the refusal says why"
+  claim_slot t2
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  expect_code 1 "$rc" "another task's claim must refuse: $out"
+  assert_contains "$out" "task t1 holds no local-model claim" "the refusal says why"
+  ! flock -n "$W/llm.lock" true || fail "a refused wrapper must leave the other task's claim held"
+  release_slot
+  slot_free || fail "the other task's claim must end"
   assert_not_contains "$(log)" "create " "no sandbox is created"
-  pass "a second close-together local spawn is refused at once before a sandbox exists"
+  pass "a wrapper without its own spawn's claim is refused before a sandbox exists"
 }
 
 test_local_llm_reachable_anthropic_stops_the_launch() {
@@ -696,6 +725,7 @@ test_local_llm_reachable_anthropic_stops_the_launch() {
   new_world llm-anthropic
   fake_local_server "$W" up
   : >"$W/vm.anthropic"
+  claim_slot t1
   out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
   expect_code 2 "$rc" "a sandbox that still reaches Anthropic must stop the launch"
   assert_contains "$out" "can still reach api.anthropic.com" "the refusal says why"
@@ -709,6 +739,7 @@ test_local_llm_unreachable_from_the_vm_removes_the_sandbox() {
   new_world llm-vm
   fake_local_server "$W" up
   : >"$W/vm.unreachable"
+  claim_slot t1
   out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
   expect_code 2 "$rc" "an unreachable server must stop the launch"
   assert_contains "$out" "cannot reach the local model server" "the refusal says why"
@@ -752,7 +783,7 @@ test_verify_signal_stops_the_broker_and_forces_down
 test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock
 test_local_llm_off_changes_nothing
 test_local_llm_refuses_before_any_sandbox_exists
-test_local_llm_second_close_spawn_is_refused_before_a_sandbox
+test_local_llm_without_its_spawns_claim_is_refused
 test_local_llm_reachable_anthropic_stops_the_launch
 test_local_llm_unreachable_from_the_vm_removes_the_sandbox
 

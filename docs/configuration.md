@@ -1035,12 +1035,14 @@ A launch with that model refuses, before any endpoint, clone, or task record exi
 
 - The worker is not a task worker on the claude harness with `config/worker-sandbox` set to `sbx`.
 - The server at `http://127.0.0.1:8080` does not answer `/v1/models` with that model listed (`FM_LOCAL_LLM_URL` overrides only this host-side check, for tests; the sandbox always uses port 8080).
-- Another local-model worker is running.
+- Another local-model spawn or worker holds the one local slot.
 
 The server has one slot, so one local-model worker runs at a time across the whole host.
-`bin/fm-sbx-run.sh` holds an exclusive `flock` on `$XDG_STATE_HOME/firstmate/local-llm.lock` (`FM_LOCAL_LLM_LOCK`) for the life of the sandbox, and the kernel drops it on any exit, including a crash.
-The spawn only probes that lock, so two spawns close enough together can both pass the probe and both record their task.
-The later wrapper then refuses before its sandbox exists, naming the one-at-a-time rule in its pane, and that task's record stays in flight until it is relaunched or torn down.
+The spawn claims that slot itself, with an exclusive non-blocking `flock` on `$XDG_STATE_HOME/firstmate/local-llm.lock` (`FM_LOCAL_LLM_LOCK`), before it creates anything, so of two spawns close together the second is refused and leaves no worktree, clone, or record.
+The claim names the task in the lock file and passes to a small detached holder, which keeps the lock until the task's `bin/fm-sbx-run.sh` has taken it over through the lock's `.handoff` FIFO and then ended, however it ends, including a crash.
+The wrapper never takes or waits for the lock itself: it refuses to start unless the held claim names its own task.
+A spawn that fails before its launch is live releases the claim at once.
+A launched pane that never starts its wrapper leaves the claim with the holder, a `cat` of the `.handoff` FIFO, until that process is ended.
 
 The sandbox gets this environment on top of the usual allowlist, built by `fm_local_llm_env` in `bin/fm-local-llm-lib.sh`:
 

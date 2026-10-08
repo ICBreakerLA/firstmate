@@ -76,49 +76,78 @@ test_env_maps_every_tier_and_carries_no_host_secret() {
   pass "the environment maps every tier to the local model and carries no host secret"
 }
 
-test_a_second_local_worker_is_refused() {
+# lock_free: 0 once nothing holds the lock (a released holder may take a moment
+# to exit).
+lock_free() {
+  local _
+  for _ in $(seq 1 50); do
+    flock -n "$FM_LOCAL_LLM_LOCK" true 2>/dev/null && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# end_holder: what a wrapper's exit does to a claim nobody took over.
+end_holder() {
+  exec 6<>"$FM_LOCAL_LLM_LOCK.handoff"
+  exec 6>&-
+}
+
+test_a_claim_refuses_a_second_and_names_its_task() {
   local out
-  out=$(fm_local_llm_lock_probe 2>&1) || fail "a free lock must probe clear: $out"
-  (
-    fm_local_llm_lock_acquire || exit 3
-    out=$(fm_local_llm_lock_probe 2>&1) && exit 4
-    case "$out" in *"only one local-model worker runs at a time"*) exit 0 ;; esac
-    exit 5
-  )
-  expect_code 0 "$?" "a held lock refuses a probe and a second claim names the one-at-a-time rule"
-  pass "a held lock refuses a second local worker with a clear message"
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  assert_equals "task-a" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the lock names the claiming task"
+  ! flock -n "$FM_LOCAL_LLM_LOCK" true || fail "the claim must stay held after the claiming shell let go of it"
+  out=$(fm_local_llm_claim task-b 2>&1) && fail "a second claim must refuse"
+  assert_contains "$out" "only one local-model worker runs at a time" "the refusal names the rule"
+  assert_equals "task-a" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "a refused claim leaves the first task's name"
+  end_holder
+  lock_free || fail "the claim must end once its handoff is opened and closed"
+  pass "a claim holds the slot for its task and refuses a second"
 }
 
-test_the_claim_is_released_when_the_holder_ends() {
+test_the_claiming_task_takes_over_and_its_exit_releases() {
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
   (
-    fm_local_llm_lock_acquire || exit 3
+    fm_local_llm_take_claim task-a || exit 3
+    flock -n "$FM_LOCAL_LLM_LOCK" true && exit 4
     exit 0
   )
-  fm_local_llm_lock_probe >/dev/null 2>&1 || fail "the lock must be free once the holder exited"
-  pass "the lock is free after the holder exits"
+  expect_code 0 "$?" "the claiming task takes over a held claim without taking the lock"
+  lock_free || fail "the claim must end when the taking shell exits"
+  pass "the claiming task takes over the claim and its exit releases it"
 }
 
-test_a_second_claim_fails_while_the_first_lives() {
-  local rc
-  (
-    fm_local_llm_lock_acquire || exit 3
-    (fm_local_llm_lock_acquire >/dev/null 2>&1) && exit 4
-    exit 0
-  )
-  rc=$?
-  expect_code 0 "$rc" "the second claim in another process must fail at once"
-  pass "a second claim fails while the first is held"
+test_another_task_or_no_claim_is_refused() {
+  local out
+  out=$(fm_local_llm_take_claim task-a 2>&1) && fail "no claim must refuse"
+  assert_contains "$out" "holds no local-model claim" "the refusal says why"
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  out=$(fm_local_llm_take_claim task-b 2>&1) && fail "another task's claim must refuse"
+  assert_contains "$out" "task task-b holds no local-model claim" "the refusal names the task"
+  end_holder
+  lock_free || fail "the claim must end"
+  out=$(fm_local_llm_take_claim task-a 2>&1) && fail "a released claim must not be taken over"
+  pass "a wrapper without its own held claim is refused"
+}
+
+test_killing_the_holder_releases_the_claim() {
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  kill "$FM_LOCAL_LLM_HOLDER" || fail "the holder must be a live process"
+  lock_free || fail "a killed holder must release the slot"
+  pass "the spawn releases an untaken claim by killing its holder"
 }
 
 test_a_background_job_without_the_descriptor_does_not_keep_the_claim() {
   local pidfile=$TMP_ROOT/bg.pid
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
   (
-    fm_local_llm_lock_acquire || exit 3
+    fm_local_llm_take_claim task-a || exit 3
     sleep 30 9>&- &
     echo $! >"$pidfile"
     exit 0
   )
-  fm_local_llm_lock_probe >/dev/null 2>&1 || fail "a child started with 9>&- must not hold the claim"
+  lock_free || fail "a child started with 9>&- must not hold the claim"
   kill "$(cat "$pidfile")" 2>/dev/null || true
   pass "a background job started without the descriptor does not keep the claim alive"
 }
@@ -128,9 +157,10 @@ test_health_refuses_when_the_server_is_not_answering
 test_health_refuses_a_server_without_the_model
 test_health_accepts_a_server_listing_the_model
 test_env_maps_every_tier_and_carries_no_host_secret
-test_a_second_local_worker_is_refused
-test_the_claim_is_released_when_the_holder_ends
-test_a_second_claim_fails_while_the_first_lives
+test_a_claim_refuses_a_second_and_names_its_task
+test_the_claiming_task_takes_over_and_its_exit_releases
+test_another_task_or_no_claim_is_refused
+test_killing_the_holder_releases_the_claim
 test_a_background_job_without_the_descriptor_does_not_keep_the_claim
 
 echo "# all fm-local-llm-lib tests passed"

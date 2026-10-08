@@ -157,6 +157,23 @@ SH
   export FM_LOCAL_LLM_LOCK="$CASE/llm.lock"
 }
 
+# release_slot: what the task wrapper's exit does to the spawn's claim.
+release_slot() {
+  exec 6<>"$FM_LOCAL_LLM_LOCK.handoff"
+  exec 6>&-
+}
+
+# slot_free: 0 once nothing holds the local slot (a released holder may take a
+# moment to exit).
+slot_free() {
+  local _
+  for _ in $(seq 1 50); do
+    flock -n "$FM_LOCAL_LLM_LOCK" true 2>/dev/null && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
 test_the_local_model_profile_launches_through_the_wrapper() {
   local out rc
   new_case llm 'sbx'
@@ -168,7 +185,11 @@ test_the_local_model_profile_launches_through_the_wrapper() {
   assert_grep "--model 'qwen3.8-27b-gsq-rco'" "$CASE/launch.log" "the local model is the worker's model"
   assert_no_grep "--effort" "$CASE/launch.log" "the local server fixes its own effort"
   assert_grep "sandbox=sbx" "$HOME_DIR/state/sbx-llm.meta" "the task is a sandboxed task"
-  pass "the local-model profile launches the sandboxed wrapper with the local model and no effort flag"
+  assert_equals "sbx-llm" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the claim names the spawned task"
+  ! flock -n "$FM_LOCAL_LLM_LOCK" true || fail "the claim must outlive the spawn for its wrapper to take over"
+  release_slot
+  slot_free || fail "the claim must end once its wrapper is gone"
+  pass "the local-model profile claims the slot and launches the sandboxed wrapper with the local model and no effort flag"
 }
 
 test_an_ordinary_sandboxed_spawn_is_not_the_local_profile() {
@@ -202,6 +223,41 @@ test_the_local_profile_refuses_before_any_side_effect() {
   pass "a silent server, a busy server slot, or another harness refuses before anything is created"
 }
 
+# Two spawns close together: the first holds the slot until its wrapper takes
+# it over, so the second is refused at spawn and leaves nothing behind.
+test_a_second_close_local_spawn_leaves_no_worktree_or_record() {
+  local out rc
+  new_case llm-race sbx
+  local_server up
+  out=$(spawn_task llm-a --model qwen3.8-27b-gsq-rco); rc=$?
+  expect_code 0 "$rc" "the first local spawn should succeed: $out"
+  git -C "$PROJ" worktree add --quiet -b wt-llm-b "$CASE/wt-b"
+  fm_test_spawn_brief "$HOME_DIR" llm-b
+  out=$(FM_FAKE_LAUNCH_LOG="$CASE/launch-b.log" fm_test_run_spawn "$HOME_DIR" "$CASE/wt-b" "$FAKEBIN" llm-b "$PROJ" \
+    --mode no-mistakes --yolo off --model qwen3.8-27b-gsq-rco 2>&1); rc=$?
+  expect_code 1 "$rc" "the second local spawn must refuse: $out"
+  assert_contains "$out" "only one local-model worker runs at a time" "the refusal names the rule"
+  assert_absent "$HOME_DIR/state/llm-b.meta" "the refused spawn leaves no task record"
+  assert_absent "$HOME_DIR/state/llm-b.sbx-clone" "the refused spawn leaves no clone"
+  [ ! -s "$CASE/launch-b.log" ] || fail "the refused spawn must not launch a worker: $(cat "$CASE/launch-b.log")"
+  assert_equals "llm-a" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the first task keeps the claim"
+  release_slot
+  slot_free || fail "the first claim must end once its wrapper is gone"
+  pass "a second close-together local spawn is refused at spawn and leaves no worktree, clone or record"
+}
+
+test_a_failed_local_spawn_releases_the_slot() {
+  local out rc
+  new_case llm-fail sbx
+  local_server up
+  printf 'not a clone\n' >"$HOME_DIR/state/llm-fail.sbx-clone"
+  out=$(spawn_task llm-fail --model qwen3.8-27b-gsq-rco 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || fail "a spawn whose clone cannot be made must fail: $out"
+  assert_absent "$HOME_DIR/state/llm-fail.meta" "the failed spawn leaves no task record"
+  slot_free || fail "a failed spawn must release its claim"
+  pass "a local spawn that fails before its launch releases the slot"
+}
+
 test_the_local_profile_needs_the_sandbox() {
   local out rc
   new_case llm-bare - none
@@ -223,5 +279,7 @@ test_the_local_model_profile_launches_through_the_wrapper
 test_an_ordinary_sandboxed_spawn_is_not_the_local_profile
 test_the_local_profile_refuses_before_any_side_effect
 test_the_local_profile_needs_the_sandbox
+test_a_second_close_local_spawn_leaves_no_worktree_or_record
+test_a_failed_local_spawn_releases_the_slot
 
 echo "# all fm-spawn-sandbox tests passed"

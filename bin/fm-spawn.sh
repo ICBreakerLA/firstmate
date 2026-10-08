@@ -1278,6 +1278,10 @@ parse_orca_worktree_result() {
 
 spawn_abort_cleanup() {
   local status=$?
+  if [ "$status" -ne 0 ] && [ -n "${FM_LOCAL_LLM_HOLDER:-}" ] &&
+    { [ "$SPAWN_LAUNCH_SENT" = 0 ] || [ "$SPAWN_ENDPOINT_CLOSED" = 1 ]; }; then
+    kill "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  fi
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] &&
     [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] &&
     [ -n "$SPAWN_META_TMP" ] &&
@@ -2498,8 +2502,11 @@ fi
 # Local-model profile (bin/fm-local-llm-lib.sh): selected by the model id. It
 # runs only as a sandboxed Claude worker, so the sandbox, not this launch, is
 # what keeps host credentials away from it. Every refusal below happens before
-# any endpoint, worktree, clone, or record exists.
+# any endpoint, worktree, clone, or record exists, and the one local slot is
+# claimed here for the wrapper to take over (spawn_abort_cleanup releases a
+# claim no launched wrapper will take).
 LOCAL_LLM_ACTIVE=0
+FM_LOCAL_LLM_HOLDER=
 if fm_local_llm_is_model "$MODEL"; then
   [ "$KIND" != secondmate ] || {
     echo "error: the local-model profile ($MODEL) runs only sandboxed task workers, not a persistent secondmate" >&2
@@ -2514,7 +2521,7 @@ if fm_local_llm_is_model "$MODEL"; then
     exit 1
   }
   fm_local_llm_health || exit 1
-  fm_local_llm_lock_probe || exit 1
+  fm_local_llm_claim "$ID" || exit 1
   LOCAL_LLM_ACTIVE=1
 fi
 

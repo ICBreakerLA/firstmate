@@ -10,8 +10,9 @@
 # is a local-model worker.
 # docs/configuration.md "Local-model worker profile" owns the operator-facing
 # contract; bin/fm-spawn.sh refuses a bad launch before anything is created and
-# bin/fm-sbx-run.sh applies the environment, the per-sandbox network rule and
-# the host-wide one-at-a-time lock for the life of the sandbox.
+# bin/fm-sbx-run.sh applies the environment and the per-sandbox network rules
+# and keeps the spawn's host-wide one-at-a-time claim for the life of the
+# sandbox.
 #
 # Overrides, for tests only:
 #   FM_LOCAL_LLM_URL    the address the host-side health check asks (default
@@ -67,11 +68,15 @@ fm_local_llm_health() {
   return 1
 }
 
-# fm_local_llm_lock_probe
-# 0 when no local-model worker holds the lock. It takes and releases the lock
-# at once, so it only reports; fm_local_llm_lock_acquire is the real claim.
-fm_local_llm_lock_probe() {
-  local f
+# fm_local_llm_claim <task-id>
+# The spawn's atomic claim of the one local-model slot, taken before anything
+# else exists. On success the lock file names the task and the lock is held by
+# a detached holder that waits on the lock's handoff FIFO; the claim lasts
+# until the task's wrapper has opened that FIFO (fm_local_llm_take_claim) and
+# ended, however it ends. FM_LOCAL_LLM_HOLDER is the holder's pid, which the
+# spawn kills to release a claim no wrapper will take.
+fm_local_llm_claim() {
+  local id=$1 f
   f=$(fm_local_llm_lock_file)
   command -v flock >/dev/null 2>&1 || {
     echo "error: the local-model profile needs flock to keep one local worker at a time" >&2
@@ -81,39 +86,43 @@ fm_local_llm_lock_probe() {
     echo "error: could not create the local-model lock directory for $f" >&2
     return 1
   }
-  (
-    exec 8>>"$f" || exit 2
-    flock -n 8
-  )
-  case $? in
-  0) return 0 ;;
-  1)
-    echo "error: another local-model worker is already running; the local server has one slot, so only one local-model worker runs at a time (wait for it to finish or use another profile)" >&2
-    return 1
-    ;;
-  *)
+  exec 9>>"$f" || {
     echo "error: could not open the local-model lock $f" >&2
     return 1
-    ;;
-  esac
-}
-
-# fm_local_llm_lock_acquire
-# Claim the lock on file descriptor 9 of the calling shell for as long as that
-# shell lives (the kernel drops it on any exit). Start background jobs with
-# `9>&-` so they do not inherit the claim.
-fm_local_llm_lock_acquire() {
-  local f
-  f=$(fm_local_llm_lock_file)
-  command -v flock >/dev/null 2>&1 || {
-    echo "error: the local-model profile needs flock to keep one local worker at a time" >&2
-    return 1
   }
-  mkdir -p "$(dirname "$f")" 2>/dev/null || return 1
-  exec 9>>"$f" || return 1
   flock -n 9 || {
     exec 9>&-
-    echo "error: another local-model worker is already running; the local server has one slot, so only one local-model worker runs at a time" >&2
+    echo "error: another local-model worker is already running; the local server has one slot, so only one local-model worker runs at a time (wait for it to finish or use another profile)" >&2
+    return 1
+  }
+  if ! printf '%s\n' "$id" >"$f" || ! rm -f "$f.handoff" || ! mkfifo -m 600 "$f.handoff"; then
+    exec 9>&-
+    echo "error: could not prepare the local-model claim at $f" >&2
+    return 1
+  fi
+  (
+    trap '' HUP
+    exec cat "$f.handoff"
+  ) </dev/null >/dev/null 2>&1 &
+  FM_LOCAL_LLM_HOLDER=$!
+  exec 9>&-
+}
+
+# fm_local_llm_take_claim <task-id>
+# The wrapper's side of the handoff: refuses unless the held claim names this
+# task, then opens the handoff FIFO on file descriptor 9 of the calling shell so
+# the claim lasts exactly as long as that shell (the kernel closes it on any
+# exit). It never takes or waits for the lock itself. Start background jobs
+# with `9>&-` so they do not keep the claim.
+fm_local_llm_take_claim() {
+  local id=$1 f
+  f=$(fm_local_llm_lock_file)
+  if [ ! -p "$f.handoff" ] || [ "$(head -n 1 "$f" 2>/dev/null)" != "$id" ] || flock -n "$f" true 2>/dev/null; then
+    echo "error: task $id holds no local-model claim; only the spawn that claimed the one local slot may start a local-model worker" >&2
+    return 1
+  fi
+  exec 9<>"$f.handoff" || {
+    echo "error: could not take over the local-model claim for $id" >&2
     return 1
   }
 }

@@ -1,0 +1,11 @@
+ok - only the local model id selects the profile
+ok - a server that is not answering refuses with a clear message
+ok - a server that lacks the model refuses
+ok - a server listing the model passes
+ok - the environment maps every tier to the local model and carries no host secret
+ok - a claim holds the slot for its task and refuses a second
+ok - the claiming task takes over the claim and its exit releases it
+ok - a wrapper without its own held claim is refused
+ok - the spawn releases an untaken claim by killing its holder
+ok - a background job started without the descriptor does not keep the claim alive
+# all fm-local-llm-lib tests passed

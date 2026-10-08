@@ -1,0 +1,14 @@
+ok - worker-sandbox absent leaves spawn exactly as before
+ok - worker-sandbox off launches bare claude
+ok - sbx launches through the wrapper with a clone, a channel, and a sandbox record
+ok - a scout runs sandboxed without fetch-back or the pipeline
+ok - a harness, a raw command, or an account pin refuses under sbx
+ok - a stopped daemon refuses before anything is created (a missing sbx is covered by tests/fm-sbx-lib.test.sh)
+ok - a malformed worker-sandbox refuses
+ok - the local-model profile claims the slot and launches the sandboxed wrapper with the local model and no effort flag
+ok - a non-local model neither needs the server nor gets the local flag
+ok - a silent server, a busy server slot, or another harness refuses before anything is created
+ok - the local profile refuses to run outside the sandbox
+ok - a second close-together local spawn is refused at spawn and leaves no worktree, clone or record
+ok - a local spawn that fails before its launch releases the slot
+# all fm-spawn-sandbox tests passed

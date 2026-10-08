@@ -1,0 +1,38 @@
+ok - the sandbox gets only the clone, task directories and read-only brief, and is removed on exit
+ok - only allowlisted variables reach the sandbox
+ok - the commit identity the clone carries also reaches the sandbox environment
+ok - a GitHub token is stored as a per-sandbox secret and never appears in argv or the environment
+ok - without a token or allow list the sandbox gets neither a secret nor a network rule
+ok - a symlinked token file is never read
+ok - a no-mistakes ship gets the in-VM pipeline, its network, and a final sync
+ok - origin is fetched, its default branch set and the pipeline initialised before claude starts
+ok - the host gh is installed for a no-mistakes ship and an unusable copy is dropped
+ok - a fork ship starts with the fork-only token and an origin that is the fork, without anyone swapping them
+ok - the swap applies to a ship of the Firstmate fork only and leaves the home's token for everything else
+ok - an absent, symlinked or empty fork token leaves the sandbox on the home's token with a notice
+ok - an explicit FM_SBX_GH_TOKEN is never replaced by the fork token
+ok - a no-mistakes ship gets the host's pinned ShellCheck and actionlint inside the sandbox
+ok - a host tool at another version, absent or unable to run is never installed and the lint step still fails naming it
+ok - a VM copy that differs from the host, or a host that differs from the pin, refuses before the worker starts
+ok - a failed in-VM init stops the launch and removes the sandbox
+ok - a missing host no-mistakes refuses and leaves no sandbox
+ok - an npm seed cache is mounted read-only with offline settings, and only when given
+ok - only this home's own hooks directory is mounted
+ok - the brief's status and worktree paths resolve inside the VM
+ok - malformed or unsafe arguments refuse before any sandbox is created
+ok - a stopped daemon refuses
+ok - a failed create stops the launch
+ok - TERM and HUP each remove the sandbox before the wrapper exits
+ok - a ship's commits reach the host worktree repository when the wrapper exits
+ok - --verify mounts the spool and result directory and names the spool
+ok - without --verify the run is exactly as before
+ok - a bad or missing verification setup refuses before the sandbox is created
+ok - terminating a verifying sandbox stops the broker with a forced emulator shutdown
+ok - the local profile gets its environment, a sandbox-scoped rule and the spawn's claim for the worker's life
+ok - without --local-llm nothing local is added
+ok - a down server refuses before a sandbox exists and releases the slot
+ok - a wrapper that fails its preflight releases the spawn's claim
+ok - a wrapper without its own spawn's claim is refused before a sandbox exists
+ok - a sandbox that can still reach the Anthropic API stops the launch and is removed
+ok - a VM that cannot reach the server stops the launch and removes the sandbox
+# all fm-sbx-run tests passed

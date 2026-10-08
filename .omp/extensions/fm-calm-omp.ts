@@ -37,9 +37,6 @@ type OmpApi = {
 };
 
 export type NativeVisibility = { apply: (active: boolean) => void };
-export type CalmDependencies = {
-  loadNativeVisibility?: (pi: OmpApi) => Promise<NativeVisibility>;
-};
 
 // The two native omp settings Calm drives, by registry id.
 const NATIVE_SETTING_IDS = ["display.hideToolActivity", "hideThinkingBlock"] as const;
@@ -69,13 +66,12 @@ async function loadNativeVisibility(pi: OmpApi): Promise<NativeVisibility> {
   };
 }
 
-export function createFirstmateCalm(pi: OmpApi, dependencies: CalmDependencies = {}): void {
+export default function (pi: OmpApi): void {
   const extensionDir = dirname(fileURLToPath(import.meta.url));
   const root = resolve(extensionDir, "../..");
   const fmHome = process.env.FM_HOME || process.env.FM_ROOT_OVERRIDE || root;
   const configDirectory = process.env.FM_CONFIG_OVERRIDE || resolve(fmHome, "config");
   const preferencePath = resolve(configDirectory, "calm");
-  const loadVisibility = dependencies.loadNativeVisibility ?? loadNativeVisibility;
 
   let active = false;
   let visibility: Promise<NativeVisibility> | undefined;
@@ -104,7 +100,7 @@ export function createFirstmateCalm(pi: OmpApi, dependencies: CalmDependencies =
 
   const applyNativeVisibility = async (ctx: CalmContext): Promise<void> => {
     try {
-      visibility ??= loadVisibility(pi);
+      visibility ??= loadNativeVisibility(pi);
       (await visibility).apply(active);
     } catch (error) {
       visibility = undefined;
@@ -151,8 +147,4 @@ export function createFirstmateCalm(pi: OmpApi, dependencies: CalmDependencies =
       applyWorkingMessage(ctx);
     },
   });
-}
-
-export default function (pi: OmpApi) {
-  createFirstmateCalm(pi);
 }

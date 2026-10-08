@@ -13,9 +13,10 @@
 # bin/fm-sbx-run.sh applies the environment, the per-sandbox network rule and
 # the host-wide one-at-a-time lock for the life of the sandbox.
 #
-# Overrides, for tests and for a server on another port:
-#   FM_LOCAL_LLM_URL    the server as the host reaches it (default
-#                       http://127.0.0.1:8080)
+# Overrides, for tests only:
+#   FM_LOCAL_LLM_URL    the address the host-side health check asks (default
+#                       http://127.0.0.1:8080); the sandbox's base URL and
+#                       network rule stay on port 8080
 #   FM_LOCAL_LLM_LOCK   the host-wide lock file
 # This tree never changes the global sbx policy, never starts or stops the
 # server (that is `local-llm up|down|status`), and never passes a host secret.
@@ -25,6 +26,9 @@ FM_LOCAL_LLM_MODEL=qwen3.8-27b-gsq-rco
 # the sbx proxy names the same resource localhost:<port> in its policy.
 FM_LOCAL_LLM_VM_URL=http://host.docker.internal:8080
 FM_LOCAL_LLM_POLICY_HOST=localhost:8080
+# The Anthropic API stays closed to a local-model sandbox, so the sbx proxy can
+# never attach the captain's sign-in to a request from it.
+FM_LOCAL_LLM_ANTHROPIC_HOST=api.anthropic.com
 # The server context is 96,256 tokens; compacting at 88,000 leaves room for a
 # reply and the compaction call itself.
 FM_LOCAL_LLM_COMPACT_WINDOW=88000
@@ -65,7 +69,9 @@ fm_local_llm_health() {
 
 # fm_local_llm_lock_probe
 # 0 when no local-model worker holds the lock. It takes and releases the lock
-# at once, so it only reports; fm_local_llm_lock_acquire is the real claim.
+# at once, so it only reports; fm_local_llm_lock_acquire is the real claim, and
+# a launch that passed this probe alongside another waits there rather than
+# failing.
 fm_local_llm_lock_probe() {
   local f
   f=$(fm_local_llm_lock_file)
@@ -96,8 +102,9 @@ fm_local_llm_lock_probe() {
 
 # fm_local_llm_lock_acquire
 # Claim the lock on file descriptor 9 of the calling shell for as long as that
-# shell lives (the kernel drops it on any exit). Start background jobs with
-# `9>&-` so they do not inherit the claim.
+# shell lives (the kernel drops it on any exit), waiting first for any other
+# local-model worker to end. Start background jobs with `9>&-` so they do not
+# inherit the claim.
 fm_local_llm_lock_acquire() {
   local f
   f=$(fm_local_llm_lock_file)
@@ -107,9 +114,11 @@ fm_local_llm_lock_acquire() {
   }
   mkdir -p "$(dirname "$f")" 2>/dev/null || return 1
   exec 9>>"$f" || return 1
-  flock -n 9 || {
+  flock -n 9 && return 0
+  echo "notice: another local-model worker is running; the local server has one slot, so this worker waits for it to finish before its sandbox is created" >&2
+  flock 9 || {
     exec 9>&-
-    echo "error: another local-model worker is already running; the local server has one slot, so only one local-model worker runs at a time" >&2
+    echo "error: could not claim the local-model lock $f" >&2
     return 1
   }
 }

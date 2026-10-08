@@ -50,6 +50,7 @@ secret)
   if [ "\$6" = --command ]; then sh -c "\$7" >"$W/secret.stdin"; else cat >"$W/secret.stdin"; fi ;;
 exec)
   case "\$*" in
+  *"api.anthropic.com"*) [ -f "$W/vm.anthropic" ] || exit 22 ;;
   *"host.docker.internal"*) [ ! -f "$W/vm.unreachable" ] || exit 7 ;;
   *"no-mistakes --version"*) cat "$W/vm.nmver" 2>/dev/null; exit 0 ;;
   *"no-mistakes init"*) [ ! -f "$W/init.fail" ] || exit 1 ;;
@@ -634,6 +635,13 @@ test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock() {
   assert_contains "$create" "-e CLAUDE_CODE_AUTO_COMPACT_WINDOW=88000" "auto-compact is set for this sandbox only"
   assert_contains "$(log)" "policy allow network --sandbox $NAME localhost:8080" "the server port is allowed for this sandbox only"
   assert_not_contains "$(log)" "policy allow network localhost" "no global policy change"
+  assert_contains "$(log)" "secret rm anthropic --sandbox $NAME -f" "the sandbox's inherited Claude sign-in is removed for this sandbox only"
+  assert_not_contains "$(log)" "secret set anthropic" "no Anthropic secret is stored in its place"
+  assert_contains "$(log)" "policy deny network --sandbox $NAME api.anthropic.com" "the Anthropic API is denied for this sandbox only"
+  assert_not_contains "$(log)" "policy deny network api.anthropic.com" "no global deny"
+  assert_contains "$(log)" "exec $NAME curl -fsS --max-time 10 https://api.anthropic.com/v1/models" "the sandbox's lack of Anthropic access is checked"
+  [ "$(grep -n 'secret rm anthropic' "$LOG" | cut -d: -f1)" -lt "$(grep -n '^run ' "$LOG" | head -1 | cut -d: -f1)" ] ||
+    fail "the sign-in must be gone before the worker starts"
   assert_contains "$(log)" "exec $NAME curl" "the sandbox's reach of the server is checked before the worker starts"
   assert_contains "$(log)" "LOCK-HELD-AT-RUN" "the one-local-worker lock is held while the worker runs"
   [ "$(grep -n 'policy allow' "$LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n '^run ' "$LOG" | head -1 | cut -d: -f1)" ] ||
@@ -661,15 +669,45 @@ test_local_llm_refuses_before_any_sandbox_exists() {
   expect_code 1 "$rc" "a silent server must refuse"
   assert_contains "$out" "local model server is not answering" "the refusal says why"
   assert_not_contains "$(log)" "create " "no sandbox is created"
+  pass "a down server refuses before a sandbox exists"
+}
+
+# Two spawns close enough together both pass the spawn's probe; the later
+# wrapper must wait for the first worker rather than die with a dead pane.
+test_local_llm_second_close_spawn_waits_for_the_first() {
+  local wpid rc
+  new_world llm-race
   fake_local_server "$W" up
   exec 7>"$W/llm.lock"
   flock -n 7 || fail "test could not take the lock"
-  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  (FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude >"$W/wait.out" 2>&1) 7>&- &
+  wpid=$!
+  for _ in $(seq 1 100); do
+    grep -q "waits for it to finish" "$W/wait.out" 2>/dev/null && break
+    sleep 0.1
+  done
+  assert_contains "$(cat "$W/wait.out")" "waits for it to finish" "the waiting wrapper says why"
+  kill -0 "$wpid" 2>/dev/null || fail "the second wrapper must still be waiting, not refused: $(cat "$W/wait.out")"
+  assert_not_contains "$(log)" "create " "no sandbox is created while the first worker runs"
   exec 7>&-
-  expect_code 1 "$rc" "a second local worker must refuse"
-  assert_contains "$out" "only one local-model worker runs at a time" "the refusal names the rule"
-  assert_not_contains "$(log)" "create " "no sandbox is created"
-  pass "a down server or a running local worker refuses before a sandbox exists"
+  wait "$wpid"; rc=$?
+  expect_code 0 "$rc" "the second worker runs once the first ends: $(cat "$W/wait.out")"
+  assert_contains "$(log)" "create --name $NAME" "the sandbox is created after the first worker ended"
+  assert_contains "$(log)" "LOCK-HELD-AT-RUN" "the second worker holds the lock while it runs"
+  pass "a second close-together local spawn waits for the first worker and then runs"
+}
+
+test_local_llm_reachable_anthropic_stops_the_launch() {
+  local out rc
+  new_world llm-anthropic
+  fake_local_server "$W" up
+  : >"$W/vm.anthropic"
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "a sandbox that still reaches Anthropic must stop the launch"
+  assert_contains "$out" "can still reach api.anthropic.com" "the refusal says why"
+  ! grep -q '^run ' "$LOG" || fail "no worker may be started"
+  [ ! -s "$LIVE" ] || fail "no sandbox may remain: $(cat "$LIVE")"
+  pass "a sandbox that can still reach the Anthropic API stops the launch and is removed"
 }
 
 test_local_llm_unreachable_from_the_vm_removes_the_sandbox() {
@@ -720,6 +758,8 @@ test_verify_signal_stops_the_broker_and_forces_down
 test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock
 test_local_llm_off_changes_nothing
 test_local_llm_refuses_before_any_sandbox_exists
+test_local_llm_second_close_spawn_waits_for_the_first
+test_local_llm_reachable_anthropic_stops_the_launch
 test_local_llm_unreachable_from_the_vm_removes_the_sandbox
 
 echo "# all fm-sbx-run tests passed"

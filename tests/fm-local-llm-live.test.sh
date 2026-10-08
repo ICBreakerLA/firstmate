@@ -11,6 +11,8 @@
 #     allow reaches the host server through host.docker.internal;
 #   - Claude Code in that sandbox completes one small tool-using turn against
 #     the local model, with no Claude login and no host secret in the sandbox;
+#   - with its inherited anthropic secret removed and its own deny rule, the
+#     sandbox cannot get an answer from api.anthropic.com;
 #   - the global sbx policy is unchanged and the sandbox is removed afterwards.
 set -u
 
@@ -49,6 +51,17 @@ test_the_sandbox_reaches_the_server_only_through_its_own_rule() {
   pass "the sandbox reaches the host server only after its own rule"
 }
 
+test_the_sandbox_gets_no_answer_from_anthropic() {
+  sbx secret rm anthropic --sandbox "$NAME" -f </dev/null >/dev/null 2>&1 || true
+  sbx policy deny network --sandbox "$NAME" "$FM_LOCAL_LLM_ANTHROPIC_HOST" >/dev/null 2>&1 ||
+    fail "the sandbox-scoped deny was not accepted"
+  ! sbx exec "$NAME" curl -fsS --max-time 10 "https://$FM_LOCAL_LLM_ANTHROPIC_HOST/v1/models" >/dev/null 2>&1 ||
+    fail "the sandbox must not get an answer from the Anthropic API"
+  sbx exec "$NAME" curl -fsS --max-time 10 "$FM_LOCAL_LLM_VM_URL/v1/models" >/dev/null 2>&1 ||
+    fail "the deny must leave the local server reachable"
+  pass "the sandbox gets no answer from the Anthropic API and still reaches the local server"
+}
+
 test_claude_completes_a_tool_turn_on_the_local_model() {
   local out
   out=$(cd "$WORK" && sbx exec -w "$WORK" "${env_args[@]}" "$NAME" claude -p \
@@ -74,6 +87,7 @@ test_nothing_is_left_behind() {
 }
 
 test_the_sandbox_reaches_the_server_only_through_its_own_rule
+test_the_sandbox_gets_no_answer_from_anthropic
 test_claude_completes_a_tool_turn_on_the_local_model
 test_no_host_login_or_secret_is_in_the_sandbox
 test_nothing_is_left_behind

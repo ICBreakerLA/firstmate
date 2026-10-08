@@ -1033,12 +1033,13 @@ The profile runs only inside the worker sandbox, so the sandbox is what keeps th
 A launch with that model refuses, before any endpoint, clone, or task record exists, when any of these holds:
 
 - The worker is not a task worker on the claude harness with `config/worker-sandbox` set to `sbx`.
-- The server at `http://127.0.0.1:8080` (`FM_LOCAL_LLM_URL`) does not answer `/v1/models` with that model listed.
+- The server at `http://127.0.0.1:8080` does not answer `/v1/models` with that model listed (`FM_LOCAL_LLM_URL` overrides only this host-side check, for tests; the sandbox always uses port 8080).
 - Another local-model worker is running.
 
 The server has one slot, so one local-model worker runs at a time across the whole host.
 `bin/fm-sbx-run.sh` holds an exclusive `flock` on `$XDG_STATE_HOME/firstmate/local-llm.lock` (`FM_LOCAL_LLM_LOCK`) for the life of the sandbox, and the kernel drops it on any exit, including a crash.
-The spawn only probes that lock, so the wrapper's own claim is the one that counts.
+The spawn only probes that lock, so two spawns close enough together can both pass the probe and both record their task.
+The later wrapper then waits for the lock with a notice in its pane, and creates its sandbox only once the first local-model worker ends, so neither task is left with a dead pane.
 
 The sandbox gets this environment on top of the usual allowlist, built by `fm_local_llm_env` in `bin/fm-local-llm-lib.sh`:
 
@@ -1053,7 +1054,11 @@ The sandbox gets this environment on top of the usual allowlist, built by `fm_lo
 
 No `--effort` is passed, because the server fixes its own reasoning effort.
 The sandbox's own network rule is `sbx policy allow network --sandbox <name> localhost:8080`, the name the `sbx` proxy uses for the host's port 8080; it is removed with the sandbox and never touches the global policy.
-Before the worker starts, the wrapper checks from inside the VM that `/v1/models` answers through that rule, and stops the launch and removes the sandbox when it does not.
+
+The sandbox no longer carries the captain's Claude sign-in.
+Like the fork ship's `github` secret, the sandbox's inherited `anthropic` secret is removed for this sandbox alone with `sbx secret rm anthropic --sandbox <name>`, and `sbx policy deny network --sandbox <name> api.anthropic.com` closes the Anthropic API to it.
+The global secret store, the global policy, and the sign-in itself are never touched, and no secret is stored in their place.
+Before the worker starts, the wrapper checks from inside the VM that `/v1/models` answers through the allow rule and that `https://api.anthropic.com/v1/models` does not answer, and stops the launch and removes the sandbox when either check fails.
 
 Processed-start-prompt reuse through `llama-server --slot-save-path` is not implemented.
 Slot save and restore are separate `/slots/<id>?action=save|restore` routes of the server, not part of the Messages API that Claude Code speaks, and `--slot-save-path` is a start flag of the host's server script, which this profile does not edit or restart.

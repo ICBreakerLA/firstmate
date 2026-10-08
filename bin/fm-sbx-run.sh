@@ -45,10 +45,13 @@
 #                   worker talks to the host's llama-server instead of the
 #                   Anthropic API.
 #                   The host-wide one-local-worker lock is held for the life of
-#                   this script, the sandbox gets the local-model environment
-#                   (a placeholder token, never a host credential) and one
-#                   sandbox-scoped network rule for the server's port, and the
-#                   launch stops if the VM cannot reach the server.
+#                   this script (waiting first for any other local worker), the
+#                   sandbox gets the local-model environment (a placeholder
+#                   token, never a host credential), loses its inherited
+#                   anthropic secret, gets a sandbox-scoped deny for
+#                   api.anthropic.com and one sandbox-scoped allow for the
+#                   server's port, and the launch stops if the VM cannot reach
+#                   the server or can reach the Anthropic API.
 #   CLAUDE_ARGS     the claude command line, exactly as the launch built it.
 #
 # What this script does, in order: remove any sandbox of the same name, create
@@ -149,8 +152,8 @@ fm_sbx_preflight || exit 1
 # The claim outlives everything below; the kernel drops it when this script
 # ends, however it ends, and the relay and broker are started without it.
 if [ "$LOCAL_LLM" = 1 ]; then
-  fm_local_llm_health || exit 1
   fm_local_llm_lock_acquire || exit 1
+  fm_local_llm_health || exit 1
 fi
 
 CHANNEL=$(fm_sbx_channel_dir "$STATE" "$ID")
@@ -362,10 +365,15 @@ if [ -n "$ALLOW" ]; then
     die "could not add the per-sandbox network rules ($ALLOW) for $NAME"
 fi
 if [ "$LOCAL_LLM" = 1 ]; then
+  sbx secret rm anthropic --sandbox "$NAME" -f </dev/null >/dev/null 2>&1 || true
+  sbx policy deny network --sandbox "$NAME" "$FM_LOCAL_LLM_ANTHROPIC_HOST" >/dev/null 2>&1 ||
+    die "could not add the per-sandbox deny rule ($FM_LOCAL_LLM_ANTHROPIC_HOST) for $NAME"
   sbx policy allow network --sandbox "$NAME" "$FM_LOCAL_LLM_POLICY_HOST" >/dev/null 2>&1 ||
     die "could not add the per-sandbox network rule ($FM_LOCAL_LLM_POLICY_HOST) for $NAME"
   sbx exec "$NAME" curl -fsS --max-time 10 "$FM_LOCAL_LLM_VM_URL/v1/models" >/dev/null 2>&1 ||
     die "$NAME cannot reach the local model server at $FM_LOCAL_LLM_VM_URL; no worker was started"
+  ! sbx exec "$NAME" curl -fsS --max-time 10 "https://$FM_LOCAL_LLM_ANTHROPIC_HOST/v1/models" >/dev/null 2>&1 ||
+    die "$NAME can still reach $FM_LOCAL_LLM_ANTHROPIC_HOST with a credential; no worker was started"
 fi
 
 # A sandboxed validation ship needs its clone prepared for the in-VM pipeline

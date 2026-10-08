@@ -41,7 +41,7 @@ new_world() {
 #!/usr/bin/env bash
 printf '%s\\n' "\$*" >>"$LOG"
 case "\$1" in
-daemon) echo "Status: running" ;;
+daemon) [ ! -f "$W/daemon.down" ] || { echo "Status: stopped"; exit 1; }; echo "Status: running" ;;
 ls) cat "$LIVE" ;;
 create) printf '%s\\n' "\$3" >>"$LIVE" ;;
 rm) grep -Fxv -- "\$3" "$LIVE" >"$LIVE.new"; mv "$LIVE.new" "$LIVE" ;;
@@ -702,6 +702,19 @@ test_local_llm_refuses_before_any_sandbox_exists() {
   pass "a down server refuses before a sandbox exists and releases the slot"
 }
 
+test_local_llm_failed_preflight_releases_the_slot() {
+  local out rc
+  new_world llm-preflight
+  fake_local_server "$W" up
+  : >"$W/daemon.down"
+  claim_slot t1
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || fail "a stopped daemon must stop the wrapper: $out"
+  assert_not_contains "$(log)" "create " "no sandbox is created"
+  slot_free || fail "a wrapper that fails its preflight must release the slot"
+  pass "a wrapper that fails its preflight releases the spawn's claim"
+}
+
 test_local_llm_without_its_spawns_claim_is_refused() {
   local out rc
   new_world llm-noclaim
@@ -783,6 +796,7 @@ test_verify_signal_stops_the_broker_and_forces_down
 test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock
 test_local_llm_off_changes_nothing
 test_local_llm_refuses_before_any_sandbox_exists
+test_local_llm_failed_preflight_releases_the_slot
 test_local_llm_without_its_spawns_claim_is_refused
 test_local_llm_reachable_anthropic_stops_the_launch
 test_local_llm_unreachable_from_the_vm_removes_the_sandbox

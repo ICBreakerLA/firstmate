@@ -131,6 +131,9 @@ while [ "$#" -gt 0 ]; do
   *) die "unknown argument '$1' (see the script header)" ;;
   esac
 done
+# The spawn's claim outlives everything below; the kernel drops it when this
+# script ends, however it ends, and the relay and broker are started without it.
+[ "$LOCAL_LLM" = 0 ] || fm_local_llm_take_claim "$ID" || exit 1
 for v in ID CONFIG STATE DATA ROOT WT CLONE NAME; do
   [ -n "${!v}" ] || die "--$(printf '%s' "$v" | tr 'A-Z_' 'a-z-') is required"
 done
@@ -148,12 +151,7 @@ done
 [ -d "$CLONE/.git" ] || die "no standalone clone at $CLONE (bin/fm-spawn.sh creates it with fm-sbx-bridge.sh clone)"
 fm_sbx_preflight || exit 1
 [ -z "$VERIFY" ] || "$BROKER" check --config "$CONFIG" --state "$STATE" || exit 1
-# The spawn's claim outlives everything below; the kernel drops it when this
-# script ends, however it ends, and the relay and broker are started without it.
-if [ "$LOCAL_LLM" = 1 ]; then
-  fm_local_llm_take_claim "$ID" || exit 1
-  fm_local_llm_health || exit 1
-fi
+[ "$LOCAL_LLM" = 0 ] || fm_local_llm_health || exit 1
 
 CHANNEL=$(fm_sbx_channel_dir "$STATE" "$ID")
 RELAY=$(fm_sbx_relay_dir "$STATE" "$ID")

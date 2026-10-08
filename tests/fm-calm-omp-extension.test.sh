@@ -42,6 +42,7 @@ run_node() {  # <repo> <config-dir> ; script on stdin
     node --input-type=module 2>&1
 }
 
+# shellcheck disable=SC2016  # literal JS module text; nothing should expand
 PRELUDE='
 import { pathToFileURL } from "node:url";
 import { readFileSync, existsSync } from "node:fs";

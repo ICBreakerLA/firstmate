@@ -133,9 +133,9 @@ While tasks are in flight, dispatch shared-repo edits to a crewmate.
 
 ## Calm preference (config/calm)
 
-The Pi Calm extension and the Claude Code Calm mod share the local, gitignored `config/calm` preference under the effective Firstmate home.
-One `/calm` choice therefore applies on either harness.
-Both resolve the home in this order: `FM_HOME`, `FM_ROOT_OVERRIDE`, then the tracked code root derived from their own path under it.
+The Pi Calm extension, the Claude Code Calm mod, and the partial omp Calm extension share the local, gitignored `config/calm` preference under the effective Firstmate home.
+One `/calm` choice therefore applies on every supported harness.
+All of them resolve the home in this order: `FM_HOME`, `FM_ROOT_OVERRIDE`, then the tracked code root derived from their own path under it.
 When `FM_CONFIG_OVERRIDE` is present for tests or specialized setup, it selects the config directory directly.
 
 ### Values and default
@@ -155,7 +155,7 @@ A home upgraded from `max` keeps Calm on rather than dropping to off.
 
 Each `/calm` command saves the new choice before changing live presentation.
 A failed write leaves the current choice unchanged and is not reported as a saved preference.
-Pi replaces the file atomically; the Claude Code mod uses the plugin API's plain file write.
+Pi and omp replace the file atomically; the Claude Code mod uses the plugin API's plain file write.
 The Pi extension reloads this preference on every Pi `session_start`, including startup, new, resume, fork, and reload reasons.
 
 The Claude Code mod reloads it on every `session.start`, including same-process session replacement.

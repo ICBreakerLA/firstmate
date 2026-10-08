@@ -2475,6 +2475,32 @@ A throwaway scout was spawned through `bin/fm-spawn.sh --scout --harness omp --m
 
 `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes the primary evidence; the worker path above is refreshed by repeating the scout dispatch after any omp upgrade.
 
+### Partial Calm on omp (source-derived, not live-verified)
+
+This record covers omp 18.8.4 and was derived by reading the omp 18.8.4 source tree (tag `v18.8.4`).
+Nothing here was observed against a running omp, because the authoring sandbox could not install one.
+All paths below are relative to `packages/coding-agent/src/` in that tree unless they begin with `packages/` or `.omp/`.
+[`calm.md`](../calm.md#oh-my-pi-omp) owns what the extension does; this section records the three questions that decided its mechanism.
+
+| Probe | Answer from source |
+| --- | --- |
+| 1. What height does an empty tool renderer take? | Zero rows: the TUI `Box` skips a child that renders no content rows (`packages/tui/src/components/box.ts:236`). That does not hide read rows, because file reads collapse into a `ReadToolGroupComponent` whatever renderer a tool has (`modes/controllers/event-controller.ts:1490-1511`). Re-registering the built-in tools to swap their renderers would also replace the schemas the model sees. The extension therefore overrides omp's own display settings instead. |
+| 2. How does wake or steer text reach the session? | As a plain user message: the watch extension calls `pi.sendUserMessage(content, { deliverAs: "followUp" })` (`.omp/extensions/fm-primary-omp-watch.ts:575`, rationale at line 299). omp renders it as an ordinary user row, so hiding it would need a user-row hook the partial port does not attempt. |
+| 3. Can `setWorkingMessage` be called repeatedly? | Yes: it updates the live loader, or stores a pending message that the next loader applies (`modes/interactive-mode.ts:7401-7421`). omp overwrites it with tool-intent text on tool events (`modes/controllers/event-controller.ts:731-736`), so the extension reapplies it on `agent_start`, `turn_start`, and `tool_execution_start` and `tool_execution_end`. omp's working row has no spinner and leads with the interrupt key (`modes/interactive-mode.ts:7360-7373`), and its shimmer colouring cannot be turned off by an extension. |
+
+The native settings the extension drives are `display.hideToolActivity` and `hideThinkingBlock`.
+Interactive mode reads them at startup (`modes/interactive-mode.ts:1901-1903`) and applies a change live (`modes/interactive-mode.ts:3457-3492`).
+A hidden tool activity renders nothing for both tool executions and read groups (`packages/tui/src/chat/tool-execution.ts:1265`, `packages/tui/src/chat/read-tool-group.ts:382`).
+Hidden thinking skips settled blocks but still shows a collapsed head while a block streams (`packages/tui/src/chat/assistant-message.ts:890`).
+The extension sets a runtime-only override, so the user's omp configuration file is never written, and clearing the override restores it.
+
+Open question, for the live check: the extension reaches the setting handles through a deep import of `@oh-my-pi/pi-coding-agent/config/registry`.
+Source cannot prove that this import resolves inside the compiled omp binary.
+If it does not, the extension reports one warning, leaves the rows visible, and keeps the `/calm` preference and the working text.
+
+`tests/fm-calm-omp-extension.test.sh` pins the extension over a fake omp API with a stand-in settings registry.
+`FM_OMP_CALM_LIVE=1 tests/fm-calm-omp-live-e2e.test.sh` is the live guard that answers the open question against an installed omp without spending model tokens.
+
 ## Busy inbox escalation
 
 Verified at `2026-10-03T19:20:07Z` on commit `23b0232908a5adc7fbf7339ef48c34a091a7a799` with Claude Code `2.1.288 (Claude Code)` on Herdr `0.9.1`, protocol `22`, in a named isolated lab session through `bin/fm-herdr-lab.sh`.

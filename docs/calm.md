@@ -1,7 +1,7 @@
 # Calm mode
 
 Calm is Firstmate's conversation-only transcript presentation toggle.
-This page is for operators who turn Calm on and need to know what it hides and keeps visible on Pi and on Claude Code, and which file owns each part of that behavior.
+This page is for operators who turn Calm on and need to know what it hides and keeps visible on Pi, on Claude Code, and on Oh My Pi (omp), and which file owns each part of that behavior.
 
 ## Harness support and default
 
@@ -9,10 +9,11 @@ This page is for operators who turn Calm on and need to know what it hides and k
 | --- | --- |
 | Pi | Fully supported. |
 | Claude Code | Available behind that harness's default-off early-access function-hooks flag, as the [Claude Code](#claude-code) section below describes. |
+| Oh My Pi (omp) | Partially supported: tool rows, thinking blocks, and the working text, as the [Oh My Pi](#oh-my-pi-omp) section below describes. |
 
 Calm is off by default.
-The last `/calm` choice persists for the effective Firstmate home across session starts and resumes on either harness.
-Both harnesses keep that choice in the one shared preference file that [`configuration.md`](configuration.md#calm-preference-configcalm) owns.
+The last `/calm` choice persists for the effective Firstmate home across session starts and resumes on every supported harness.
+All of them keep that choice in the one shared preference file that [`configuration.md`](configuration.md#calm-preference-configcalm) owns.
 
 ## Shared preservation rule for assistant text
 
@@ -170,6 +171,74 @@ tests/fm-pi-primary-types.test.sh
 tests/fm-calm-pi-queue-retention-live-e2e.test.sh
 FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh
 ```
+
+## Oh My Pi (omp)
+
+### The partial port
+
+Calm on omp is a partial port: the extension `.omp/extensions/fm-calm-omp.ts` covers the behaviors below and deliberately leaves the rest.
+The primary omp session loads it by auto-discovery, and it registers `/calm`.
+The mechanism is not Pi's.
+omp already has display settings for tool rows and thinking blocks, so the extension sets a runtime-only override of them instead of replacing any tool renderer.
+The override is never written to the captain's omp configuration, and turning Calm off clears it so their own configuration applies again.
+Evidence for the mechanism is in the [omp record](verification/runtime-backends.md#partial-calm-on-omp-source-derived-not-live-verified), which is derived from the omp 18.8.4 source and not yet live-verified.
+
+### Toggling Calm on omp
+
+`/calm` flips Calm on and off and saves the choice to the shared `config/calm` preference before changing the live display.
+A preference that cannot be written leaves the current choice unchanged, and a notice says so.
+The extension reloads the preference on every omp `session_start`.
+It reads the same values and resolves the home the same way as Pi and Claude Code.
+
+### What Calm hides on omp
+
+Calm hides these rows:
+
+- Every tool row, including omp's built-in tools, Firstmate's `fm_*` tools, and the grouped read rows.
+- Thinking blocks once they settle.
+
+Calm also replaces the stock working text with the plain line `Working…`.
+omp's working row carries no spinner of its own, so no animation remains to hide.
+
+### What stays visible on omp
+
+These rows remain visible:
+
+- Assistant text of every length, including short mid-turn notes.
+- User rows, including the rows that Firstmate wake text produces.
+- Notices, user-bash rows, and skill and summary rows.
+
+### Known gaps on omp
+
+The captain chose a partial port, so these are not failures:
+
+- There is no animated boat.
+- Short mid-turn assistant notes are not hidden.
+- The plain user-message rows that wake text produces are not hidden, because omp delivers wake text as an ordinary follow-up user message.
+
+These gaps follow from how the port works:
+
+- Calm hides all tool rows, not only built-in and Firstmate ones, so MCP and other extension tools are hidden too.
+- While Calm is on, omp's own tool-visibility and thinking toggles have no effect, because the override takes precedence.
+- A collapsed thinking head still shows while a thinking block streams, then disappears when the block settles.
+- The working text keeps omp's shimmer colouring, which an extension cannot turn off.
+- omp replaces the working text with tool-intent text between events, so the plain line is reapplied on each turn and tool event and can flicker briefly.
+- The extension reaches omp's settings through a deep import that source reading cannot prove for the compiled omp binary.
+  If the import fails, Calm shows one warning, leaves tool rows and thinking visible, and still saves the preference and sets the working text.
+
+Toggling Calm only changes presentation.
+Hidden rows remain in the message, model context, session storage, and exports.
+
+### omp regression entry points
+
+```sh
+tests/fm-calm-omp-extension.test.sh
+FM_OMP_CALM_LIVE=1 tests/fm-calm-omp-live-e2e.test.sh
+```
+
+The portable suite drives the extension over a fake omp API with a stand-in settings registry.
+The live guard needs an installed omp and spends no model tokens: it checks that omp loads the extension, that the warning above does not appear, and that `/calm` toggles `config/calm`.
+Seeing the rows and thinking blocks actually disappear is a visual check: start omp in a scratch directory with the extension and a `config/calm` of `on`, send a prompt that uses tools, and confirm the transcript shows only assistant text and `Working…`.
 
 ## Claude Code
 

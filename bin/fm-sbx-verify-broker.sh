@@ -18,7 +18,7 @@
 #                                 [--once] [--interval SECS]
 #   fm-sbx-verify-broker.sh stop  --id ID --state DIR --config DIR [--wait SECS]
 #
-#   check   verify jq, python3, flock and a loadable config/sbx-verify; prints
+#   check   verify jq, python3, flock (and ssh when an iOS host is set) and a loadable config/sbx-verify; prints
 #           nothing and exits 0 when the broker can run (fm-sbx-run.sh calls it
 #           before it creates the sandbox).
 #   init    create state/<id>.sbx-verify/{req,res,host}: `req` is the one
@@ -45,6 +45,9 @@
 # The lease is a flock on <lease-dir>/lease.lock shared by every home that uses
 # the emulator, with an idle TTL; a second holder gets a `queued` reply and its
 # request is not run.
+# A request with "platform":"ios" (config/sbx-verify `ios-host`) runs the same
+# verbs on the Mac over ssh instead, under its own lease (lease-ios.lock) so an
+# iOS run never waits for the Android emulator or the other way round.
 #
 # Environment (tests): FM_SBX_VERIFY_SANDBOX_POLL seconds between sandbox
 # liveness checks (default 5); FM_SBX_VERIFY_TIMEOUT overrides every
@@ -73,7 +76,11 @@ MAX_PER_PASS=200
 ID='' STATE='' CONFIG='' SANDBOX='' ONCE=0 INTERVAL=1 WAIT=60
 HOLDING=0 LEASE_LAST=0 LEASE_UP=0 STOP=0 FINISHED=0
 SERVER_PID='' BUNDLE_URL='' BUNDLE_SHA=''
-REQ_ID='' REQ_VERB=''
+REQ_ID='' REQ_VERB='' REQ_PLAT=android
+# The lease variables above and below describe the selected platform; lease_select swaps them.
+P=0 PLAT=android LFD=9 STATE_FILE='' QUEUE_DIR='' PLATS=(0) AUDIT_PLAT=()
+SAVED_HOLDING=(0 0) SAVED_LAST=(0 0) SAVED_UP=(0 0)
+SMV_PLAN='' EVIDENCE_PRESKIP=0 IOS_RC=0
 
 die() {
   echo "error: $*" >&2
@@ -94,28 +101,51 @@ audit() { # <kind> [key value]...
 
 # ---------------------------------------------------------------- lease ----
 
+# lease_select <0|1>: make the android (0) or ios (1) lease the one the lease
+# functions work on. Android keeps its original files and descriptor; iOS has
+# its own lock, state and queue, so the two emulators never block each other.
+lease_select() {
+  SAVED_HOLDING[P]=$HOLDING SAVED_LAST[P]=$LEASE_LAST SAVED_UP[P]=$LEASE_UP
+  P=$1
+  HOLDING=${SAVED_HOLDING[P]} LEASE_LAST=${SAVED_LAST[P]} LEASE_UP=${SAVED_UP[P]}
+  if [ "$P" = 1 ]; then
+    PLAT=ios LFD=7 STATE_FILE="$LEASE_DIR/state-ios" QUEUE_DIR="$LEASE_DIR/queue-ios" AUDIT_PLAT=(platform ios)
+  else
+    PLAT=android LFD=9 STATE_FILE="$LEASE_DIR/state" QUEUE_DIR="$LEASE_DIR/queue" AUDIT_PLAT=()
+  fi
+}
+
+# lease_open: open the selected platform's lock file on its descriptor.
+lease_open() {
+  if [ "$P" = 1 ]; then
+    exec 7>"$LEASE_DIR/lease-ios.lock"
+  else
+    exec 9>"$LEASE_DIR/lease.lock"
+  fi
+}
+
 state_read() {
   local k v
   LS_OWNER='' LS_LAST=0 LS_UP=0
-  [ -f "$LEASE_DIR/state" ] && [ ! -L "$LEASE_DIR/state" ] || return 0
+  [ -f "$STATE_FILE" ] && [ ! -L "$STATE_FILE" ] || return 0
   while IFS='=' read -r k v; do
     case "$k" in
     owner) LS_OWNER=${v//[!A-Za-z0-9-]/} ;;
     last) LS_LAST=${v//[!0-9]/} ;;
     up) LS_UP=${v//[!01]/} ;;
     esac
-  done <"$LEASE_DIR/state"
+  done <"$STATE_FILE"
   : "${LS_LAST:=0}" "${LS_UP:=0}"
 }
 
 state_write() { # <owner> <last> <up>
-  printf 'owner=%s\nlast=%s\nup=%s\n' "$1" "$2" "$3" >"$LEASE_DIR/state.tmp.$$" &&
-    mv -f "$LEASE_DIR/state.tmp.$$" "$LEASE_DIR/state"
+  printf 'owner=%s\nlast=%s\nup=%s\n' "$1" "$2" "$3" >"$STATE_FILE.tmp.$$" &&
+    mv -f "$STATE_FILE.tmp.$$" "$STATE_FILE"
 }
 
 # queue entries: <lease-dir>/queue/<key> holding "<first> <last>".
 queue_touch() {
-  local f="$LEASE_DIR/queue/$KEY" first t
+  local f="$QUEUE_DIR/$KEY" first t
   t=$(now)
   first=$t
   if [ -f "$f" ]; then
@@ -125,14 +155,14 @@ queue_touch() {
   printf '%s %s\n' "$first" "$t" >"$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"
 }
 
-queue_remove() { rm -f "$LEASE_DIR/queue/$KEY" 2>/dev/null || true; }
+queue_remove() { rm -f "$QUEUE_DIR/$KEY" 2>/dev/null || true; }
 
 # queue_live: print "<first> <key>" for each waiting holder, oldest first,
 # dropping entries that were not refreshed within the queue TTL.
 queue_live() {
   local f key first last t
   t=$(now)
-  for f in "$LEASE_DIR"/queue/*; do
+  for f in "$QUEUE_DIR"/*; do
     [ -f "$f" ] && [ ! -L "$f" ] || continue
     key=${f##*/}
     case "$key" in *.tmp.* | '' | *[!A-Za-z0-9-]*) continue ;; esac
@@ -160,8 +190,8 @@ queue_position() {
 }
 
 lock_is_free() {
-  if flock -n 9; then
-    flock -u 9
+  if flock -n "$LFD"; then
+    flock -u "$LFD"
     return 0
   fi
   return 1
@@ -176,18 +206,18 @@ acquire_lease() {
     queue_touch
     return 1
   fi
-  if flock -n 9; then
+  if flock -n "$LFD"; then
     HOLDING=1
     queue_remove
     state_read
     if [ "$LS_UP" = 1 ]; then
-      audit stale-down owner "$LS_OWNER"
+      audit stale-down owner "$LS_OWNER" "${AUDIT_PLAT[@]+"${AUDIT_PLAT[@]}"}"
       forced_down "stale-$(now)" || true
     fi
     LEASE_LAST=$(now)
     LEASE_UP=0
     state_write "$KEY" "$LEASE_LAST" 0
-    audit lease-acquire key "$KEY"
+    audit lease-acquire key "$KEY" "${AUDIT_PLAT[@]+"${AUDIT_PLAT[@]}"}"
     return 0
   fi
   queue_touch
@@ -208,15 +238,15 @@ release_lease() {
       LEASE_UP=0
     fi
   fi
-  stop_server
+  [ "$PLAT" != android ] || stop_server
   if [ "$LEASE_UP" = 1 ]; then
     state_write "$KEY" "$LEASE_LAST" 1
   else
-    rm -f "$LEASE_DIR/state" 2>/dev/null || true
+    rm -f "$STATE_FILE" 2>/dev/null || true
   fi
-  flock -u 9
+  flock -u "$LFD"
   HOLDING=0
-  audit lease-release reason "$1"
+  audit lease-release reason "$1" "${AUDIT_PLAT[@]+"${AUDIT_PLAT[@]}"}"
 }
 
 # --------------------------------------------------------------- sm-verify --
@@ -259,19 +289,172 @@ run_smv() {
   (
     cd "$rd" || exit 126
     # Neither the instance lock nor the lease lock may outlive this broker in a child.
-    fm_run_timed "$to" env FM_SBX_VERIFY_EVIDENCE_DIR="$rd/evidence" "${SMV_ENV[@]+"${SMV_ENV[@]}"}" "$FM_SBXV_SMV" "$@" 8>&- 9>&- </dev/null >"$rd/stdout" 2>"$rd/stderr"
+    fm_run_timed "$to" env FM_SBX_VERIFY_EVIDENCE_DIR="$rd/evidence" "${SMV_ENV[@]+"${SMV_ENV[@]}"}" "$FM_SBXV_SMV" "$@" 7>&- 8>&- 9>&- </dev/null >"$rd/stdout" 2>"$rd/stderr"
   )
   SMV_RC=$?
 }
 
+# exec_smv <label> <timeout> <argv...>: run_smv for the selected platform.
+exec_smv() {
+  if [ "$PLAT" = ios ]; then
+    run_smv_ios "$@"
+  else
+    run_smv "$@"
+  fi
+}
+
 forced_down() { # <label>
   SMV_ENV=()
-  if ! run_smv "$1" 120 down; then
-    audit forced-down result "cannot-run" code "${SMV_CODE:-error}"
+  SMV_PLAN=''
+  if ! exec_smv "$1" 120 down; then
+    audit forced-down result "cannot-run" code "${SMV_CODE:-error}" "${AUDIT_PLAT[@]+"${AUDIT_PLAT[@]}"}"
     return 1
   fi
-  audit forced-down result "exit-$SMV_RC" smv_sha256 "$SMV_SHA"
+  audit forced-down result "exit-$SMV_RC" smv_sha256 "$SMV_SHA" "${AUDIT_PLAT[@]+"${AUDIT_PLAT[@]}"}"
   [ "$SMV_RC" = 0 ]
+}
+
+# ------------------------------------------------------------ iOS, by ssh --
+#
+# iOS runs only on the Mac, so the pinned command is run there over ssh to the
+# one configured alias.
+# Every remote command is a single simple command whose words all come from
+# validated fields or from config, and fm_sbxv_remote_cmd (bin/fm-sbx-verify-lib.sh)
+# is the only place they are quoted.
+# The Mac's file is checked against its pin on every run, and nothing falls
+# back to running anything on this host.
+
+ios_phase_timeout() { printf '%s\n' "${FM_SBX_VERIFY_TIMEOUT:-30}"; }
+
+# ios_step <phase> <timeout> <stdin-file> <stdout-file> <stderr-file> <word>...
+# Returns 0 when ssh ran the command to its end (IOS_RC is the remote status)
+# and 1 when ssh itself could not, with SMV_CODE set and IOS_RC kept.
+ios_step() {
+  local phase=$1 to=$2 in=$3 out=$4 err=$5 cmd
+  shift 5
+  if ! cmd=$(fm_sbxv_remote_cmd "$@"); then
+    SMV_CODE=internal
+    return 1
+  fi
+  fm_run_timed "$to" ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
+    -o StrictHostKeyChecking=yes -o ClearAllForwardings=yes -o ForwardAgent=no -o ForwardX11=no -o PermitLocalCommand=no \
+    -o RequestTTY=no -- "$FM_SBXV_IOS_HOST" "$cmd" 7>&- 8>&- 9>&- <"$in" >"$out" 2>"$err"
+  IOS_RC=$?
+  case "$IOS_RC" in
+  124) SMV_CODE=timeout ;;
+  255)
+    if grep -Eiq 'REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed|host key for .* has changed' "$err" 2>/dev/null; then
+      SMV_CODE=ssh_host_key
+    elif grep -Eiq 'Permission denied' "$err" 2>/dev/null; then
+      SMV_CODE=ssh_auth
+    elif grep -Eiq 'Connection refused' "$err" 2>/dev/null; then
+      SMV_CODE=ssh_refused
+    elif grep -Eiq 'Could not resolve hostname|No route to host|Network is unreachable|timed out|Connection closed by|Connection reset|Broken pipe|No address associated' "$err" 2>/dev/null; then
+      SMV_CODE=mac_unreachable
+    else
+      SMV_CODE=ssh_failed
+    fi
+    ;;
+  *) return 0 ;;
+  esac
+  audit ios-ssh phase "$phase" code "$SMV_CODE" platform ios
+  return 1
+}
+
+# ios_remote_failed <phase>: a helper command on the Mac exited non-zero.
+ios_remote_failed() {
+  SMV_CODE=remote_failed
+  audit ios-ssh phase "$1" code remote_failed exit "$IOS_RC" platform ios
+}
+
+# ios_check <run-dir>: the remote file must exist and match its pin.
+ios_check() {
+  local rd=$1
+  SMV_SHA=''
+  ios_step check "$(ios_phase_timeout)" /dev/null "$rd/sum.out" "$rd/sum.err" shasum -a 256 "$FM_SBXV_IOS_SMV" || return 1
+  if [ "$IOS_RC" != 0 ]; then
+    SMV_CODE=sm_verify_missing
+    return 1
+  fi
+  SMV_SHA=$(cut -d' ' -f1 "$rd/sum.out" | head -n 1 | tr -dc '0-9a-f')
+  if [ "$SMV_SHA" != "$FM_SBXV_IOS_SMV_SHA" ]; then
+    SMV_CODE=sm_verify_changed
+    return 1
+  fi
+}
+
+# ios_fetch_evidence <run-dir> <remote-dir>: copy the plain-named regular files
+# of the remote evidence directory into the local one, one ssh call each and
+# no archive, so collect_evidence applies the same rules as for Android.
+ios_fetch_evidence() {
+  local rd=$1 rdir=$2 line name n=0 to
+  to=$(ios_phase_timeout)
+  ios_step list "$to" /dev/null "$rd/list.out" "$rd/list.err" find "$rdir/evidence" -maxdepth 1 -type f || return 0
+  [ "$IOS_RC" = 0 ] || return 0
+  while IFS= read -r line; do
+    name=${line##*/}
+    case "$name" in
+    '' | .* | *[!A-Za-z0-9._-]*)
+      EVIDENCE_PRESKIP=$((EVIDENCE_PRESKIP + 1))
+      continue
+      ;;
+    esac
+    if [ "${#name}" -gt 64 ] || [ "$n" -ge "$MAX_EVIDENCE_FILES" ]; then
+      EVIDENCE_PRESKIP=$((EVIDENCE_PRESKIP + 1))
+      continue
+    fi
+    n=$((n + 1))
+    if ! ios_step fetch "$to" /dev/null "$rd/evidence/$name" "$rd/fetch.err" head -c "$((MAX_EVIDENCE_BYTES + 1))" "$rdir/evidence/$name" || [ "$IOS_RC" != 0 ]; then
+      rm -f "$rd/evidence/$name"
+      EVIDENCE_PRESKIP=$((EVIDENCE_PRESKIP + 1))
+    fi
+  done <"$rd/list.out"
+}
+
+# ios_run_body <run-dir> <remote-dir> <timeout> <argv...>
+ios_run_body() {
+  local rd=$1 rdir=$2 to=$3
+  local -a argv
+  shift 3
+  argv=("$@")
+  if [ -n "$SMV_PLAN" ]; then
+    fm_sbxv_yaml "$SMV_PLAN" "$FM_SBXV_IOS_APP_ID" "$rdir/evidence" >"$rd/flow.yaml" || {
+      SMV_CODE=internal
+      return 1
+    }
+    ios_step push "$(ios_phase_timeout)" "$rd/flow.yaml" "$rd/push.out" "$rd/push.err" dd "of=$rdir/flow.yaml" bs=65536 || return 1
+    [ "$IOS_RC" = 0 ] || { ios_remote_failed push; return 1; }
+    argv+=("$rdir/flow.yaml")
+  fi
+  # SM_IOS_VERIFY_APPLE stays unset so the Apple verify account is never enabled.
+  if ! ios_step run "$to" /dev/null "$rd/stdout" "$rd/stderr" env -u SM_IOS_VERIFY_APPLE "FM_SBX_VERIFY_EVIDENCE_DIR=$rdir/evidence" "$FM_SBXV_IOS_SMV" "${argv[@]}"; then
+    [ "$IOS_RC" = 124 ] || return 1
+  fi
+  SMV_RC=$IOS_RC
+  ios_fetch_evidence "$rd" "$rdir"
+  return 0
+}
+
+# run_smv_ios <label> <timeout> <argv...>: the contract of run_smv, on the Mac.
+run_smv_ios() {
+  local label=$1 to=$2 rd rdir rc keep_code keep_rc
+  shift 2
+  rd="$HOST/run/$label"
+  mkdir -p "$rd/evidence" || return 1
+  SMV_CODE='' SMV_RC=0
+  ios_check "$rd" || return 1
+  rdir="$FM_SBXV_IOS_WORKDIR/${KEY//[!A-Za-z0-9-]/-}-${label//[!A-Za-z0-9-]/-}-$(now)"
+  ios_step prepare "$(ios_phase_timeout)" /dev/null "$rd/prep.out" "$rd/prep.err" mkdir -p -- "$rdir" "$rdir/evidence" || return 1
+  if [ "$IOS_RC" != 0 ]; then
+    ios_remote_failed prepare
+    return 1
+  fi
+  ios_run_body "$rd" "$rdir" "$to" "$@"
+  rc=$?
+  keep_code=$SMV_CODE keep_rc=$SMV_RC
+  ios_step cleanup "$(ios_phase_timeout)" /dev/null /dev/null /dev/null rm -rf -- "$rdir" || true
+  SMV_CODE=$keep_code SMV_RC=$keep_rc
+  return "$rc"
 }
 
 # ----------------------------------------------------------- bundle server --
@@ -293,7 +476,7 @@ start_server() {
   BUNDLE_SHA=$keep_sha
   rm -f "$HOST/server.ready"
   python3 "$IO" serve --file "$HOST/bundle/index.bundle" --port "$FM_SBXV_PORT" --bind "$FM_SBXV_BIND" --ready "$HOST/server.ready" \
-    8>&- 9>&- </dev/null >/dev/null 2>"$HOST/server.err" &
+    7>&- 8>&- 9>&- </dev/null >/dev/null 2>"$HOST/server.err" &
   SERVER_PID=$!
   printf '%s\n' "$SERVER_PID" >"$HOST/server.pid"
   for i in $(seq 1 50); do
@@ -336,6 +519,7 @@ ingest_bundle() {
 
 reply() { # <seq> <status> <code> <message> [extra-json]
   local n=$1 st=$2 code=$3 msg=$4 extra=${5:-'{}'}
+  [ "$REQ_PLAT" != ios ] || extra=$(printf '%s' "$extra" | jq -c '. + {platform: "ios"}')
   jq -nc --argjson seq "$n" --arg id "$REQ_ID" --arg verb "$REQ_VERB" --arg status "$st" --arg code "$code" --arg msg "$msg" --argjson extra "$extra" \
     '{v: 1, seq: $seq, id: (if $id == "" then null else $id end), verb: (if $verb == "" then null else $verb end), status: $status, code: (if $code == "" then null else $code end), message: (if $msg == "" then null else $msg end)} + $extra' \
     >"$RES/.$n.tmp" && mv -f "$RES/.$n.tmp" "$RES/$n.json"
@@ -369,7 +553,7 @@ collect_evidence() { # <seq> -> EVIDENCE_JSON
       skipped=$((skipped + 1))
     fi
   done
-  EVIDENCE_SKIPPED=$skipped
+  EVIDENCE_SKIPPED=$((skipped + EVIDENCE_PRESKIP))
 }
 
 # ------------------------------------------------------------- one request --
@@ -399,7 +583,7 @@ do_status() { # <seq>
   up=false
   [ "$LEASE_UP" = 1 ] && [ "$HOLDING" = 1 ] && up=true
   srv=null
-  [ -z "$BUNDLE_URL" ] || srv=$(jq -nc --arg u "$BUNDLE_URL" --arg s "$BUNDLE_SHA" '{url: $u, sha256: $s}')
+  [ "$PLAT" = ios ] || [ -z "$BUNDLE_URL" ] || srv=$(jq -nc --arg u "$BUNDLE_URL" --arg s "$BUNDLE_SHA" '{url: $u, sha256: $s}')
   reply "$n" ok "" "" "$(jq -nc --arg holder "$holder" --argjson up "$up" --argjson waiting "$pos" --argjson extra "$extra" --argjson bundle "$srv" '{lease: ({holder: $holder, emulator_up: $up, waiting: $waiting} + $extra), bundle: $bundle}')"
   audit exec seq "$n" verb status status ok
 }
@@ -408,7 +592,7 @@ do_status() { # <seq>
 process_request() {
   local n=$1 name=$2 src sha out rc plan verb argv_desc yaml timeout cap
   local -a argv
-  REQ_ID='' REQ_VERB=''
+  REQ_ID='' REQ_VERB='' REQ_PLAT=android
   src="$REQ/$name"
   : >"$HOST/seen/$n"
   mkdir -p "$HOST/in"
@@ -453,7 +637,18 @@ process_request() {
   verb=$(jq -r '.verb' "$HOST/in/$n.plan")
   REQ_VERB=$verb
   REQ_ID=$(jq -r '.id // ""' "$HOST/in/$n.plan")
-  audit request seq "$n" req_sha256 "$sha" verdict accepted verb "$verb"
+  REQ_PLAT=$(jq -r '.platform // "android"' "$HOST/in/$n.plan")
+  if [ "$REQ_PLAT" = ios ] && [ -z "$FM_SBXV_IOS_HOST" ]; then
+    reply "$n" rejected platform_unavailable "no iOS host is configured for verification (config/sbx-verify ios-host)"
+    audit request seq "$n" req_sha256 "$sha" verdict rejected code platform_unavailable
+    return 0
+  fi
+  if [ "$REQ_PLAT" = ios ]; then
+    lease_select 1
+  else
+    lease_select 0
+  fi
+  audit request seq "$n" req_sha256 "$sha" verdict accepted verb "$verb" "${AUDIT_PLAT[@]+"${AUDIT_PLAT[@]}"}"
 
   if [ "$verb" = status ]; then
     do_status "$n"
@@ -472,6 +667,8 @@ process_request() {
   fi
 
   SMV_ENV=()
+  SMV_PLAN=''
+  EVIDENCE_PRESKIP=0
   argv=()
   rm -rf "$HOST/run/$n"
   mkdir -p "$HOST/run/$n/evidence"
@@ -502,15 +699,24 @@ process_request() {
     ;;
   metro-log) argv=(metro-log "$(jq -r '.lines' "$HOST/in/$n.plan")") ;;
   do | flow)
-    yaml="$HOST/run/$n/flow.yaml"
-    fm_sbxv_yaml "$HOST/in/$n.plan" "$FM_SBXV_APP_ID" "$HOST/run/$n/evidence" >"$yaml"
-    argv=("$verb" "$yaml")
+    if [ "$PLAT" = ios ]; then
+      SMV_PLAN="$HOST/in/$n.plan"
+      argv=("$verb")
+    else
+      yaml="$HOST/run/$n/flow.yaml"
+      fm_sbxv_yaml "$HOST/in/$n.plan" "$FM_SBXV_APP_ID" "$HOST/run/$n/evidence" >"$yaml"
+      argv=("$verb" "$yaml")
+    fi
     ;;
   esac
   timeout=$(smv_timeout "$verb")
-  if ! run_smv "$n" "$timeout" "${argv[@]}"; then
-    reply "$n" error "${SMV_CODE:-error}" "the pinned verification command cannot be run"
-    audit exec seq "$n" verb "$verb" status error code "${SMV_CODE:-error}"
+  if ! exec_smv "$n" "$timeout" "${argv[@]}"; then
+    if [ "$PLAT" = ios ]; then
+      reply "$n" error "${SMV_CODE:-error}" "the iOS host cannot be used"
+    else
+      reply "$n" error "${SMV_CODE:-error}" "the pinned verification command cannot be run"
+    fi
+    audit exec seq "$n" verb "$verb" status error code "${SMV_CODE:-error}" "${AUDIT_PLAT[@]+"${AUDIT_PLAT[@]}"}"
     return 0
   fi
   case "$verb" in tree) cap=65536 ;; metro-log) cap=32768 ;; *) cap=16384 ;; esac
@@ -529,12 +735,12 @@ process_request() {
     st=failed code=command_failed
   fi
   local reply_url=$BUNDLE_URL
-  [ "$verb" != down ] || reply_url=''
+  if [ "$verb" = down ] || [ "$PLAT" != android ]; then reply_url=''; fi
   reply "$n" "$st" "$code" "" "$(jq -nc --argjson exit "$SMV_RC" --rawfile so "$HOST/run/$n/stdout.clean" --rawfile se "$HOST/run/$n/stderr.clean" --argjson ev "$EVIDENCE_JSON" --argjson skipped "$EVIDENCE_SKIPPED" --arg url "$reply_url" \
     '{exit: $exit, stdout: $so, stderr: $se, evidence: $ev, evidence_skipped: $skipped} + (if $url == "" then {} else {bundle_url: $url} end)')"
   audit exec seq "$n" verb "$verb" status "$st" code "$code" exit "$SMV_RC" argv "$argv_desc" smv_sha256 "$SMV_SHA" \
     flow_sha256 "$([ -f "$HOST/run/$n/flow.yaml" ] && fm_sbxv_sha256 "$HOST/run/$n/flow.yaml" || true)" \
-    evidence_sha256 "$(printf '%s' "$EVIDENCE_JSON" | jq -r '[.[].sha256] | join(",")')"
+    evidence_sha256 "$(printf '%s' "$EVIDENCE_JSON" | jq -r '[.[].sha256] | join(",")')" "${AUDIT_PLAT[@]+"${AUDIT_PLAT[@]}"}"
   if [ "$verb" = down ]; then
     release_lease down
   fi
@@ -578,11 +784,14 @@ finish() {
   FINISHED=1
   trap - EXIT
   trap : HUP TERM INT
-  if [ "$HOLDING" = 1 ]; then
-    release_lease "$FINISH_REASON"
-  fi
+  for P_ in "${PLATS[@]}"; do
+    lease_select "$P_"
+    if [ "$HOLDING" = 1 ]; then
+      release_lease "$FINISH_REASON"
+    fi
+    queue_remove
+  done
   stop_server
-  queue_remove
   rm -f "$HOST/broker.pid" 2>/dev/null || true
   audit broker-stop reason "$FINISH_REASON"
 }
@@ -624,6 +833,10 @@ check)
     }
   done
   fm_sbxv_load_config "$CONFIG" "$STATE" || exit 1
+  if [ -n "$FM_SBXV_IOS_HOST" ] && ! command -v ssh >/dev/null 2>&1; then
+    echo "error: verify=app with an iOS host needs ssh on the host PATH" >&2
+    exit 1
+  fi
   exit 0
   ;;
 init)
@@ -648,6 +861,11 @@ setup_paths
 fm_sbxv_load_config "$CONFIG" "$STATE" || exit 1
 LEASE_DIR=$FM_SBXV_LEASE_DIR
 mkdir -p "$LEASE_DIR/queue" || die "could not create the lease directory $LEASE_DIR"
+if [ -n "$FM_SBXV_IOS_HOST" ]; then
+  PLATS=(0 1)
+  mkdir -p "$LEASE_DIR/queue-ios" || die "could not create the lease directory $LEASE_DIR"
+fi
+lease_select 0
 
 if [ "$cmd" = stop ]; then
   # The lease owner key is the sandbox name the running broker recorded.
@@ -676,16 +894,19 @@ if [ "$cmd" = stop ]; then
     kill -TERM "$spid" 2>/dev/null || true
   fi
   rm -f "$HOST/server.pid" "$HOST/server.ready" "$HOST/broker.pid" 2>/dev/null || true
-  exec 9>"$LEASE_DIR/lease.lock"
-  if flock -n 9; then
-    state_read
-    if [ "$LS_UP" = 1 ] && [ "$LS_OWNER" = "$KEY" ]; then
-      audit stale-down owner "$LS_OWNER" via stop
-      forced_down "stop-$(now)" || echo "notice: the verification emulator could not be taken down; the next lease holder retries it" >&2
-      rm -f "$LEASE_DIR/state"
+  for P_ in "${PLATS[@]}"; do
+    lease_select "$P_"
+    lease_open
+    if flock -n "$LFD"; then
+      state_read
+      if [ "$LS_UP" = 1 ] && [ "$LS_OWNER" = "$KEY" ]; then
+        audit stale-down owner "$LS_OWNER" via stop "${AUDIT_PLAT[@]+"${AUDIT_PLAT[@]}"}"
+        forced_down "stop-$(now)" || echo "notice: the verification emulator could not be taken down; the next lease holder retries it" >&2
+        rm -f "$STATE_FILE"
+      fi
+      queue_remove
     fi
-    queue_remove
-  fi
+  done
   exit 0
 fi
 
@@ -694,10 +915,15 @@ fi
 mkdir -p "$HOST/seen" "$HOST/run" "$HOST/in" "$HOST/bundle"
 exec 8>"$HOST/broker.lock"
 flock -n 8 || die "a verification broker already runs for task $ID"
-exec 9>"$LEASE_DIR/lease.lock"
+for P_ in "${PLATS[@]}"; do
+  lease_select "$P_"
+  lease_open
+done
+lease_select 0
 printf '%s\n' "$$" >"$HOST/broker.pid"
 printf '%s\n' "$KEY" >"$HOST/key"
 audit broker-start sandbox "$SANDBOX" smv "$FM_SBXV_SMV" lease_ttl "$FM_SBXV_TTL"
+[ -z "$FM_SBXV_IOS_HOST" ] || audit ios-enabled host "$FM_SBXV_IOS_HOST"
 
 if [ "$ONCE" = 1 ]; then
   scan
@@ -712,9 +938,12 @@ SB_LAST=$(now)
 while [ "$STOP" = 0 ]; do
   scan
   [ "$STOP" = 0 ] || break
-  if [ "$HOLDING" = 1 ] && [ $(($(now) - LEASE_LAST)) -gt "$FM_SBXV_TTL" ]; then
-    release_lease expired
-  fi
+  for P_ in "${PLATS[@]}"; do
+    lease_select "$P_"
+    if [ "$HOLDING" = 1 ] && [ $(($(now) - LEASE_LAST)) -gt "$FM_SBXV_TTL" ]; then
+      release_lease expired
+    fi
+  done
   if [ $(($(now) - SB_LAST)) -ge "$SB_POLL" ]; then
     SB_LAST=$(now)
     if sandbox_gone; then
@@ -722,7 +951,7 @@ while [ "$STOP" = 0 ]; do
       break
     fi
   fi
-  sleep "$INTERVAL" 8>&- 9>&- &
+  sleep "$INTERVAL" 7>&- 8>&- 9>&- &
   wait $! 2>/dev/null || true
 done
 [ "$STOP" = 0 ] || FINISH_REASON=terminated

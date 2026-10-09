@@ -114,7 +114,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-sbx-bridge.sh`       | Create a sandboxed task's standalone clone and bring its branches back with a fast-forward-only fetch, treating the clone as untrusted |
 | `fm-sbx-relay.sh`        | Mirror a sandboxed worker's channel into the task's real status and busy-state records |
 | `fm-sbx-npm-seed.sh`     | Seed the read-only npm cache that sandboxed workers install from offline |
-| `fm-sbx-verify-broker.sh` | Host-side broker that answers a sandboxed worker's typed verification requests by running the pinned `sm-verify`, behind a lease, a validator, and an audit log |
+| `fm-sbx-verify-broker.sh` | Host-side broker that answers a sandboxed worker's typed verification requests by running the pinned `sm-verify` (on the Mac over ssh for iOS), behind a lease per platform, a validator, and an audit log |
 | `fm-sbx-verify-lib.sh`   | Config grammar, request validator, selector denylist, and Maestro generator for the verification broker |
 | `fm-sbx-verify-io.py`    | No-follow file copy and the one-file bundle server for the verification broker |
 | `fm-pipeline-spend.sh`   | Attribute a task's no-mistakes pipeline spend to the task and keep it in the private spend ledger |

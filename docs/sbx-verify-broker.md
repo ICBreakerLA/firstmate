@@ -145,7 +145,7 @@ The denylist applies only to taps, so `assertVisible` and `extendedWaitUntil` ca
 | `error` | `ssh_host_key` | The iOS host's key is not the one on record, or is not on record. |
 | `error` | `ssh_failed` | ssh failed in another way. |
 | `error` | `sm_verify_missing`, `sm_verify_changed` | The iOS host's pinned command is absent, or its digest differs from the pin. |
-| `error` | `remote_failed` | A broker helper command on the iOS host (preparing its scratch directory) exited non-zero. |
+| `error` | `remote_failed` | A broker helper command on the iOS host (preparing its scratch directory or writing the generated flow into it) exited non-zero. |
 | `error` | `timeout` | An iOS preflight step ran out of time. |
 | `failed` | `command_failed`, `timeout` | `sm-verify` exited non-zero or ran out of time. |
 | `queued` | `busy` | Another task holds the emulator. |

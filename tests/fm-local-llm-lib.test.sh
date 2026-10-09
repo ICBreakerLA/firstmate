@@ -267,6 +267,7 @@ test_the_gpu_probe_reads_powershell_and_fails_closed() {
   local probe_bin=$TMP_ROOT/psbin
   mkdir -p "$probe_bin"
   # probe <path>: the real probe function, in its own shell, with that PATH.
+  # shellcheck disable=SC2016 # $1 here is the inner bash -c's own positional arg, not this shell's
   probe() { env PATH="$1" bash -c '. "$1/bin/fm-local-llm-lib.sh"; fm_local_llm_gpu_conflict' _ "$ROOT"; }
   ! probe "$FAKEBIN:/usr/bin:/bin" || fail "no powershell.exe must mean no conflict"
   printf '#!/bin/sh\necho 1\n' >"$probe_bin/powershell.exe"
@@ -279,6 +280,7 @@ test_the_gpu_probe_reads_powershell_and_fails_closed() {
   printf '#!/bin/sh\nexit 0\n' >"$probe_bin/powershell.exe"
   probe "$probe_bin:/usr/bin:/bin" || fail "a probe with no number must fail closed as a conflict"
   printf '#!/bin/sh\nsleep 2\necho 0\n' >"$probe_bin/powershell.exe"
+  # shellcheck disable=SC2016 # $1 here is the inner bash -c's own positional arg, not this shell's
   env PATH="$probe_bin:/usr/bin:/bin" FM_LOCAL_LLM_GPU_PROBE_TIMEOUT=1 \
     bash -c '. "$1/bin/fm-local-llm-lib.sh"; fm_local_llm_gpu_conflict' _ "$ROOT" \
     || fail "a probe that times out must fail closed as a conflict"

@@ -21,6 +21,11 @@ INSTALLER="$ROOT/bin/fm-install-shellcheck.sh"
 # The pinned version, read from the single source (the one owner itself).
 REQUIRED=$("$LINT" --required-version)
 
+# Every lint run below takes its host slot from a private directory, so these
+# tests neither wait on nor block a real lint run on the developer's host.
+FM_LINT_HOST_LOCK_DIR=$(fm_test_tmproot fm-lint-hostslots)/slots
+export FM_LINT_HOST_LOCK_DIR
+
 # Official GitHub release asset sha256 values for shellcheck v0.11.0 .tar.xz
 # archives (https://github.com/koalaman/shellcheck/releases/tag/v0.11.0). Tests
 # compare installer behavior against these published digests, not script source.
@@ -1351,6 +1356,153 @@ SH
   pass "jobs=1 and jobs=2 preserve deterministic diagnostics, failures, cleanup bounds, and quiet telemetry"
 }
 
+# fm_lint_stub_blocking_shellcheck <fakebin>: answers --version, then records
+# its pid on $FM_TEST_STARTED and blocks until $FM_TEST_RELEASE exists, so a
+# test can hold a lint run mid-flight and observe a second run's behavior.
+fm_lint_stub_blocking_shellcheck() {
+  local fakebin=$1
+  cat > "$fakebin/shellcheck" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  printf 'ShellCheck - shell script analysis tool\nversion: 0.11.0\n'
+  exit 0
+fi
+printf '%s\n' "$$" >> "$FM_TEST_STARTED"
+while [ ! -e "$FM_TEST_RELEASE" ]; do
+  sleep 0.1
+done
+exit 0
+SH
+  chmod +x "$fakebin/shellcheck"
+}
+
+# fm_lint_wait_for <file> [seconds]: poll until the file is non-empty.
+fm_lint_wait_for() {
+  local file=$1 limit=$(( ${2:-10} * 20 )) i=0
+  while [ "$i" -lt "$limit" ] && [ ! -s "$file" ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -s "$file" ]
+}
+
+# fm_lint_host_run <name> <extra env assignments...>: start a guarded lint run
+# of the fixture in the background with its own started marker and output file.
+# CI variables are cleared so the guard is live even when the suite runs in CI.
+fm_lint_host_run() {
+  local name=$1
+  shift
+  env -u CI -u GITHUB_ACTIONS PATH="$HOST_FAKEBIN:$PATH" TMPDIR="$HOST_TMP/scratch" \
+    FM_TEST_STARTED="$HOST_TMP/$name.started" FM_TEST_RELEASE="$HOST_TMP/release" \
+    "$@" "$LINT" "$HOST_FIXTURE" > "$HOST_TMP/$name.out" 2>&1 &
+  HOST_LAST_PID=$!
+}
+
+fm_lint_host_setup() {
+  HOST_TMP=$(fm_test_tmproot fm-lint-host)
+  mkdir -p "$HOST_TMP/scratch"
+  HOST_FAKEBIN=$(fm_fakebin "$HOST_TMP")
+  fm_lint_stub_blocking_shellcheck "$HOST_FAKEBIN"
+  HOST_FIXTURE="$HOST_TMP/good.sh"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$HOST_FIXTURE"
+  FM_LINT_HOST_LOCK_DIR="$HOST_TMP/slots"
+  export FM_LINT_HOST_LOCK_DIR
+}
+
+test_concurrent_runs_serialize_on_the_host_slot() {
+  local HOST_TMP HOST_FAKEBIN HOST_FIXTURE HOST_LAST_PID pid_a pid_b rc_a=0 rc_b=0
+  fm_lint_host_setup
+  fm_lint_host_run a
+  pid_a=$HOST_LAST_PID
+  fm_lint_wait_for "$HOST_TMP/a.started" || fail "first guarded run never reached ShellCheck"
+  fm_lint_host_run b
+  pid_b=$HOST_LAST_PID
+  fm_lint_wait_for "$HOST_TMP/b.out" || fail "second run printed nothing"
+  sleep 1
+  grep -q 'waiting for a host lint slot' "$HOST_TMP/b.out" || fail "waiting run must say it waits for a host slot"
+  [ ! -s "$HOST_TMP/b.started" ] || fail "second run reached ShellCheck while the first held the only slot"
+  : > "$HOST_TMP/release"
+  wait "$pid_a" || rc_a=$?
+  wait "$pid_b" || rc_b=$?
+  [ "$rc_a" -eq 0 ] && [ "$rc_b" -eq 0 ] || fail "serialized runs must both pass, got $rc_a and $rc_b"
+  [ -s "$HOST_TMP/b.started" ] || fail "second run must reach ShellCheck once the slot frees"
+  pass "concurrent lint runs serialize on the host slot"
+}
+
+test_killed_run_releases_the_host_slot_and_scratch() {
+  local HOST_TMP HOST_FAKEBIN HOST_FIXTURE HOST_LAST_PID pid_b rc_b=0 leftover
+  command -v setsid >/dev/null 2>&1 || { pass "SKIP (no setsid): killed-run slot release"; return; }
+  fm_lint_host_setup
+  env -u CI -u GITHUB_ACTIONS PATH="$HOST_FAKEBIN:$PATH" TMPDIR="$HOST_TMP/scratch" \
+    FM_TEST_STARTED="$HOST_TMP/a.started" FM_TEST_RELEASE="$HOST_TMP/release" \
+    setsid "$LINT" "$HOST_FIXTURE" > "$HOST_TMP/a.out" 2>&1 &
+  leftover=$!
+  fm_lint_wait_for "$HOST_TMP/a.started" || fail "first guarded run never reached ShellCheck"
+  kill -KILL -- "-$leftover" 2>/dev/null || fail "could not SIGKILL the lint run's process group"
+  wait "$leftover" 2>/dev/null || true
+  kill -KILL "$(head -n 1 "$HOST_TMP/a.started")" 2>/dev/null || true
+  flock -w 10 "$HOST_TMP/slots/slot.0" true || fail "slot must free once the killed run's processes are gone"
+  ls -d "$HOST_TMP"/scratch/fm-lint.* >/dev/null 2>&1 || fail "SIGKILL must leave the dead run's scratch directory for this test to mean anything"
+  : > "$HOST_TMP/release"
+  fm_lint_host_run b FM_LINT_HOST_WAIT_SECONDS=20
+  pid_b=$HOST_LAST_PID
+  wait "$pid_b" || rc_b=$?
+  [ "$rc_b" -eq 0 ] || fail "run after a killed run must acquire the slot and pass, got $rc_b"
+  ! grep -q 'waiting for a host lint slot' "$HOST_TMP/b.out" || fail "killed run must not leave the slot held"
+  ! ls -d "$HOST_TMP"/scratch/fm-lint.* >/dev/null 2>&1 || fail "next run must reap the killed run's scratch directory"
+  pass "killed lint run releases its slot and scratch is reaped"
+}
+
+test_host_slot_overrides() {
+  local HOST_TMP HOST_FAKEBIN HOST_FIXTURE HOST_LAST_PID pid_a pid_b rc=0 out
+  fm_lint_host_setup
+  fm_lint_host_run a
+  pid_a=$HOST_LAST_PID
+  fm_lint_wait_for "$HOST_TMP/a.started" || fail "first guarded run never reached ShellCheck"
+
+  fm_lint_host_run b FM_LINT_HOST_SLOTS=2
+  pid_b=$HOST_LAST_PID
+  fm_lint_wait_for "$HOST_TMP/b.started" 5 || fail "FM_LINT_HOST_SLOTS=2 must let a second run start"
+  ! grep -q 'waiting for a host lint slot' "$HOST_TMP/b.out" || fail "a free second slot must not wait"
+  : > "$HOST_TMP/release"
+  wait "$pid_a" "$pid_b" || fail "runs sharing two slots must pass"
+
+  rm -f "$HOST_TMP/release" "$HOST_TMP/a.started" "$HOST_TMP/b.started"
+  fm_lint_host_run a
+  pid_a=$HOST_LAST_PID
+  fm_lint_wait_for "$HOST_TMP/a.started" || fail "holder never reached ShellCheck"
+  out=$(env -u CI -u GITHUB_ACTIONS PATH="$HOST_FAKEBIN:$PATH" TMPDIR="$HOST_TMP/scratch" \
+    FM_TEST_STARTED="$HOST_TMP/t.started" FM_TEST_RELEASE="$HOST_TMP/never" \
+    FM_LINT_HOST_WAIT_SECONDS=2 "$LINT" "$HOST_FIXTURE" 2>&1) || rc=$?
+  [ "$rc" -eq 75 ] || fail "bounded wait must exit 75, got $rc"
+  case "$out" in *"gave up after"*"host lint slot"*) ;; *) fail "timeout must name the host slot wait: $out" ;; esac
+
+  rc=0
+  env -u CI -u GITHUB_ACTIONS PATH="$HOST_FAKEBIN:$PATH" TMPDIR="$HOST_TMP/scratch" \
+    FM_TEST_STARTED="$HOST_TMP/z.started" FM_TEST_RELEASE="$HOST_TMP/z.release" \
+    FM_LINT_HOST_SLOTS=0 "$LINT" "$HOST_FIXTURE" > "$HOST_TMP/z.out" 2>&1 &
+  pid_b=$!
+  fm_lint_wait_for "$HOST_TMP/z.started" 5 || fail "FM_LINT_HOST_SLOTS=0 must ignore a held slot"
+  : > "$HOST_TMP/z.release"
+  wait "$pid_b" || fail "unguarded run must pass"
+
+  rc=0
+  env CI=true PATH="$HOST_FAKEBIN:$PATH" TMPDIR="$HOST_TMP/scratch" \
+    FM_TEST_STARTED="$HOST_TMP/c.started" FM_TEST_RELEASE="$HOST_TMP/c.release" \
+    "$LINT" "$HOST_FIXTURE" > "$HOST_TMP/c.out" 2>&1 &
+  pid_b=$!
+  fm_lint_wait_for "$HOST_TMP/c.started" 5 || fail "CI must not wait on the host slot"
+  : > "$HOST_TMP/c.release"
+  wait "$pid_b" || fail "CI run must pass"
+
+  rc=0
+  out=$(FM_LINT_HOST_SLOTS=x "$LINT" "$HOST_FIXTURE" 2>&1) || rc=$?
+  [ "$rc" -eq 2 ] || fail "non-numeric FM_LINT_HOST_SLOTS must exit 2, got $rc"
+  : > "$HOST_TMP/release"
+  wait "$pid_a" || fail "holder must pass"
+  pass "host slot overrides: more slots, bounded wait, off, CI inert, bad value"
+}
+
 test_worker_trees_stop_on_signal() {
   local tmp fakebin fixture jobs telemetry lint_tmp pid_file out_file telemetry_file
   local parent_pid shellcheck_pid i parent_rc survivor
@@ -2056,6 +2208,9 @@ test_ignores_ambient_shellcheck_opts
 test_clean_fixture_passes
 test_jobs_are_deterministic_and_complete
 test_worker_trees_stop_on_signal
+test_concurrent_runs_serialize_on_the_host_slot
+test_killed_run_releases_the_host_slot_and_scratch
+test_host_slot_overrides
 test_root_deadline_names_the_root_and_reaps_the_tree
 test_root_memory_limit_reports_a_named_death
 test_memory_failure_retries_without_external_sources

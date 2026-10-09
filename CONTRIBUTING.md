@@ -69,6 +69,7 @@ Coordinate any workflow rollback with its required-check names so a retired chec
   CI uses its full canonical partitions; the no-mistakes pre-push gate uses its context-selected default.
   `docs/fm-test-portable-shards.md` owns partition verification and performance evidence.
   Its header and `--help` output own the exact local lint modes, file-set selection, and analysis flags.
+  Local runs take a host-wide slot (one at a time by default, shared by every checkout, inert on CI) so concurrent lint runs cannot exhaust memory; the header owns `FM_LINT_HOST_SLOTS` and its siblings.
   A malformed `.github/workflows/*.yml`, including a self-broken `ci.yml`, fails that local lint path before merge because a broken workflow cannot report its own breakage.
   It pins one exact shellcheck version and one exact actionlint version and refuses to run under any other.
   Print the shellcheck pin with `bin/fm-lint.sh --required-version` and the actionlint pin with `bin/fm-lint-workflows.sh --required-version`.

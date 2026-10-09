@@ -97,6 +97,19 @@
 # lines also stream to stderr, and an abnormal root end is always reported
 # there.
 #
+# Host-wide guard: a run takes one of FM_LINT_HOST_SLOTS (default 1) flock
+# slots under FM_LINT_HOST_LOCK_DIR (default /tmp/fm-lint-host-<uid>), shared by
+# every checkout of this user, so concurrent runs cannot add up to more memory
+# than one run's JOBS workers. A later run waits, printing a notice, up to
+# FM_LINT_HOST_WAIT_SECONDS (default 3600), then exits 75. The slot lives as
+# long as the process, so a kill of any kind releases it. The guard is inert
+# on CI (GITHUB_ACTIONS or CI = true: one partition per runner, no peers), with
+# FM_LINT_HOST_SLOTS=0, and where flock is missing (a warning says so). Raise
+# FM_LINT_HOST_SLOTS only on a host with the memory for that many runs. It never
+# changes what is linted, source following, or the per-root caps. A run that is
+# killed without cleanup leaves its fm-lint.* scratch directory; the next
+# run reaps those whose owner.pid is dead.
+#
 # Optional quiet telemetry writes one bounded TSV snapshot of content and source
 # graph identity, wall/CPU/RSS, shard load, and competing ShellCheck processes.
 # source_followed_directives counts directives only for roots whose final
@@ -973,7 +986,8 @@ ROOT_GRACE=${FM_LINT_ROOT_GRACE:-5}
 # lint job, so worst-case resident demand is ~10.7 GiB plus runner overhead,
 # inside the 16 GiB runner. Local lint defaults to two workers; two such
 # caps allow ~21 GiB resident plus host overhead, so use FM_LINT_JOBS=1 on
-# smaller local machines. A root that exceeds its cap fails by name.
+# smaller local machines. The host-wide slot guard below keeps concurrent runs
+# from stacking those caps. A root that exceeds its cap fails by name.
 # Never disable, narrow, or redirect source-following to fit a root under
 # the cap. The roots sidecar records each root's peak RSS; roots peaking
 # above about 3 GiB resident are reduction candidates,
@@ -1036,7 +1050,72 @@ if [ -n "$PARTITION" ]; then
   PROGRESS=1
 fi
 
+# Host-wide slots. One run is bounded (JOBS workers, ROOT_MEMORY_KIB each), but
+# concurrent runs from different checkouts add up, so a full local run first
+# takes one of FM_LINT_HOST_SLOTS flock slots shared by every checkout of this
+# user. Inert on CI (GITHUB_ACTIONS or CI = true, one partition per runner) and
+# with FM_LINT_HOST_SLOTS=0. Explicit-path runs take a slot too: their memory is
+# the same. The slot is the open descriptor 9, so every exit path, including
+# SIGKILL, releases it with the process and no stale lock can remain.
+HOST_SLOTS=${FM_LINT_HOST_SLOTS:-1}
+HOST_WAIT=${FM_LINT_HOST_WAIT_SECONDS:-3600}
+case "$HOST_SLOTS" in
+  ''|*[!0-9]*) printf 'fm-lint.sh: FM_LINT_HOST_SLOTS must be a non-negative integer, got %s.\n' "$HOST_SLOTS" >&2; exit 2 ;;
+esac
+case "$HOST_WAIT" in
+  ''|0*|*[!0-9]*) printf 'fm-lint.sh: FM_LINT_HOST_WAIT_SECONDS must be a positive integer, got %s.\n' "$HOST_WAIT" >&2; exit 2 ;;
+esac
+if [ "$HOST_SLOTS" -gt 0 ] && [ "${GITHUB_ACTIONS:-}" != true ] && [ "${CI:-}" != true ]; then
+  if ! command -v flock >/dev/null 2>&1; then
+    printf 'fm-lint.sh: flock not found; host-wide lint slots are not enforced on this host.\n' >&2
+  else
+    HOST_LOCK_DIR=${FM_LINT_HOST_LOCK_DIR:-/tmp/fm-lint-host-$(id -u)}
+    mkdir -p "$HOST_LOCK_DIR" 2>/dev/null && chmod 700 "$HOST_LOCK_DIR" 2>/dev/null
+    if [ ! -d "$HOST_LOCK_DIR" ] || [ -L "$HOST_LOCK_DIR" ] || [ ! -O "$HOST_LOCK_DIR" ]; then
+      printf 'fm-lint.sh: host lint slot directory %s is not a private directory owned by this user; set FM_LINT_HOST_LOCK_DIR, or FM_LINT_HOST_SLOTS=0 to skip the guard.\n' "$HOST_LOCK_DIR" >&2
+      exit 1
+    fi
+    slot_held=0
+    waited_from=$SECONDS
+    last_notice=-1
+    while :; do
+      slot=0
+      while [ "$slot" -lt "$HOST_SLOTS" ]; do
+        if { exec 9>"$HOST_LOCK_DIR/slot.$slot"; } 2>/dev/null && flock -n 9; then
+          slot_held=1
+          break 2
+        fi
+        exec 9>&-
+        slot=$((slot + 1))
+      done
+      waited=$((SECONDS - waited_from))
+      if [ "$waited" -ge "$HOST_WAIT" ]; then
+        printf 'fm-lint.sh: gave up after %ss waiting for a host lint slot (%s in use, FM_LINT_HOST_WAIT_SECONDS=%s); another lint run is still going. Retry later or raise FM_LINT_HOST_SLOTS if this host has the memory.\n' \
+          "$waited" "$HOST_SLOTS" "$HOST_WAIT" >&2
+        exit 75
+      fi
+      if [ "$last_notice" -lt 0 ] || [ $((waited - last_notice)) -ge 300 ]; then
+        printf 'fm-lint.sh: waiting for a host lint slot (%s total, shared by every checkout); another lint run holds memory. Waited %ss of at most %ss.\n' \
+          "$HOST_SLOTS" "$waited" "$HOST_WAIT" >&2
+        last_notice=$waited
+      fi
+      sleep 1
+    done
+    [ "$slot_held" -eq 1 ] || exit 1
+  fi
+fi
+
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-lint.XXXXXX") || exit 1
+printf '%s\n' "$$" > "$TMP_ROOT/owner.pid"
+# A SIGKILLed run cannot run its EXIT trap; its owner.pid names a dead process,
+# so reap such directories here. Directories without owner.pid are left alone.
+for stale_dir in "${TMPDIR:-/tmp}"/fm-lint.*; do
+  [ "$stale_dir" != "$TMP_ROOT" ] && [ -d "$stale_dir" ] && [ ! -L "$stale_dir" ] \
+    && [ -O "$stale_dir" ] && [ -f "$stale_dir/owner.pid" ] || continue
+  stale_pid=$(cat "$stale_dir/owner.pid" 2>/dev/null)
+  case "$stale_pid" in ''|*[!0-9]*) continue ;; esac
+  kill -0 "$stale_pid" 2>/dev/null || rm -rf "$stale_dir"
+done
 ACTIVE_PIDS=()
 # shellcheck disable=SC2329 # Registered by the EXIT and signal traps below.
 fm_lint_cleanup() {

@@ -22,6 +22,8 @@
 #   FM_LOCAL_LLM_START_WAIT   seconds a configured start command is given to make
 #                             the server answer (default 120)
 #   FM_LOCAL_LLM_START_POLL   seconds between those answers checks (default 2)
+#   FM_LOCAL_LLM_GPU_PROBE_TIMEOUT   seconds the GPU probe gives powershell.exe
+#                                    to answer (default 15)
 # This tree never changes the global sbx policy, never stops the server (that is
 # `local-llm down`), and never passes a host secret. It starts the server only
 # through the optional config/local-llm-start command, and only for a model that
@@ -163,16 +165,19 @@ fm_local_llm_env() {
 # fm_local_llm_gpu_conflict
 # 0 when ComfyUI holds the shared 16 GB GPU: on this PC, a python process whose
 # path is under C:\ComfyUI\venv, found through powershell.exe. Replace this one
-# function for another machine. No powershell.exe, or a probe that fails or
-# gives no number, means no conflict.
+# function for another machine. No powershell.exe at all means no conflict (the
+# probe does not apply on this machine); but a probe that exists and fails,
+# times out, or gives no number counts as a conflict, since that is exactly
+# the condition a busy GPU is most likely to produce and the GPU must never be
+# assumed free on missing evidence.
 fm_local_llm_gpu_conflict() {
   local out
   command -v powershell.exe >/dev/null 2>&1 || return 1
-  out=$(timeout 15 powershell.exe -NoProfile -NonInteractive -Command \
+  out=$(timeout "${FM_LOCAL_LLM_GPU_PROBE_TIMEOUT:-15}" powershell.exe -NoProfile -NonInteractive -Command \
     "@(Get-Process python* -ErrorAction SilentlyContinue | Where-Object { \$_.Path -like 'C:\\ComfyUI\\venv\\*' }).Count" \
-    2>/dev/null </dev/null | tr -d '[:space:]') || return 1
+    2>/dev/null </dev/null | tr -d '[:space:]') || return 0
   case "$out" in
-  '' | *[!0-9]*) return 1 ;;
+  '' | *[!0-9]*) return 0 ;;
   esac
   [ "$out" -gt 0 ]
 }

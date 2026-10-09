@@ -263,7 +263,7 @@ test_select_does_not_start_the_server_while_comfyui_holds_the_gpu() {
   pass "ComfyUI holding the GPU blocks both the start and an already-running server"
 }
 
-test_the_gpu_probe_reads_powershell_and_its_absence_is_no_conflict() {
+test_the_gpu_probe_reads_powershell_and_fails_closed() {
   local probe_bin=$TMP_ROOT/psbin
   mkdir -p "$probe_bin"
   # probe <path>: the real probe function, in its own shell, with that PATH.
@@ -275,8 +275,14 @@ test_the_gpu_probe_reads_powershell_and_its_absence_is_no_conflict() {
   printf '#!/bin/sh\necho 0\n' >"$probe_bin/powershell.exe"
   ! probe "$probe_bin:/usr/bin:/bin" || fail "no ComfyUI process must be no conflict"
   printf '#!/bin/sh\necho oops\nexit 1\n' >"$probe_bin/powershell.exe"
-  ! probe "$probe_bin:/usr/bin:/bin" || fail "a failing probe must be no conflict"
-  pass "the GPU probe reads powershell.exe and treats its absence or failure as no conflict"
+  probe "$probe_bin:/usr/bin:/bin" || fail "a failing probe must fail closed as a conflict"
+  printf '#!/bin/sh\nexit 0\n' >"$probe_bin/powershell.exe"
+  probe "$probe_bin:/usr/bin:/bin" || fail "a probe with no number must fail closed as a conflict"
+  printf '#!/bin/sh\nsleep 2\necho 0\n' >"$probe_bin/powershell.exe"
+  env PATH="$probe_bin:/usr/bin:/bin" FM_LOCAL_LLM_GPU_PROBE_TIMEOUT=1 \
+    bash -c '. "$1/bin/fm-local-llm-lib.sh"; fm_local_llm_gpu_conflict' _ "$ROOT" \
+    || fail "a probe that times out must fail closed as a conflict"
+  pass "the GPU probe reads powershell.exe, with no powershell.exe as no conflict and every other probe failure fail-closed as a conflict"
 }
 
 test_the_model_id_alone_selects_the_profile
@@ -295,6 +301,6 @@ test_select_never_starts_anything_without_the_sandbox
 test_select_starts_the_server_once_then_rechecks
 test_select_falls_back_when_the_started_server_never_answers
 test_select_does_not_start_the_server_while_comfyui_holds_the_gpu
-test_the_gpu_probe_reads_powershell_and_its_absence_is_no_conflict
+test_the_gpu_probe_reads_powershell_and_fails_closed
 
 echo "# all fm-local-llm-lib tests passed"

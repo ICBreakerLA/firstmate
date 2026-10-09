@@ -1048,14 +1048,14 @@ A launched pane that never starts its wrapper leaves the claim with the holder, 
 #### Fallback to Claude Haiku and the optional server start
 
 The refusals above apply to an explicit `--model qwen3.8-27b-gsq-rco`, which is a deliberate choice: it still refuses with a clear message and never falls back.
-A model that arrives through a dispatch rule or profile is a preference, not a choice, so the dispatch caller passes `--from-dispatch` to `bin/fm-spawn.sh` and the spawn falls back to `claude-haiku-4-5` at `low` effort instead of refusing.
+A model that arrives through a dispatch rule or profile is a preference, not a choice, so `bin/fm-dispatch-resolve.sh` always emits `--from-dispatch` on its `profile:` line and the spawn falls back to `claude-haiku-4-5` at `low` effort instead of refusing.
 Both fallback values are the named settings `FM_LOCAL_LLM_FALLBACK_MODEL` and `FM_LOCAL_LLM_FALLBACK_EFFORT` in `bin/fm-local-llm-lib.sh`.
 `fm_local_llm_select` makes the decision with these checks in order, and the first failure decides:
 
 1. The home supports the sandbox profile: the sbx runtime is present and `config/worker-sandbox` is `sbx`.
    A remote or secondmate-seeded home without it, such as a Mac, always falls back here; nothing is started and no connection to another machine is attempted.
 2. ComfyUI does not hold the shared 16 GB GPU, and the server answers `/v1/models` with the model.
-   `fm_local_llm_gpu_conflict` is the replaceable probe: on this PC it asks `powershell.exe` for a python process whose path is under `C:\ComfyUI\venv`, and a missing `powershell.exe` or a probe that gives no answer means no conflict.
+   `fm_local_llm_gpu_conflict` is the replaceable probe: on this PC it asks `powershell.exe` for a python process whose path is under `C:\ComfyUI\venv`; a missing `powershell.exe` means no conflict, but a probe that exists and fails, times out, or gives no number is treated as a conflict (unavailable, so the spawn falls back rather than risk running alongside ComfyUI).
    When the server is not answering and `config/local-llm-start` holds a command, it runs once and the spawn waits up to `FM_LOCAL_LLM_START_WAIT` seconds (default 120) for the server to answer, then rechecks the GPU; a command that exits non-zero or a wait that runs out falls back.
 3. The one local slot is free; the spawn claims it as above.
 

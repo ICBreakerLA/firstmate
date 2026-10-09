@@ -268,6 +268,135 @@ test_the_local_profile_needs_the_sandbox() {
   pass "the local profile refuses to run outside the sandbox"
 }
 
+# A dispatch-chosen local model falls back to Haiku with one notice and a
+# record of the model actually used; an explicit --model keeps the refusal.
+test_a_dispatch_chosen_local_model_falls_back_when_the_server_is_down() {
+  local out rc
+  new_case fb-down sbx
+  local_server down
+  out=$(spawn_task fb-down --model qwen3.8-27b-gsq-rco --effort high --from-dispatch 2>&1); rc=$?
+  expect_code 0 "$rc" "a dispatch-chosen local model must fall back, not refuse: $out"
+  assert_contains "$out" "the server is not answering and no start command is configured" "the notice names the failed check"
+  assert_contains "$out" "using claude-haiku-4-5 (effort low) instead" "the notice names what it used"
+  assert_grep "model=claude-haiku-4-5" "$HOME_DIR/state/fb-down.meta" "the record carries the model actually used"
+  assert_grep "effort=low" "$HOME_DIR/state/fb-down.meta" "the record carries the fallback effort"
+  assert_grep "model_fallback_from=qwen3.8-27b-gsq-rco" "$HOME_DIR/state/fb-down.meta" "the record says what it fell back from"
+  assert_grep "--model 'claude-haiku-4-5'" "$CASE/launch.log" "the worker launches on Haiku"
+  assert_no_grep "--local-llm" "$CASE/launch.log" "the fallback is an ordinary sandboxed worker"
+  pass "a dispatch-chosen local model falls back to Haiku when the server is down"
+}
+
+test_an_explicit_local_model_keeps_the_refusal() {
+  local out rc
+  new_case fb-explicit sbx
+  local_server down
+  out=$(spawn_task fb-explicit --model qwen3.8-27b-gsq-rco 2>&1); rc=$?
+  expect_code 1 "$rc" "an explicit local model must still refuse"
+  assert_refused_cleanly fb-explicit "$out" "local model server is not answering"
+  pass "an explicit --model never falls back"
+}
+
+test_a_home_without_the_sandbox_falls_back_and_starts_nothing() {
+  local out rc
+  new_case fb-mac - none
+  local_server up
+  printf '#!/bin/sh\necho x >> "%s"\n' "$CASE/start.count" >"$CASE/start.sh"
+  chmod +x "$CASE/start.sh"
+  printf '%s\n' "$CASE/start.sh" >"$HOME_DIR/config/local-llm-start"
+  out=$(spawn_task fb-mac --model qwen3.8-27b-gsq-rco --from-dispatch 2>&1); rc=$?
+  expect_code 0 "$rc" "a sandbox-less home must fall back: $out"
+  assert_contains "$out" "the home has no sandbox profile" "the notice names check (a)"
+  assert_grep "model=claude-haiku-4-5" "$HOME_DIR/state/fb-mac.meta" "the record carries Haiku"
+  assert_absent "$CASE/start.count" "nothing is started on a sandbox-less home"
+  pass "a home without sbx falls back outright and never starts a server"
+}
+
+test_a_taken_slot_falls_back() {
+  local out rc
+  new_case fb-busy sbx
+  local_server up
+  exec 7>"$CASE/llm.lock"
+  flock -n 7 || fail "test could not take the lock"
+  out=$(spawn_task fb-busy --model qwen3.8-27b-gsq-rco --from-dispatch 2>&1); rc=$?
+  exec 7>&-
+  expect_code 0 "$rc" "a taken slot must fall back: $out"
+  assert_contains "$out" "the one local slot is taken" "the notice names check (c)"
+  assert_grep "model=claude-haiku-4-5" "$HOME_DIR/state/fb-busy.meta" "the record carries Haiku"
+  pass "a taken local slot falls back to Haiku"
+}
+
+# The stub start command brings up a real throwaway HTTP server on a private
+# port, so the whole start-then-recheck path runs against real curl.
+test_the_configured_start_command_brings_the_server_up_first() {
+  local out rc port=18391
+  new_case fb-start sbx
+  rm -f "$FAKEBIN/curl"
+  export FM_LOCAL_LLM_LOCK="$CASE/llm.lock" FM_LOCAL_LLM_URL="http://127.0.0.1:$port"
+  export FM_LOCAL_LLM_START_POLL=0.2
+  mkdir -p "$CASE/srv/v1"
+  printf '{"data":[{"id":"qwen3.8-27b-gsq-rco"}]}\n' >"$CASE/srv/v1/models"
+  cat >"$CASE/start.sh" <<SH
+#!/bin/sh
+echo x >> "$CASE/start.count"
+cd "$CASE/srv" && exec python3 -m http.server $port --bind 127.0.0.1 >/dev/null 2>&1
+SH
+  chmod +x "$CASE/start.sh"
+  printf '%s\n' "$CASE/start.sh" >"$HOME_DIR/config/local-llm-start"
+  out=$(spawn_task fb-start --model qwen3.8-27b-gsq-rco --from-dispatch 2>&1); rc=$?
+  pkill -f "http.server $port" 2>/dev/null || true
+  unset FM_LOCAL_LLM_URL FM_LOCAL_LLM_START_POLL
+  expect_code 0 "$rc" "a started server must be used: $out"
+  assert_equals "1" "$(wc -l <"$CASE/start.count" | tr -d ' ')" "the start command ran once"
+  assert_grep "--local-llm" "$CASE/launch.log" "the worker is the local-model worker"
+  assert_grep "model=qwen3.8-27b-gsq-rco" "$HOME_DIR/state/fb-start.meta" "the record carries the local model"
+  assert_no_grep "model_fallback_from" "$HOME_DIR/state/fb-start.meta" "no fallback is recorded"
+  release_slot
+  slot_free || fail "the claim must end once its wrapper is gone"
+  pass "a configured start command brings the server up and the local model is used"
+}
+
+test_a_start_command_that_never_answers_falls_back() {
+  local out rc
+  new_case fb-timeout sbx
+  local_server down
+  printf '#!/bin/sh\nexit 0\n' >"$CASE/start.sh"
+  chmod +x "$CASE/start.sh"
+  printf '%s\n' "$CASE/start.sh" >"$HOME_DIR/config/local-llm-start"
+  out=$(FM_LOCAL_LLM_START_WAIT=1 FM_LOCAL_LLM_START_POLL=0.2 spawn_task fb-timeout --model qwen3.8-27b-gsq-rco --from-dispatch 2>&1); rc=$?
+  expect_code 0 "$rc" "a start timeout must fall back: $out"
+  assert_contains "$out" "did not answer within 1s of its start command" "the notice names the timeout"
+  assert_grep "model=claude-haiku-4-5" "$HOME_DIR/state/fb-timeout.meta" "the record carries Haiku"
+  pass "a start command whose server never answers falls back"
+}
+
+test_comfyui_holding_the_gpu_falls_back_without_starting() {
+  local out rc
+  new_case fb-gpu sbx
+  local_server up
+  printf '#!/bin/sh\necho 1\n' >"$FAKEBIN/powershell.exe"
+  chmod +x "$FAKEBIN/powershell.exe"
+  printf '#!/bin/sh\necho x >> "%s"\n' "$CASE/start.count" >"$CASE/start.sh"
+  chmod +x "$CASE/start.sh"
+  printf '%s\n' "$CASE/start.sh" >"$HOME_DIR/config/local-llm-start"
+  out=$(spawn_task fb-gpu --model qwen3.8-27b-gsq-rco --from-dispatch 2>&1); rc=$?
+  expect_code 0 "$rc" "a busy GPU must fall back: $out"
+  assert_contains "$out" "ComfyUI holds the GPU" "the notice names the GPU"
+  assert_grep "model=claude-haiku-4-5" "$HOME_DIR/state/fb-gpu.meta" "the record carries Haiku"
+  assert_absent "$CASE/start.count" "nothing is started while ComfyUI holds the GPU"
+  pass "ComfyUI holding the GPU falls back to Haiku"
+}
+
+test_a_dispatch_flag_without_a_local_model_changes_nothing() {
+  local out rc
+  new_case fb-plain sbx
+  local_server down
+  out=$(spawn_task fb-plain --model claude-fable-5-1 --effort high --from-dispatch 2>&1); rc=$?
+  expect_code 0 "$rc" "an ordinary model is untouched: $out"
+  assert_grep "model=claude-fable-5-1" "$HOME_DIR/state/fb-plain.meta" "the model is kept"
+  assert_no_grep "model_fallback_from" "$HOME_DIR/state/fb-plain.meta" "no fallback is recorded"
+  pass "--from-dispatch leaves a non-local model alone"
+}
+
 test_absent_config_keeps_the_launch_unchanged
 test_explicit_off_is_the_same_as_absent
 test_sbx_rewrites_the_launch_and_records_the_sandbox
@@ -281,5 +410,13 @@ test_the_local_profile_refuses_before_any_side_effect
 test_the_local_profile_needs_the_sandbox
 test_a_second_close_local_spawn_leaves_no_worktree_or_record
 test_a_failed_local_spawn_releases_the_slot
+test_a_dispatch_chosen_local_model_falls_back_when_the_server_is_down
+test_an_explicit_local_model_keeps_the_refusal
+test_a_home_without_the_sandbox_falls_back_and_starts_nothing
+test_a_taken_slot_falls_back
+test_the_configured_start_command_brings_the_server_up_first
+test_a_start_command_that_never_answers_falls_back
+test_comfyui_holding_the_gpu_falls_back_without_starting
+test_a_dispatch_flag_without_a_local_model_changes_nothing
 
 echo "# all fm-spawn-sandbox tests passed"

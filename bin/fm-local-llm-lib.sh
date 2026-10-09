@@ -19,8 +19,15 @@
 #                       http://127.0.0.1:8080); the sandbox's base URL and
 #                       network rule stay on port 8080
 #   FM_LOCAL_LLM_LOCK   the host-wide lock file
-# This tree never changes the global sbx policy, never starts or stops the
-# server (that is `local-llm up|down|status`), and never passes a host secret.
+#   FM_LOCAL_LLM_START_WAIT   seconds a configured start command is given to make
+#                             the server answer (default 120)
+#   FM_LOCAL_LLM_START_POLL   seconds between those answers checks (default 2)
+#   FM_LOCAL_LLM_GPU_PROBE_TIMEOUT   seconds the GPU probe gives powershell.exe
+#                                    to answer (default 15)
+# This tree never changes the global sbx policy, never stops the server (that is
+# `local-llm down`), and never passes a host secret. It starts the server only
+# through the optional config/local-llm-start command, and only for a model that
+# arrived through a dispatch rule or profile (fm_local_llm_select).
 
 FM_LOCAL_LLM_MODEL=qwen3.8-27b-gsq-rco
 # Seen from inside an sbx microVM the host's loopback is host.docker.internal;
@@ -35,6 +42,9 @@ FM_LOCAL_LLM_ANTHROPIC_HOST=api.anthropic.com
 # The server context is 96,256 tokens; compacting at 88,000 leaves room for a
 # reply and the compaction call itself.
 FM_LOCAL_LLM_COMPACT_WINDOW=88000
+# What a dispatch-chosen local model falls back to when it is unavailable.
+FM_LOCAL_LLM_FALLBACK_MODEL=claude-haiku-4-5
+FM_LOCAL_LLM_FALLBACK_EFFORT=low
 
 # fm_local_llm_is_model <model>: 0 when the model id selects the profile.
 fm_local_llm_is_model() {
@@ -150,4 +160,90 @@ fm_local_llm_env() {
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW=$FM_LOCAL_LLM_COMPACT_WINDOW" \
     "CLAUDE_CODE_ATTRIBUTION_HEADER=0" \
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
+}
+
+# fm_local_llm_gpu_conflict
+# 0 when ComfyUI holds the shared 16 GB GPU: on this PC, a python process whose
+# path is under C:\ComfyUI\venv, found through powershell.exe. Replace this one
+# function for another machine. No powershell.exe at all means no conflict (the
+# probe does not apply on this machine); but a probe that exists and fails,
+# times out, or gives no number counts as a conflict, since that is exactly
+# the condition a busy GPU is most likely to produce and the GPU must never be
+# assumed free on missing evidence.
+fm_local_llm_gpu_conflict() {
+  local out
+  command -v powershell.exe >/dev/null 2>&1 || return 1
+  out=$(timeout "${FM_LOCAL_LLM_GPU_PROBE_TIMEOUT:-15}" powershell.exe -NoProfile -NonInteractive -Command \
+    "@(Get-Process python* -ErrorAction SilentlyContinue | Where-Object { \$_.Path -like 'C:\\ComfyUI\\venv\\*' }).Count" \
+    2>/dev/null </dev/null | tr -d '[:space:]') || return 0
+  case "$out" in
+  '' | *[!0-9]*) return 0 ;;
+  esac
+  [ "$out" -gt 0 ]
+}
+
+# fm_local_llm_start_command <config-dir>
+# The first non-blank, non-# line of <config-dir>/local-llm-start, or nothing.
+fm_local_llm_start_command() {
+  local f=$1/local-llm-start
+  [ -f "$f" ] || return 0
+  sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$f" | grep -v -e '^$' -e '^#' | head -n 1
+}
+
+# fm_local_llm_start_and_wait <command>
+# Runs the host-side start command once, detached, then waits up to
+# FM_LOCAL_LLM_START_WAIT seconds for the server to answer with the model. 0
+# once it does. A start command that exits non-zero ends the wait early.
+fm_local_llm_start_and_wait() {
+  local cmd=$1 limit poll deadline pid ended=0
+  limit=${FM_LOCAL_LLM_START_WAIT:-120}
+  poll=${FM_LOCAL_LLM_START_POLL:-2}
+  bash -c "$cmd" </dev/null >/dev/null 2>&1 9>&- &
+  pid=$!
+  deadline=$((SECONDS + limit))
+  while :; do
+    fm_local_llm_health >/dev/null 2>&1 && return 0
+    if [ "$ended" -eq 0 ] && ! kill -0 "$pid" 2>/dev/null; then
+      ended=1
+      wait "$pid" || return 1
+    fi
+    [ "$SECONDS" -lt "$deadline" ] || return 1
+    sleep "$poll"
+  done
+}
+
+# fm_local_llm_select <task-id> <sandbox-active: 0|1> <config-dir>
+# The availability decision for a local model that arrived through a dispatch
+# rule or profile, in this order, the first failure deciding:
+#   (a) the home supports the sandbox profile -> else fall back, never start;
+#   (b) ComfyUI is not holding the GPU, and the server answers with the model
+#       (once started through config/local-llm-start when it did not);
+#   (c) the one local slot is free, and is claimed here.
+# 0: the local model is usable and the slot is claimed (FM_LOCAL_LLM_HOLDER is
+# set). 1: unavailable; one notice line names the failed check and the model
+# used instead. Nothing is created either way beyond the claim.
+fm_local_llm_select() {
+  local id=$1 sbx=$2 cfg=$3 why cmd err
+  why=
+  if [ "$sbx" != 1 ]; then
+    why="the home has no sandbox profile (config/worker-sandbox is not sbx or sbx is absent)"
+  elif fm_local_llm_gpu_conflict; then
+    why="ComfyUI holds the GPU"
+  elif ! err=$(fm_local_llm_health 2>&1 >/dev/null); then
+    cmd=$(fm_local_llm_start_command "$cfg")
+    if [ -z "$cmd" ]; then
+      why="the server is not answering and no start command is configured (config/local-llm-start)"
+    elif fm_local_llm_start_and_wait "$cmd"; then
+      why=
+    else
+      why="the server did not answer within ${FM_LOCAL_LLM_START_WAIT:-120}s of its start command"
+    fi
+    [ -n "$why" ] || ! fm_local_llm_gpu_conflict || why="ComfyUI holds the GPU"
+  fi
+  if [ -z "$why" ]; then
+    err=$(fm_local_llm_claim "$id" 2>&1) || why="the one local slot is taken (${err#error: })"
+  fi
+  [ -z "$why" ] && return 0
+  echo "local model $FM_LOCAL_LLM_MODEL unavailable: $why; using $FM_LOCAL_LLM_FALLBACK_MODEL (effort $FM_LOCAL_LLM_FALLBACK_EFFORT) instead" >&2
+  return 1
 }

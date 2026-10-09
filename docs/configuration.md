@@ -1027,7 +1027,8 @@ The worker-authored bundle it serves runs in the app signed in as the verify acc
 A sandboxed Claude worker can run against a llama.cpp `llama-server` on the host instead of the Anthropic API, so small tasks stop drawing on the Claude plan.
 The profile is selected per spawn by the model id alone: a Claude launch whose model is `qwen3.8-27b-gsq-rco`, given as `--model` or as the model of a [dispatch profile](#crew-dispatch-profiles-configcrew-dispatchjson), is a local-model worker.
 No new flag or config file exists, so a dispatch rule that names that model needs nothing more.
-`local-llm up|down|status` starts and stops the server, and Firstmate never does either.
+`local-llm up|down|status` starts and stops the server.
+Firstmate never stops it; it starts it only through the optional `config/local-llm-start` file described under [Fallback to Claude Haiku](#fallback-to-claude-haiku-and-the-optional-server-start).
 
 The profile runs only inside the worker sandbox, so the sandbox is what keeps the captain's Claude login and every other host secret away from it.
 Its one credential is the same scoped GitHub token every other sandboxed worker gets (the fork-only token for a fork ship, otherwise the home's token), stored per sandbox as [above](#worker-sandbox-configworker-sandbox).
@@ -1043,6 +1044,26 @@ The claim names the task in the lock file and passes to a small detached holder,
 The wrapper never takes or waits for the lock itself: it refuses to start unless the held claim names its own task.
 A spawn that fails before its launch is live releases the claim at once.
 A launched pane that never starts its wrapper leaves the claim with the holder, a `cat` of the `.handoff` FIFO, until that process is ended.
+
+#### Fallback to Claude Haiku and the optional server start
+
+The refusals above apply to an explicit `--model qwen3.8-27b-gsq-rco`, which is a deliberate choice: it still refuses with a clear message and never falls back.
+A model that arrives through a dispatch rule or profile is a preference, not a choice, so the dispatch caller passes `--from-dispatch` to `bin/fm-spawn.sh` and the spawn falls back to `claude-haiku-4-5` at `low` effort instead of refusing.
+Both fallback values are the named settings `FM_LOCAL_LLM_FALLBACK_MODEL` and `FM_LOCAL_LLM_FALLBACK_EFFORT` in `bin/fm-local-llm-lib.sh`.
+`fm_local_llm_select` makes the decision with these checks in order, and the first failure decides:
+
+1. The home supports the sandbox profile: the sbx runtime is present and `config/worker-sandbox` is `sbx`.
+   A remote or secondmate-seeded home without it, such as a Mac, always falls back here; nothing is started and no connection to another machine is attempted.
+2. ComfyUI does not hold the shared 16 GB GPU, and the server answers `/v1/models` with the model.
+   `fm_local_llm_gpu_conflict` is the replaceable probe: on this PC it asks `powershell.exe` for a python process whose path is under `C:\ComfyUI\venv`, and a missing `powershell.exe` or a probe that gives no answer means no conflict.
+   When the server is not answering and `config/local-llm-start` holds a command, it runs once and the spawn waits up to `FM_LOCAL_LLM_START_WAIT` seconds (default 120) for the server to answer, then rechecks the GPU; a command that exits non-zero or a wait that runs out falls back.
+3. The one local slot is free; the spawn claims it as above.
+
+Every fallback prints one line on stderr naming the failed check and the model used instead, and the task record carries the model actually used in `model=` plus `model_fallback_from=` naming the local model.
+
+`config/local-llm-start` is optional, local, and gitignored; its first non-blank, non-`#` line is the host-side command that starts the server, for example `~/.local/bin/local-llm up` on this PC.
+Absent means Firstmate never starts the server, which is also what a Mac home gets.
+Firstmate never stops the server: stopping stays with the operator or a nightly routine.
 
 The sandbox gets this environment on top of the usual allowlist, built by `fm_local_llm_env` in `bin/fm-local-llm-lib.sh`:
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--from-dispatch] [--backend <name>]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -97,6 +97,11 @@
 #   build agent's variant, keyed to the resolved model, inside the
 #   OPENCODE_CONFIG_CONTENT JSON its launch already carries (config schema
 #   verified on opencode 1.18.32); without a model the axis is recorded but omitted.
+#   --from-dispatch says the harness/model/effort came from a dispatch rule or
+#   profile rather than an explicit captain choice. It changes one thing: a
+#   local model (docs/configuration.md "Local-model worker profile") that is
+#   unavailable falls back to claude-haiku-4-5 at low effort, with one notice
+#   line, instead of refusing; an explicit --model without it still refuses.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -680,6 +685,7 @@ BASE_BRANCH=
 BASE_BRANCH_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
+FROM_DISPATCH=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -745,6 +751,7 @@ for a in "$@"; do
     KIND_SET=1
     ;;
   --relaunch) RELAUNCH=1 ;;
+  --from-dispatch) FROM_DISPATCH=1 ;;
   --harness) want_value=harness ;;
   --harness=*)
     HARNESS_ARG=${a#--harness=}
@@ -2506,6 +2513,7 @@ fi
 # claimed here for the wrapper to take over (spawn_abort_cleanup releases a
 # claim no launched wrapper will take).
 LOCAL_LLM_ACTIVE=0
+MODEL_FELL_BACK_FROM=
 FM_LOCAL_LLM_HOLDER=
 if fm_local_llm_is_model "$MODEL"; then
   [ "$KIND" != secondmate ] || {
@@ -2516,13 +2524,23 @@ if fm_local_llm_is_model "$MODEL"; then
     echo "error: the local-model profile ($MODEL) runs only on the claude harness, not $HARNESS" >&2
     exit 1
   }
-  [ "$SBX_ACTIVE" -eq 1 ] || {
-    echo "error: the local-model profile ($MODEL) runs only inside the worker sandbox; set config/worker-sandbox to sbx (a relaunch follows the task's recorded sandbox)" >&2
+  [ "$SBX_ACTIVE" -eq 1 ] || { [ "$FROM_DISPATCH" -eq 1 ] && [ "$RELAUNCH" -eq 0 ]; } || {
+    echo "error: the local-model profile ($MODEL) runs only inside the worker sandbox; set config/worker-sandbox to sbx (a relaunch follows the task's recorded sandbox); an explicit --model never falls back, only a dispatch-chosen one does" >&2
     exit 1
   }
-  fm_local_llm_health || exit 1
-  fm_local_llm_claim "$ID" || exit 1
-  LOCAL_LLM_ACTIVE=1
+  if [ "$FROM_DISPATCH" -eq 1 ] && [ "$RELAUNCH" -eq 0 ]; then
+    if fm_local_llm_select "$ID" "$SBX_ACTIVE" "$CONFIG"; then
+      LOCAL_LLM_ACTIVE=1
+    else
+      MODEL_FELL_BACK_FROM=$MODEL
+      MODEL=$FM_LOCAL_LLM_FALLBACK_MODEL
+      EFFORT=$FM_LOCAL_LLM_FALLBACK_EFFORT
+    fi
+  else
+    fm_local_llm_health || exit 1
+    fm_local_llm_claim "$ID" || exit 1
+    LOCAL_LLM_ACTIVE=1
+  fi
 fi
 
 secondmate_registry_value() {
@@ -5053,7 +5071,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider sandbox sandbox_name busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider model_fallback_from sandbox sandbox_name busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5073,6 +5091,7 @@ preserve_relaunch_meta() {
   [ -z "$BASE_BRANCH" ] || echo "base_branch=$BASE_BRANCH"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  [ -z "$MODEL_FELL_BACK_FROM" ] || echo "model_fallback_from=$MODEL_FELL_BACK_FROM"
   # The worker account pin, only when this home declares one, so an unpinned
   # task record stays byte-identical.
   [ -z "$WORKER_ACCOUNT" ] || echo "account=$WORKER_ACCOUNT_DECLARED"

@@ -1017,7 +1017,13 @@ It holds one `key=value` per line, and blank lines and lines starting with `#` a
 | `lease-ttl=SECS` | Idle seconds before the emulator lease is taken back and a forced shutdown runs. The default is 1200. |
 | `queue-ttl=SECS` | Seconds a waiting second holder keeps its place without asking again. The default is 180. |
 | `lease-dir=/abs/path` | The lease directory every home sharing the emulator must share. The default is `config/sbx-verify.d`. |
+| `ios-host=ALIAS` | Optional. The ssh alias of the Mac worker user. Setting it enables `platform: ios` requests and makes the next three keys required or allowed. An alias of letters, digits, `.`, `_` and `-` that does not start with a dash. |
+| `ios-sm-verify=/abs/path` | Required with `ios-host`. The pinned `sm-verify` on the Mac, an absolute path of letters, digits and `._/+-` with no `..`. |
+| `ios-sm-verify-sha256=HEX` | Required with `ios-host`. The digest the Mac's file must have, checked over ssh before every iOS run. |
+| `ios-app-id=ID` | The app id written into iOS flows. The default is `app-id`. |
+| `ios-work-dir=/abs/path` | The Mac's parent directory for per-request scratch directories. The default is `/tmp/fm-sbx-verify`. |
 
+An `ios-*` key without `ios-host` is refused, and `check` needs `ssh` on the host PATH when `ios-host` is set but never contacts the Mac.
 The broker runs only the pinned command, builds every argument itself, and ends the lease with a forced shutdown when the sandbox is removed or the task is torn down.
 Every request and verdict is appended to `state/<id>.sbx-verify/host/audit.log`, which no sandbox mount reaches.
 The worker-authored bundle it serves runs in the app signed in as the verify account, which the captain accepted as a residual risk.

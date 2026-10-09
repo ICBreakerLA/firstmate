@@ -687,6 +687,419 @@ test_default_run_is_unaffected_when_the_token_is_absent() {
   pass "without the token the sandbox config has no verification broker"
 }
 
+# ------------------------------------------------------------------- iOS ----
+# The Mac is simulated locally: a stub ssh runs the remote command with sh -c
+# against a fake sm-verify, so the exact remote command line is what is tested.
+
+make_ssh_stub() { # <path>
+  cat >"$1" <<'SH'
+#!/usr/bin/env bash
+opts=()
+host='' cmd=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  -o) opts+=("$2"); shift 2 ;;
+  -T) shift ;;
+  --) host=$2 cmd=$3; break ;;
+  *) shift ;;
+  esac
+done
+printf '%s\t%s\n' "$host" "$cmd" >>"$SSH_LOG"
+printf '%s\n' "${opts[*]}" >>"$SSH_LOG.opts"
+case "${STUB_SSH:-ok}" in
+unreachable) echo "ssh: Could not resolve hostname $host: Name or service not known" >&2; exit 255 ;;
+hostkey) printf '@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.\n' >&2; exit 255 ;;
+auth) echo "$host: Permission denied (publickey)." >&2; exit 255 ;;
+refused) echo "ssh: connect to host $host port 22: Connection refused" >&2; exit 255 ;;
+hang) exec sleep 30 ;;
+hang-run) case "$cmd" in *FM_SBX_VERIFY_EVIDENCE_DIR*) exec sleep 30 ;; esac ;;
+esac
+PATH="$MACBIN:$PATH" exec sh -c "$cmd"
+SH
+  chmod +x "$1"
+}
+
+# new_ios_world <name> [ttl]: an android world plus a Mac simulated under $MAC.
+new_ios_world() {
+  new_world "$1" "${2:-1200}"
+  local d="$TMP_ROOT/$1"
+  MAC="$d/mac"
+  MACBIN="$d/macbin"
+  SSH_LOG="$d/ssh.log"
+  mkdir -p "$MAC/work" "$MACBIN"
+  : >"$SSH_LOG"
+  : >"$SSH_LOG.opts"
+  printf '#!/bin/sh\nshift 2\nexec sha256sum "$@"\n' >"$MACBIN/shasum"
+  chmod +x "$MACBIN/shasum"
+  make_stub "$MAC/real-sm-verify"
+  cat >"$MAC/sm-verify" <<SH
+#!/usr/bin/env bash
+echo "apple: \${SM_IOS_VERIFY_APPLE-unset}" >>"\$STUB_LOG"
+"$MAC/real-sm-verify" "\$@"
+rc=\$?
+if [ "\${1:-}" = shot ] && [ -n "\${STUB_EVIDENCE_EXTRA:-}" ]; then
+  d=\$FM_SBX_VERIFY_EVIDENCE_DIR
+  for i in 1 2 3 4 5 6 7 8 9 10; do printf '\\x89PNG\\r\\n\\x1a\\nx' >"\$d/e\$i.png"; done
+  printf '\\x89PNG\\r\\n\\x1a\\n' >"\$d/big.png"; head -c 6000000 /dev/zero >>"\$d/big.png"
+  printf '\\x89PNG\\r\\n\\x1a\\nx' >"\$d/.hidden.png"
+  printf '\\x89PNG\\r\\n\\x1a\\nx' >"\$d/bad name.png"
+fi
+exit \$rc
+SH
+  chmod +x "$MAC/sm-verify"
+  MAC_SHA=$(sha256sum "$MAC/sm-verify" | cut -d' ' -f1)
+  printf 'ios-host=fm-mac-worker\nios-sm-verify=%s\nios-sm-verify-sha256=%s\nios-app-id=com.example.ios\nios-work-dir=%s\n' "$MAC/sm-verify" "$MAC_SHA" "$MAC/work" >>"$CONFIG/sbx-verify"
+  make_ssh_stub "$FAKEBIN/ssh"
+  export SSH_LOG MACBIN
+  unset STUB_SSH STUB_EVIDENCE_EXTRA
+}
+
+broker_once_ios() { PATH="$FAKEBIN:$PATH" broker_once; }
+ssh_calls() { grep -c . "$SSH_LOG" || true; }
+
+test_ios_needs_a_configured_host() {
+  new_world iosoff
+  send 1 '{"verb":"doctor","platform":"ios"}'
+  send 2 '{"verb":"doctor","platform":"windows"}'
+  send 3 '{"verb":"doctor","platform":"android"}'
+  broker_once
+  assert_equals rejected "$(field 1 .status)" "an iOS request without an iOS host is refused"
+  assert_equals platform_unavailable "$(field 1 .code)" "with a typed code"
+  assert_equals bad_request "$(field 2 .code)" "an unknown platform is a bad request"
+  assert_equals ok "$(field 3 .status)" "an explicit android request runs as before"
+  assert_equals false "$(field 3 'has("platform")')" "an android result is unchanged by the platform key"
+  assert_equals 1 "$(stub_calls)" "only the android request reached sm-verify"
+  pass "iOS requests are refused unless config/sbx-verify names an iOS host"
+}
+
+test_ios_reuses_the_validator() {
+  new_ios_world iosval
+  send 1 '{"verb":"do","platform":"ios","step":{"inputText":"hello"}}'
+  send 2 '{"verb":"do","platform":"ios","step":{"tapOn":{"text":"Sign in"}}}'
+  send 3 '{"verb":"do","platform":"ios","step":{"wibble":{}}}'
+  send 4 '{"verb":"flow","platform":"ios","yaml":"appId: x"}'
+  send 5 '{"verb":"tab","platform":"ios","name":"../x"}'
+  send 6 '{"verb":"up","platform":"ios","bundle":true}'
+  send 7 '{"verb":"shot","platform":"ios","name":"a;touch /tmp/x"}'
+  send 8 '{"verb":"doctor","platform":"ios","extra":1}'
+  broker_once_ios
+  assert_equals forbidden_step "$(field 1 .code)" "inputText is forbidden on iOS too"
+  assert_equals denied_selector "$(field 2 .code)" "the selector denylist applies on iOS"
+  assert_equals bad_step "$(field 3 .code)" "the step allowlist applies on iOS"
+  assert_equals bad_request "$(field 4 .code)" "a worker cannot supply YAML on iOS"
+  assert_equals bad_request "$(field 5 .code)" "a path-looking tab name is refused"
+  assert_equals bad_request "$(field 6 .code)" "a bundle is not served to the Mac"
+  assert_equals bad_request "$(field 7 .code)" "a metacharacter in a name is refused"
+  assert_equals bad_request "$(field 8 .code)" "an extra key is refused"
+  assert_equals 0 "$(ssh_calls)" "no rejected request reached the Mac"
+  assert_equals 0 "$(stub_calls)" "and none reached sm-verify"
+  pass "iOS requests go through the same validator, allowlists and denylist"
+}
+
+test_ios_doctor_runs_the_pinned_command_on_the_mac() {
+  new_ios_world iosdoc
+  export SM_IOS_VERIFY_APPLE=1
+  send 1 '{"verb":"doctor","platform":"ios"}'
+  send 2 '{"verb":"tab","platform":"ios","name":"Games"}'
+  broker_once_ios
+  unset SM_IOS_VERIFY_APPLE
+  assert_equals ok "$(field 1 .status)" "doctor runs: $(cat "$RES/1.json")"
+  assert_equals ios "$(field 1 .platform)" "the result names its platform"
+  assert_equals ok "$(field 2 .status)" "tab runs"
+  local log
+  log=$(cat "$LOG")
+  assert_contains "$log" 'argv: [doctor]' "the Mac's sm-verify got the verb"
+  assert_contains "$log" 'argv: [tab] [Games]' "and the validated name"
+  assert_not_contains "$log" 'apple: 1' "the Apple verify account is never enabled"
+  assert_contains "$log" 'apple: unset' "SM_IOS_VERIFY_APPLE is unset for the run"
+  local calls
+  calls=$(cat "$SSH_LOG")
+  assert_contains "$calls" "$(printf "fm-mac-worker\t'shasum' '-a' '256' '%s'" "$MAC/sm-verify")" "the pin is checked first, on the configured alias"
+  assert_contains "$calls" "'env' '-u' 'SM_IOS_VERIFY_APPLE' 'FM_SBX_VERIFY_EVIDENCE_DIR=" "the run unsets the Apple variable on the Mac"
+  assert_contains "$calls" "'$MAC/sm-verify' 'tab' 'Games'" "every word is quoted once"
+  local o
+  o=$(head -n 1 "$SSH_LOG.opts")
+  for o in BatchMode=yes StrictHostKeyChecking=yes ClearAllForwardings=yes ForwardAgent=no PermitLocalCommand=no RequestTTY=no ConnectTimeout=10; do
+    assert_contains "$(cat "$SSH_LOG.opts")" "$o" "ssh is run with $o"
+  done
+  assert_equals "" "$(ls "$MAC/work")" "the per-request directory on the Mac is removed"
+  pass "an iOS verb runs the pinned command on the Mac, never with the Apple account"
+}
+
+test_ios_flow_is_generated_on_the_host_and_evidence_is_filtered() {
+  new_ios_world iosflow
+  send 1 '{"verb":"flow","platform":"ios","steps":[{"tapOn":{"text":"Home (1)"}},{"takeScreenshot":{"name":"home1"}}]}'
+  broker_once_ios
+  assert_equals ok "$(field 1 .status)" "an allowed flow runs: $(cat "$RES/1.json")"
+  local log
+  log=$(cat "$LOG")
+  assert_contains "$log" 'appId: com.example.ios' "ios-app-id is the app id"
+  assert_contains "$log" 'text: "Home \\(1\\)"' "selectors are still escaped to match literally"
+  assert_contains "$log" "$MAC/work/" "screenshots land in the Mac's per-request directory"
+  assert_not_contains "$log" "$HOST" "no host path leaks into the Mac flow"
+  assert_equals 1 "$(field 1 '.evidence | length')" "only the valid PNG is returned"
+  assert_equals real.png "$(field 1 '.evidence[0].name')" "and it is the real one"
+  assert_equals 1 "$(field 1 .evidence_skipped)" "the fake PNG is counted as skipped"
+  [ ! -e "$RES/1/fake.png" ] && [ ! -e "$RES/1/link.png" ] || fail "invalid evidence reached res/"
+  assert_equals "" "$(ls "$MAC/work")" "the per-request directory on the Mac is removed"
+  pass "iOS flows are generated on the host and evidence is checked like Android's"
+}
+
+test_ios_evidence_limits_hold_over_ssh() {
+  new_ios_world iosev
+  export STUB_EVIDENCE_EXTRA=1
+  send 1 '{"verb":"shot","platform":"ios"}'
+  broker_once_ios
+  unset STUB_EVIDENCE_EXTRA
+  assert_equals ok "$(field 1 .status)" "shot runs"
+  local n
+  n=$(field 1 '.evidence | length')
+  [ "$n" -le 8 ] || fail "at most 8 files may come back, got $n"
+  [ ! -e "$RES/1/.hidden.png" ] && [ ! -e "$RES/1/bad name.png" ] && [ ! -e "$RES/1/big.png" ] || fail "hidden, oddly named or oversize files came back: $(ls -a "$RES/1")"
+  local f
+  for f in "$RES/1"/*; do
+    [ "$(head -c 4 "$f" | tail -c 3)" = PNG ] || fail "$f is not a PNG"
+    [ "$(stat -c %s "$f")" -le 5242880 ] || fail "$f is over 5 MiB"
+  done
+  local sk
+  sk=$(field 1 .evidence_skipped)
+  [ "$sk" -ge 3 ] || fail "skipped files must be counted, got $sk"
+  pass "evidence from the Mac keeps the count, size, name and PNG limits"
+}
+
+test_ios_remote_words_are_quoted_exactly_once() {
+  local out marker="$TMP_ROOT/quote-marker" cmd
+  rm -f "$marker"
+  # shellcheck source=bin/fm-sbx-verify-lib.sh
+  . "$ROOT/bin/fm-sbx-verify-lib.sh"
+  # shellcheck disable=SC2016
+  local -a words=("plain" "two words" "it's" ";touch $marker" '$(touch '"$marker"')' '`touch '"$marker"'`' "&& touch $marker" "| cat" ".." "../x" "*" "-n" "a\\b" '"q"' "~" "{a,b}" "!" "#c")
+  cmd=$(fm_sbxv_remote_cmd printf '%s|' "${words[@]}") || fail "quoting failed"
+  out=$(sh -c "$cmd")
+  local want
+  want=$(printf '%s|' "${words[@]}")
+  assert_equals "$want" "$out" "every word survives the remote shell as one argument"
+  [ ! -e "$marker" ] || fail "an injected command ran"
+  local bad
+  for bad in $'a\nb' $'a\tb' $'a\rb' ''; do
+    fm_sbxv_remote_cmd printf "$bad" >/dev/null 2>&1 && fail "a control byte or empty word must be refused: $(printf %q "$bad")"
+  done
+  fm_sbxv_remote_cmd >/dev/null 2>&1 && fail "an empty command must be refused"
+  pass "the remote command quotes every word once and refuses control bytes"
+}
+
+test_ios_remote_path_checks() {
+  # shellcheck source=bin/fm-sbx-verify-lib.sh
+  . "$ROOT/bin/fm-sbx-verify-lib.sh"
+  local ok bad
+  for ok in /opt/sm-verify /Users/w/bin/sm-verify.sh /tmp/fm-sbx-verify; do
+    fm_sbxv_remote_path_ok "$ok" || fail "$ok must be accepted"
+  done
+  # shellcheck disable=SC2016
+  for bad in relative/path /a/../b /a//b /a/ "/a b" '/a;b' '/a$b' "/a'b" '' / $'/a\nb'; do
+    fm_sbxv_remote_path_ok "$bad" && fail "$(printf %q "$bad") must be refused"
+  done
+  pass "Mac paths are absolute, plain and free of dot-dot segments"
+}
+
+test_ios_config_grammar() {
+  new_ios_world iosconf
+  "$BROKER" check --config "$CONFIG" --state "$STATE" || fail "a complete iOS config is accepted"
+  local good="$CONFIG/sbx-verify.good" err
+  cp "$CONFIG/sbx-verify" "$good"
+  refuse() { # <expected-substring> <description> <sed-script>
+    sed "$3" "$good" >"$CONFIG/sbx-verify"
+    if err=$("$BROKER" check --config "$CONFIG" --state "$STATE" 2>&1); then
+      fail "must be refused: $2"
+    fi
+    assert_contains "$err" "$1" "the refusal names the problem: $2"
+  }
+  refuse ios-host "an alias that starts with a dash" 's#^ios-host=.*#ios-host=-oProxyCommand=x#'
+  refuse ios-host "an alias with a space" 's#^ios-host=.*#ios-host=a b#'
+  refuse 'without ios-host' "ios keys without the host" '/^ios-host=/d'
+  refuse ios-sm-verify-sha256 "a host without its pin" '/^ios-sm-verify-sha256=/d'
+  refuse ios-sm-verify "a host without its command" '/^ios-sm-verify=/d'
+  refuse ios-sm-verify "a relative Mac path" 's#^ios-sm-verify=.*#ios-sm-verify=relative/sm-verify#'
+  refuse ios-sm-verify "a dot-dot Mac path" 's#^ios-sm-verify=.*#ios-sm-verify=/opt/../etc/x#'
+  refuse ios-sm-verify-sha256 "a short pin" 's#^ios-sm-verify-sha256=.*#ios-sm-verify-sha256=abc#'
+  refuse ios-work-dir "a work dir with a metacharacter" 's#^ios-work-dir=.*#ios-work-dir=/tmp/a;b#'
+  cp "$good" "$CONFIG/sbx-verify"
+  pass "the iOS config keys are validated and need each other"
+}
+
+test_ios_checksum_mismatch_is_not_run() {
+  new_ios_world ioschk
+  printf '\n# changed\n' >>"$MAC/sm-verify"
+  send 1 '{"verb":"doctor","platform":"ios"}'
+  broker_once_ios
+  assert_equals error "$(field 1 .status)" "a changed Mac command is an error"
+  assert_equals sm_verify_changed "$(field 1 .code)" "with the changed code"
+  assert_equals ios "$(field 1 .platform)" "naming the platform"
+  assert_equals 0 "$(stub_calls)" "sm-verify was never run"
+  assert_equals 1 "$(ssh_calls)" "nothing but the checksum reached the Mac"
+  rm -f "$MAC/sm-verify"
+  send 2 '{"verb":"doctor","platform":"ios"}'
+  broker_once_ios
+  assert_equals sm_verify_missing "$(field 2 .code)" "a missing Mac command is typed"
+  assert_equals 0 "$(stub_calls)" "and still nothing ran"
+  pass "a Mac command that does not match its pin is never run"
+}
+
+test_ios_ssh_failures_are_typed_and_never_fall_back() {
+  new_ios_world iosfail
+  local mode code n=0
+  for pair in unreachable:mac_unreachable hostkey:ssh_host_key auth:ssh_auth refused:ssh_refused; do
+    mode=${pair%%:*} code=${pair##*:}
+    n=$((n + 1))
+    export STUB_SSH=$mode
+    send "$n" '{"verb":"doctor","platform":"ios"}'
+    broker_once_ios
+    assert_equals error "$(field "$n" .status)" "$mode is an error, not a hang"
+    assert_equals "$code" "$(field "$n" .code)" "$mode is typed as $code"
+    assert_equals ios "$(field "$n" .platform)" "$mode names the platform"
+  done
+  unset STUB_SSH
+  assert_equals 0 "$(stub_calls)" "nothing ran locally or on the Mac"
+  send 9 '{"verb":"doctor","platform":"ios"}'
+  broker_once_ios
+  assert_equals ok "$(field 9 .status)" "the next request works once ssh does"
+  pass "SSH failures are typed errors and never fall back to a local run"
+}
+
+test_ios_timeouts() {
+  new_ios_world iostime
+  export FM_SBX_VERIFY_TIMEOUT=2
+  export STUB_SSH=hang
+  send 1 '{"verb":"doctor","platform":"ios"}'
+  broker_once_ios
+  assert_equals error "$(field 1 .status)" "a hung ssh during the check is an error"
+  assert_equals timeout "$(field 1 .code)" "typed as a timeout"
+  export STUB_SSH=hang-run
+  send 2 '{"verb":"doctor","platform":"ios"}'
+  broker_once_ios
+  assert_equals failed "$(field 2 .status)" "a run that outlives its limit is failed"
+  assert_equals timeout "$(field 2 .code)" "typed as a timeout"
+  assert_equals 124 "$(field 2 .exit)" "with the timeout exit status"
+  unset STUB_SSH FM_SBX_VERIFY_TIMEOUT
+  pass "each phase has its own time limit and a hung ssh cannot hold the broker"
+}
+
+test_ios_lease_is_separate_from_android() {
+  new_ios_world ioslease
+  task_dirs a
+  local a_req=$REQ a_res=$RES
+  start_daemon
+  local a_pid=$DPID
+  printf '{"verb":"up"}' >"$a_req/1.json"
+  RES=$a_res wait_result 1
+  task_dirs b
+  start_daemon
+  local b_pid=$DPID
+  send 1 '{"verb":"up","platform":"ios"}'
+  wait_result 1
+  assert_equals ok "$(field 1 .status)" "an iOS run is not blocked by the Android holder"
+  send 2 '{"verb":"doctor"}'
+  wait_result 2
+  assert_equals queued "$(field 2 .status)" "but an Android request from that task still queues behind the Android holder"
+  assert_equals false "$(field 2 'has("platform")')" "the android reply carries no platform"
+  send 3 '{"verb":"status","platform":"ios"}'
+  wait_result 3
+  assert_equals you "$(field 3 .lease.holder)" "status for iOS names this task as holder"
+  assert_equals ios "$(field 3 .platform)" "status says which lease it describes"
+  assert_equals null "$(field 3 '.bundle')" "and there is no bundle for iOS"
+  task_dirs c
+  send 1 '{"verb":"doctor","platform":"ios"}'
+  send 2 '{"verb":"status","platform":"ios"}'
+  broker_once_ios
+  assert_equals queued "$(field 1 .status)" "a third task queues for iOS"
+  assert_equals busy "$(field 1 .code)" "as busy"
+  assert_equals ios "$(field 1 .platform)" "and the queue reply names the platform"
+  assert_equals other "$(field 2 .lease.holder)" "status sees the other iOS holder"
+  DPID=$b_pid
+  stop_daemon
+  DPID=$a_pid
+  stop_daemon
+  pass "iOS has its own lease, queue and status, apart from Android"
+}
+
+ios_wait_down() { # <min-count>
+  local i
+  for i in $(seq 1 100); do
+    [ "$(grep -c '^argv: \[down\]' "$LOG")" -ge "$1" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+test_ios_teardown_sends_down_and_frees_the_lease() {
+  new_ios_world iosdown
+  PATH="$FAKEBIN:$PATH" start_daemon
+  send 1 '{"verb":"up","platform":"ios"}'
+  wait_result 1
+  assert_equals ok "$(field 1 .status)" "iOS up runs"
+  PATH="$FAKEBIN:$PATH" "$BROKER" stop --id t1 --state "$STATE" --config "$CONFIG" || fail "stop"
+  kill -0 "$DPID" 2>/dev/null && fail "the broker must have exited"
+  grep -q '^argv: \[down\]' "$LOG" || fail "stop must send down to the Mac"
+  grep -q "'down'" "$SSH_LOG" || fail "the down went over ssh"
+  task_dirs other
+  send 1 '{"verb":"doctor","platform":"ios"}'
+  broker_once_ios
+  assert_equals ok "$(field 1 .status)" "the iOS lease is free after teardown"
+  pass "teardown while holding the iOS lease sends down and frees it"
+}
+
+test_ios_killed_broker_and_vanished_sandbox_and_expiry_send_down() {
+  new_ios_world ioskill
+  PATH="$FAKEBIN:$PATH" start_daemon
+  send 1 '{"verb":"up","platform":"ios"}'
+  wait_result 1
+  kill -KILL "$DPID" 2>/dev/null
+  wait "$DPID" 2>/dev/null || true
+  PATH="$FAKEBIN:$PATH" "$BROKER" stop --id t1 --state "$STATE" --config "$CONFIG" || fail "stop"
+  ios_wait_down 1 || fail "stop must recover a killed broker's iOS simulator"
+
+  new_ios_world iosgone
+  cat >"$FAKEBIN/sbx" <<SH
+#!/usr/bin/env bash
+[ -e "$TMP_ROOT/iosgone/gone-flag" ] && exit 0
+echo sbx-t1
+SH
+  chmod +x "$FAKEBIN/sbx"
+  export FM_SBX_VERIFY_SANDBOX_POLL=1
+  PATH="$FAKEBIN:$PATH" start_daemon
+  send 1 '{"verb":"up","platform":"ios"}'
+  wait_result 1
+  touch "$TMP_ROOT/iosgone/gone-flag"
+  local i
+  for i in $(seq 1 100); do
+    kill -0 "$DPID" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -0 "$DPID" 2>/dev/null && fail "the broker must exit when its sandbox is gone"
+  unset FM_SBX_VERIFY_SANDBOX_POLL
+  ios_wait_down 1 || fail "a vanished sandbox must send down to the Mac"
+
+  new_ios_world iosexp 2
+  PATH="$FAKEBIN:$PATH" start_daemon
+  send 1 '{"verb":"up","platform":"ios"}'
+  wait_result 1
+  ios_wait_down 1 || fail "an idle iOS lease must end with down"
+  stop_daemon
+  pass "a killed broker, a vanished sandbox and an idle lease all send down to the Mac"
+}
+
+test_ios_audit_names_the_platform() {
+  new_ios_world iosaudit
+  send 1 '{"verb":"doctor","platform":"ios"}'
+  send 2 '{"verb":"doctor"}'
+  broker_once_ios
+  local log="$HOST/audit.log"
+  assert_equals ios "$(jq -sr '[.[] | select(.kind == "exec" and .seq == "1")][0].platform' "$log")" "iOS execution is audited with its platform"
+  assert_equals null "$(jq -sr '[.[] | select(.kind == "exec" and .seq == "2")][0].platform' "$log")" "Android lines are unchanged"
+  pass "the audit log says which platform each request used"
+}
+
+
 test_malformed_json_is_rejected
 test_oversize_request_is_rejected
 test_symlink_in_spool_is_not_followed
@@ -717,5 +1130,20 @@ test_down_that_exits_nonzero_still_ends_the_lease
 test_bundle_must_be_a_regular_file
 test_every_request_is_audited
 test_default_run_is_unaffected_when_the_token_is_absent
+test_ios_needs_a_configured_host
+test_ios_reuses_the_validator
+test_ios_doctor_runs_the_pinned_command_on_the_mac
+test_ios_flow_is_generated_on_the_host_and_evidence_is_filtered
+test_ios_evidence_limits_hold_over_ssh
+test_ios_remote_words_are_quoted_exactly_once
+test_ios_remote_path_checks
+test_ios_config_grammar
+test_ios_checksum_mismatch_is_not_run
+test_ios_ssh_failures_are_typed_and_never_fall_back
+test_ios_timeouts
+test_ios_lease_is_separate_from_android
+test_ios_teardown_sends_down_and_frees_the_lease
+test_ios_killed_broker_and_vanished_sandbox_and_expiry_send_down
+test_ios_audit_names_the_platform
 
 echo "# all fm-sbx-verify-broker tests passed"

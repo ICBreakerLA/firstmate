@@ -31,9 +31,20 @@
 #                           asking again (default 180)
 #   lease-dir=/abs/path     the lease every home sharing the emulator must share
 #                           (default <config>/sbx-verify.d)
+#
+# iOS runs only on the Mac, by ssh to one alias; all five keys need ios-host:
+#   ios-host=ALIAS          the ssh alias of the Mac worker user; setting it
+#                           enables `platform: ios` requests
+#   ios-sm-verify=/abs/path the Mac's pinned sm-verify, a path on the Mac
+#   ios-sm-verify-sha256=HEX  required with ios-host: the digest the remote file
+#                           must have before every run
+#   ios-app-id=ID           the app id written into iOS flows (default app-id)
+#   ios-work-dir=/abs/path  the Mac's scratch parent for per-request directories
+#                           (default /tmp/fm-sbx-verify)
 
 FM_SBXV_SMV='' FM_SBXV_SMV_SHA='' FM_SBXV_APP_ID=''
 FM_SBXV_PORT=8081 FM_SBXV_BIND=127.0.0.1 FM_SBXV_TTL=1200 FM_SBXV_QTTL=180 FM_SBXV_LEASE_DIR=''
+FM_SBXV_IOS_HOST='' FM_SBXV_IOS_SMV='' FM_SBXV_IOS_SMV_SHA='' FM_SBXV_IOS_APP_ID='' FM_SBXV_IOS_WORKDIR=''
 
 # Host-owned selector denylist: a tap whose text or id contains any of these,
 # after the normalization in the validator, is refused.
@@ -53,6 +64,39 @@ fm_sbxv_sha256() { # <file> -> lowercase hex digest
   fi
 }
 
+# fm_sbxv_remote_path_ok <path>: an absolute path on the Mac made of plain
+# characters only, with no empty or `..` segment.
+fm_sbxv_remote_path_ok() {
+  case "$1" in
+  /*) ;;
+  *) return 1 ;;
+  esac
+  case "$1" in *[!A-Za-z0-9._/+-]* | *//* | */../* | */.. | */) return 1 ;; esac
+  return 0
+}
+
+# fm_sbxv_shquote <token>: the token as one POSIX single-quoted word.
+# fm_sbxv_remote_cmd <token>...: the one string ssh receives as the remote
+# command, every token quoted and space-joined; refuses (status 1, no output)
+# an empty list or a token holding a control byte.
+# These two are the only place text for the remote shell is built.
+fm_sbxv_shquote() {
+  local esc="'\\''"
+  printf "'%s'" "${1//\'/$esc}"
+}
+
+fm_sbxv_remote_cmd() {
+  local t out='' sep=''
+  [ "$#" -ge 1 ] || return 1
+  for t in "$@"; do
+    [ -n "$t" ] || return 1
+    [[ "$t" != *[[:cntrl:]]* ]] || return 1
+    out+="$sep$(fm_sbxv_shquote "$t")"
+    sep=' '
+  done
+  printf '%s\n' "$out"
+}
+
 fm_sbxv_realpath() { python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
 
 # fm_sbxv_load_config <config-dir> <state-dir>
@@ -65,6 +109,7 @@ fm_sbxv_load_config() {
   FM_SBXV_SMV='' FM_SBXV_SMV_SHA='' FM_SBXV_APP_ID=''
   FM_SBXV_PORT=8081 FM_SBXV_BIND=127.0.0.1 FM_SBXV_TTL=1200 FM_SBXV_QTTL=180
   FM_SBXV_LEASE_DIR="$cdir/sbx-verify.d"
+  FM_SBXV_IOS_HOST='' FM_SBXV_IOS_SMV='' FM_SBXV_IOS_SMV_SHA='' FM_SBXV_IOS_APP_ID='' FM_SBXV_IOS_WORKDIR=''
   if [ ! -f "$file" ] || [ -L "$file" ] || [ ! -r "$file" ]; then
     echo "error: verify=app needs the host file config/sbx-verify (a regular file holding sm-verify=/absolute/path)" >&2
     return 1
@@ -116,6 +161,32 @@ fm_sbxv_load_config() {
       case "$val" in /*) ;; *) echo "error: config/sbx-verify lease-dir must be an absolute path" >&2; return 1 ;; esac
       FM_SBXV_LEASE_DIR=$val
       ;;
+    ios-host)
+      case "$val" in
+      '' | -* | *[!A-Za-z0-9._-]*) echo "error: config/sbx-verify ios-host takes an ssh alias of letters, digits, dot, underscore and dash that does not start with a dash" >&2; return 1 ;;
+      esac
+      [ "${#val}" -le 63 ] || { echo "error: config/sbx-verify ios-host is longer than 63 characters" >&2; return 1; }
+      FM_SBXV_IOS_HOST=$val
+      ;;
+    ios-sm-verify)
+      fm_sbxv_remote_path_ok "$val" || { echo "error: config/sbx-verify ios-sm-verify takes an absolute path on the Mac of letters, digits and ._/+-" >&2; return 1; }
+      FM_SBXV_IOS_SMV=$val
+      ;;
+    ios-sm-verify-sha256)
+      case "$val" in
+      '' | *[!0-9a-f]*) echo "error: config/sbx-verify ios-sm-verify-sha256 takes 64 lowercase hex digits" >&2; return 1 ;;
+      esac
+      [ "${#val}" -eq 64 ] || { echo "error: config/sbx-verify ios-sm-verify-sha256 takes 64 lowercase hex digits" >&2; return 1; }
+      FM_SBXV_IOS_SMV_SHA=$val
+      ;;
+    ios-app-id)
+      case "$val" in '' | *[!A-Za-z0-9_.]*) echo "error: config/sbx-verify ios-app-id takes letters, digits, dot and underscore" >&2; return 1 ;; esac
+      FM_SBXV_IOS_APP_ID=$val
+      ;;
+    ios-work-dir)
+      fm_sbxv_remote_path_ok "$val" || { echo "error: config/sbx-verify ios-work-dir takes an absolute path on the Mac of letters, digits and ._/+-" >&2; return 1; }
+      FM_SBXV_IOS_WORKDIR=$val
+      ;;
     *)
       echo "error: config/sbx-verify holds the unknown key '$key'" >&2
       return 1
@@ -131,6 +202,16 @@ fm_sbxv_load_config() {
   esac
   if [ -z "$FM_SBXV_APP_ID" ]; then
     echo "error: config/sbx-verify needs app-id=ID (letters, digits, dot and underscore)" >&2
+    return 1
+  fi
+  if [ -n "$FM_SBXV_IOS_HOST" ]; then
+    if [ -z "$FM_SBXV_IOS_SMV" ] || [ -z "$FM_SBXV_IOS_SMV_SHA" ]; then
+      echo "error: config/sbx-verify ios-host needs ios-sm-verify=/path/on/the/Mac and its ios-sm-verify-sha256 pin" >&2
+      return 1
+    fi
+    : "${FM_SBXV_IOS_APP_ID:=$FM_SBXV_APP_ID}" "${FM_SBXV_IOS_WORKDIR:=/tmp/fm-sbx-verify}"
+  elif [ -n "$FM_SBXV_IOS_SMV$FM_SBXV_IOS_SMV_SHA$FM_SBXV_IOS_APP_ID$FM_SBXV_IOS_WORKDIR" ]; then
+    echo "error: config/sbx-verify holds an ios-* key without ios-host" >&2
     return 1
   fi
   real=$(fm_sbxv_realpath "$FM_SBXV_SMV" 2>/dev/null) || real=''
@@ -205,12 +286,12 @@ def step:
       else die("bad_step"; "the step '" + ($k | .[0:40]) + "' is not in the allowlist") end
   end;
 def allowed($v):
-  if $v == "up" then ["verb", "id", "bundle"]
+  (if $v == "up" then ["verb", "id", "bundle"]
   elif $v == "tab" or $v == "shot" then ["verb", "id", "name"]
   elif $v == "metro-log" then ["verb", "id", "lines"]
   elif $v == "do" then ["verb", "id", "step"]
   elif $v == "flow" then ["verb", "id", "steps"]
-  else ["verb", "id"] end;
+  else ["verb", "id"] end) + ["platform"];
 def main:
   if type != "object" then die("bad_request"; "the request must be a JSON object") else . end
   | . as $r
@@ -219,9 +300,11 @@ def main:
   | (($r | keys) - allowed($v)) as $extra
   | if ($extra | length) > 0 then die("bad_request"; "the key '" + ($extra[0] | .[0:40]) + "' is not accepted for " + $v) else . end
   | if ($r | has("id")) and (($r.id | type) != "string" or ($r.id | test("^[A-Za-z0-9_.-]{1,64}$") | not)) then die("bad_request"; "id is 1-64 characters of letters, digits, _ . and -") else . end
-  | {ok: true, verb: $v, id: ($r.id // null)}
+  | if ($r | has("platform")) and ($r.platform | IN("android", "ios") | not) then die("bad_request"; "platform is android or ios") else . end
+  | {ok: true, verb: $v, id: ($r.id // null), platform: ($r.platform // "android")}
   | if $v == "up" then
       (if ($r | has("bundle")) and ($r.bundle | type) != "boolean" then die("bad_request"; "bundle is true or false") else . end)
+      | (if $r.bundle == true and .platform == "ios" then die("bad_request"; "bundle is not supported on ios") else . end)
       | . + {bundle: ($r.bundle // false)}
     elif $v == "tab" then
       (if ($r.name | type) == "string" and ($r.name | test("^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$")) then

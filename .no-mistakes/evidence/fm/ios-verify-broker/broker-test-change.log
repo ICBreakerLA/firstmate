@@ -1,0 +1,46 @@
+ok - malformed JSON never reaches sm-verify
+ok - an oversize request is refused unread
+ok - symlinks and special files in the spool are never read
+ok - only <digits>.json names are processed
+ok - unknown verbs, extra keys and hostile tab names are rejected
+ok - steps outside the allowlist are rejected
+ok - a worker cannot supply YAML, a header or an appId
+ok - inputText, Enter and the other forbidden commands are rejected
+ok - denylisted selectors are rejected, including tab names and punctuation variants
+ok - allowed steps become a host-generated flow with literal selectors
+ok - evidence is limited to real PNG files and text is control-stripped
+ok - results are atomic, complete and answered once
+ok - a failing sm-verify is reported faithfully
+ok - a rename or symlink swap during the copy cannot change what runs
+ok - no worker-supplied path or string reaches the sm-verify invocation
+ok - the pinned sm-verify must be a host-owned file matching its digest
+ok - a modified sm-verify no longer runs
+ok - status is answered by the broker without sm-verify or the lease
+ok - a second client is queued and gets the emulator after the first lets go
+ok - waiters are served first come first served
+ok - an idle lease expires with a forced down
+ok - requests keep the lease alive
+ok - teardown while holding the lease forces the emulator down and frees it
+ok - stop recovers an emulator left up by a killed broker
+ok - removing the sandbox ends the lease with a forced down
+ok - exactly one bundle file is served, everything else is a plain 404
+ok - a down that exits nonzero still ends the lease
+ok - the bundle must be one regular file
+ok - every request, verdict and digest is appended to the host audit log
+ok - without the token the sandbox config has no verification broker
+ok - iOS requests are refused unless config/sbx-verify names an iOS host
+ok - iOS requests go through the same validator, allowlists and denylist
+ok - an iOS verb runs the pinned command on the Mac, never with the Apple account
+ok - iOS flows are generated on the host and evidence is checked like Android's
+ok - evidence from the Mac keeps the count, size, name and PNG limits
+ok - the remote command quotes every word once and refuses control bytes
+ok - Mac paths are absolute, plain and free of dot-dot segments
+ok - the iOS config keys are validated and need each other
+ok - a Mac command that does not match its pin is never run
+ok - SSH failures are typed errors and never fall back to a local run
+ok - each phase has its own time limit and a hung ssh cannot hold the broker
+ok - iOS has its own lease, queue and status, apart from Android
+ok - teardown while holding the iOS lease sends down and frees it
+ok - a killed broker, a vanished sandbox and an idle lease all send down to the Mac
+ok - the audit log says which platform each request used
+# all fm-sbx-verify-broker tests passed

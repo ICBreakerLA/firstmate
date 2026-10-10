@@ -773,30 +773,45 @@ fm_backend_herdr_projection_workspace_label() {  # <task-id> <projection-id>
   printf '└ %s · p:%s' "$(fm_backend_herdr_projection_concise_task_label "$1")" "$2"
 }
 
-# fm_backend_herdr_presentation_session_lock_path: one machine-private lock
+# fm_backend_herdr_presentation_session_lock_path: one account-private lock
 # path per live named Herdr session/socket, shared across every Firstmate home
-# that uses that session.
+# of this OS account that uses that session.
 # The path is never under any one home's state/ and secondmates never write the
 # primary home. Returns non-zero when the named session's socket cannot be
 # resolved unambiguously.
 #
-# Two macOS users on one Mac share /tmp, and each runs its own Herdr server
-# (the remote fm-remote session is one per account). The first user's
-# namespace is mode 700 and owned by that user, so for the second user it is
-# unusable; that user gets a uid-suffixed namespace instead of an unresolvable
-# lock. FM_HERDR_PRESENTATION_LOCK_BASE moves the shared base for tests only.
+# The default namespace directory is always suffixed with this account's uid,
+# so another OS account on the same host can never create it first by ordinary
+# use and lock this account out; a deliberately pre-created name still fails
+# the ownership and mode checks below and is refused, never adopted, chowned,
+# or removed. The uid rather than $XDG_RUNTIME_DIR names it because that
+# variable can differ or be absent between login contexts of one account,
+# which would split one session's lock across processes.
+# Two macOS users on one Mac share /tmp and each runs its own Herdr server
+# (the remote fm-remote session is one per account), so each user resolves its
+# own namespace. FM_HERDR_PRESENTATION_LOCK_BASE moves the shared base for
+# tests only: the moved base stays the shared one when it is this account's
+# own directory and becomes a uid-suffixed sibling when it is foreign.
 fm_backend_herdr_presentation_lock_namespace() {
-  local base=${FM_HERDR_PRESENTATION_LOCK_BASE:-/tmp/firstmate-herdr-presentation} uid
-  if [ -e "$base" ] || [ -L "$base" ]; then
-    if fm_backend_herdr_presentation_lock_namespace_valid "$base"; then
-      printf '%s' "$base"
+  local base=${FM_HERDR_PRESENTATION_LOCK_BASE:-/tmp/firstmate-herdr-presentation} uid override
+  override=${FM_HERDR_PRESENTATION_LOCK_BASE:-}
+  uid=$(id -u 2>/dev/null) || return 1
+  case "$uid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  if [ -n "$override" ]; then
+    if [ -e "$base" ] || [ -L "$base" ]; then
+      if fm_backend_herdr_presentation_lock_namespace_valid "$base"; then
+        printf '%s' "$base"
+        return 0
+      fi
+      printf '%s-%s' "$base" "$uid"
       return 0
     fi
-    uid=$(id -u 2>/dev/null) || return 1
-    printf '%s-%s' "$base" "$uid"
+    printf '%s' "$base"
     return 0
   fi
-  printf '%s' "$base"
+  printf '%s-%s' "$base" "$uid"
 }
 
 fm_backend_herdr_presentation_lock_namespace_mode() {
@@ -1693,7 +1708,7 @@ fm_backend_herdr_server_ensure() {  # <session>
   (
     unset FM_HOME FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE \
       CURSOR_AGENT CURSOR_INVOKED_AS CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT FM_SUPERVISION_MODEL
-    fm_backend_herdr_cli "$session" server >/dev/null 2>&1 &
+    fm_backend_herdr_cli "$session" server </dev/null >/dev/null 2>&1 &
   ) || return 1
   for i in $(seq 1 20); do
     running=$(fm_backend_herdr_cli "$session" status --json 2>/dev/null | jq -r '.server.running // false' 2>/dev/null)
@@ -3068,6 +3083,15 @@ fm_backend_herdr_parse_target() {  # <target>
   [ -n "$FM_BACKEND_HERDR_SESSION" ] && [ -n "$FM_BACKEND_HERDR_PANE" ] && [ "$FM_BACKEND_HERDR_PANE" != "$target" ]
 }
 
+# fm_backend_herdr_target_observable: verify <target> is well-formed and its
+# recorded session server is currently running, WITHOUT autostarting the server.
+# Passive read-only probes (e.g. composer inspection) must stay observable-only
+# and fail fast on inactive or bad targets without starting a new server.
+fm_backend_herdr_target_observable() {  # <target>
+  fm_backend_herdr_parse_target "$1" || return 1
+  [ "$(fm_backend_herdr_server_running_state "$FM_BACKEND_HERDR_SESSION")" = running ]
+}
+
 fm_backend_herdr_target_ready() {  # <target>
   fm_backend_herdr_parse_target "$1" || return 1
   fm_backend_herdr_server_ensure "$FM_BACKEND_HERDR_SESSION" || return 1
@@ -3171,12 +3195,12 @@ fm_backend_herdr_capture() {  # <target> <lines>
 # workaround above - the bound is the pane itself, and asking for a line count
 # is what triggers the empty-read bug.
 fm_backend_herdr_visible_capture() {  # <target>
-  fm_backend_herdr_target_ready "$1" || return 1
+  fm_backend_herdr_target_observable "$1" || return 1
   fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" pane read "$FM_BACKEND_HERDR_PANE" --source visible 2>/dev/null
 }
 
 fm_backend_herdr_visible_capture_ansi() {  # <target>
-  fm_backend_herdr_target_ready "$1" || return 1
+  fm_backend_herdr_target_observable "$1" || return 1
   fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" pane read "$FM_BACKEND_HERDR_PANE" --source visible --format ansi 2>/dev/null
 }
 

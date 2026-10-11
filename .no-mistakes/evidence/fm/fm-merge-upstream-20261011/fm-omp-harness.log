@@ -1,0 +1,25 @@
+ok - fm-harness: omp detects by its anchored name; the marker is a precedence override that needs real omp ancestry
+ok - session lock and tmux liveness: omp is anchored, decoys stay out
+ok - fm-spawn: the omp launch line clears markers, pins posture, and wires the state-resident extension
+ok - fm-spawn: omp model validation is scoped to providers the listing can prove
+ok - fm-spawn: a real omp secondmate launch loads only the busy -e and auto-discovers its primary extensions
+ok - fm-spawn: the config/secondmate-harness model pin is validated against the omp catalog before launch
+not ok - handler listing failed: node:internal/modules/esm/get_format:219
+  throw new ERR_UNKNOWN_FILE_EXTENSION(ext, filepath);
+        ^
+
+TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".ts" for /tmp/fm-omp-harness.POrqGu/busy/home/state/omp-busy-q5.omp-ext.ts
+    at Object.getFileProtocolModuleFormat [as file:] (node:internal/modules/esm/get_format:219:9)
+    at defaultGetFormat (node:internal/modules/esm/get_format:245:36)
+    at defaultLoad (node:internal/modules/esm/load:98:16)
+    at ModuleLoader.load (node:internal/modules/esm/loader:815:12)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:594:31)
+    at #createModuleJob (node:internal/modules/esm/loader:624:36)
+    at #getJobFromResolveResult (node:internal/modules/esm/loader:343:34)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:311:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:664:25) {
+  code: 'ERR_UNKNOWN_FILE_EXTENSION'
+}
+
+Node.js v22.22.1

@@ -1,0 +1,24 @@
+ok - a claude secondmate spawn arms the busy contract the stall gate can see, and Stop does not wake the parent
+ok - a raw claude, pi, pi-signed, or omp secondmate launch writes no busy wiring and classifies unknown
+ok - a claude secondmate's Stop guard records busy on a blocked Stop and idle on an allowed one, in any hook order, and a rewake turn reopens busy
+ok - a claude secondmate whose home guard predates .fm-busy-stop keeps the Stop idle hook
+ok - a claude secondmate spawn leaves an existing settings.local.json untouched
+not ok - pi secondmate turn_end drive failed: node:internal/modules/esm/get_format:219
+  throw new ERR_UNKNOWN_FILE_EXTENSION(ext, filepath);
+        ^
+
+TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".ts" for /tmp/fm-busy-adapter-wiring.XYC7aG/sm-pi/primary/state/sm-pi.pi-ext.ts
+    at Object.getFileProtocolModuleFormat [as file:] (node:internal/modules/esm/get_format:219:9)
+    at defaultGetFormat (node:internal/modules/esm/get_format:245:36)
+    at defaultLoad (node:internal/modules/esm/load:98:16)
+    at ModuleLoader.load (node:internal/modules/esm/loader:815:12)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:594:31)
+    at #createModuleJob (node:internal/modules/esm/loader:624:36)
+    at #getJobFromResolveResult (node:internal/modules/esm/loader:343:34)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:311:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:664:25) {
+  code: 'ERR_UNKNOWN_FILE_EXTENSION'
+}
+
+Node.js v22.22.1

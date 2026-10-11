@@ -1,0 +1,12 @@
+ok - a missing teardown startup source refuses before cleanup
+ok - an unreadable teardown startup source refuses before cleanup
+ok - a missing adapter sibling refuses before cleanup
+ok - a forced descendant with a missing adapter sibling refuses before cleanup
+ok - a forced secondmate with a missing own adapter sibling refuses before child cleanup
+ok - present required sources still reach the ordinary teardown refusal
+ok - local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed
+tests/fm-teardown.test.sh: line 659: tasks-axi: command not found
+
+real	0m8.922s
+user	0m5.852s
+sys	0m3.307s

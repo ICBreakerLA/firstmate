@@ -1,0 +1,7 @@
+ok - a landed sandboxed ship is torn down and its sandbox files removed
+ok - clone commits reach the host before the landed test, and unlanded work refuses before any removal
+ok - uncommitted work in the sandbox clone refuses teardown
+ok - an explicit --force discards a dirty clone
+not ok - a scout's scratch clone does not block: fm-captain-hold: compatible tasks-axi is required
+REFUSED: scout task task-x1 has not passed the captain-call completion gate.
+Inventory its report and any visual review through bin/fm-captain-hold.sh before teardown.: expected exit 0, got 1

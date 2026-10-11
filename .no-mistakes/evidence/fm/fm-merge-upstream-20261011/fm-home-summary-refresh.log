@@ -1,0 +1,49 @@
+ok - watcher-carried status append publishes the real home summary
+ok - large backlog snapshots and home-summary publication stay within exec limits
+ok - fleet snapshot transport does not require or mutate operational state
+ok - parent snapshot consumes large child ledgers without argument transport
+ok - live watcher cadence bounds publication staleness without signals
+ok - fleet snapshot consumes the published local ledger by default
+ok - writer kill and replacement preserve an atomic JSON ledger
+ok - best-effort publication logs and continues
+Terminated                 sleep 0.1
+Terminated                 sleep 0.1
+ok - best-effort refresh bounds publication lock acquisition
+Terminated                 jq -e --arg home "$FM_HOME" '
+    .schema == "fm-secondmate-home-summary.v1"
+    and .hold_classifier_schema == "fm-captain-hold-buckets.v1"
+    and .home == $home
+    and (.generated | type) == "string"
+    and (.generated | length) > 0
+    and (.generated_epoch | type) == "number"
+    and .generated_epoch >= 0
+    and (.generated_epoch | floor) == .generated_epoch
+    and (.valid | type) == "boolean"
+    and (.state | type) == "string"
+    and (.invalidity | type) == "object"
+    and (.active_children | type) == "array"
+    and (.decisions_open | type) == "array"
+    and (.holds | type) == "array"
+    and (.queued | type) == "array"
+    and (.landed | type) == "array"
+    and (.endpoints | type) == "array"
+    and (.counts | type) == "object"
+    and (.omitted | type) == "array"
+  ' "$HOME_SUMMARY_TMP" > /dev/null 2>&1
+ok - best-effort refresh bounds validation and publication
+ok - best-effort refresh bounds state initialization
+ok - best-effort refresh logs worker termination
+ok - best-effort refresh bounds failure reporting fallback
+ok - valid publication ignores an unavailable failure record
+ok - publication completes on a home carrying accumulated status history
+ok - producer skips remote per-task state probes
+ok - a stalled publication does not delay the watcher liveness beacon
+ok - publication remains single-flight across watcher restart
+ok - bootstrap scopes retained failures to the current publication
+Terminated                 sleep 0.1
+ok - failure records preserve refresh attempt ordering
+ok - repeated publication failure is reported at session start until it clears
+
+real	0m37.893s
+user	0m14.713s
+sys	0m4.687s

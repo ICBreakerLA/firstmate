@@ -1,0 +1,12 @@
+diff --git a/bin/fm-watch.sh b/bin/fm-watch.sh
+index 1503c76..b502c0a 100755
+--- a/bin/fm-watch.sh
++++ b/bin/fm-watch.sh
+@@ -2358,6 +2358,7 @@ watcher_beacon_touch() { touch "$STATE/.last-watcher-beat"; }
+ watcher_run_with_beacon() {
+   local owner=$$ ticker rc
+   (
++    trap - EXIT HUP INT TERM
+     while kill -0 "$owner" 2>/dev/null; do
+       command sleep "${FM_WATCHER_BEACON_INTERVAL:-30}"
+       watcher_beacon_touch

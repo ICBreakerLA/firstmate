@@ -2350,16 +2350,19 @@ watcher_beacon_touch() { touch "$STATE/.last-watcher-beat"; }
 # terminal wait can block a whole POLL with no other beacon write, so without
 # this the beacon ages past the guard grace late in every long cycle. The
 # ticker stops with the command and also when this watcher process dies, so a
-# killed watcher can never leave a ticker keeping its beacon falsely fresh. It
-# is stopped with SIGKILL because the forked ticker inherits the caller's TERM
-# disposition: a caught TERM can run the caller's trap inside the ticker (the
-# test harness's cleanup trap deletes its fixtures that way) and an ignored or
-# lost one leaves the ticker alive, so `wait` would never return.
+# killed watcher can never leave a ticker keeping its beacon falsely fresh. The
+# ticker ignores HUP and TERM: when a stop signal reaches the whole process
+# group, a ticker dying alongside the watcher makes bash skip the watcher's
+# EXIT cleanup far more often, leaving a stale lock that the next watcher
+# reports as downtime. It is therefore stopped with SIGKILL, and a ticker
+# orphaned by a killed watcher exits after its sleep without touching.
 watcher_run_with_beacon() {
   local owner=$$ ticker rc
   (
+    trap '' HUP TERM
     while kill -0 "$owner" 2>/dev/null; do
       command sleep "${FM_WATCHER_BEACON_INTERVAL:-30}"
+      kill -0 "$owner" 2>/dev/null || break
       watcher_beacon_touch
     done
   ) >/dev/null 2>&1 &

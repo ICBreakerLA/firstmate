@@ -458,9 +458,11 @@ secondmate_stall_watch() { # <primary> <id> <out> [seconds]
   local primary=$1 id=$2 out=$3 seconds=${4:-4} state window fakebin
   state="$primary/state"
   window=$(grep '^window=' "$state/$id.meta" | cut -d= -f2-)
-  # A previous quiet checkpoint leaves a downtime marker. The next watcher
-  # would exit on that recovery wake before this observation finishes.
+  # A previous quiet checkpoint leaves a downtime marker, or a stale lock when
+  # bash skipped the timed-out watcher's EXIT cleanup. The next watcher would
+  # exit on that recovery wake before this observation finishes.
   rm -f "$state/.watcher-down"
+  rm -rf "$state/.watch.lock"
   fakebin="$primary/watch-fake-$id"
   mkdir -p "$fakebin"
   cat > "$fakebin/tmux" <<SH

@@ -296,6 +296,7 @@ Load `backlog-contract` before adding, editing, holding, or re-evaluating backlo
 
 ## 11. Crewmate briefs
 
+Load `crewmate-briefs` before writing, scaffolding, regenerating, or amending any ship, scout, or charter brief.
 The scaffold is a safety contract, not a suggestion.
 
 ## 12. Self-update

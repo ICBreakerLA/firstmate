@@ -37,6 +37,11 @@ Never type an interrupt key or exit command through `fm-send`, where routing-mar
 Trust handling is complete only when inspection proves the target started processing its instructions; delivery success alone is not proof.
 Muse, Gemini, AGY, and Devin are verified only for crewmate and scout work, never a secondmate or primary.
 
+## Effort fallback
+
+The generic effort fallback and its precedence are owned by `harness-adapters`: explicit captain and standing configured effort win; otherwise use low for well-understood explicit work, xhigh for ambiguous investigation or design, intermediate levels proportionally, and never max without explicit captain preference.
+Do not add model-specific versions of that policy.
+
 ## Detection
 
 `../../../bin/fm-harness.sh` prints firstmate's own harness from verified environment markers and process ancestry, and owns how they combine.

@@ -23,3 +23,7 @@ Keep free-form notes free of temporary paths, moving versions, ephemeral identif
 Inspect the current task note before replacing its considered body, and archive the superseded body when recoverability matters rather than appending by default.
 Verify volatile details against their authoritative config, live system, or API before acting, and correct or delete stale prose immediately.
 Preserve durable structured identifiers, dependencies, and completion artifact links, and route reusable knowledge to section 6 rather than scattering it through task notes.
+
+## Spawn and the backlog gate
+
+When the configured tasks-axi backlog gate applies, the spawn itself moves the work item to In flight and refuses rather than dispatching work this home has no item for, so recording the dispatch is never a separate step to remember; a manual-backend home retains the hand-editing contract in `docs/configuration.md`.

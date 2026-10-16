@@ -1,9 +1,6 @@
 ---
 name: harness-adapters
-description: >-
-  Agent-only reference for firstmate harness operations.
-  Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter.
-  Contains verified facts for claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, gemini, muse, rovo, omp, agy, and devin.
+description: "Use before spawning/recovering crewmates/secondmates, handling trust dialogs, harness-specific invocations, or verifying adapters (claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, gemini, muse, rovo, omp, agy, devin)."
 user-invocable: false
 metadata:
   internal: true
@@ -15,6 +12,10 @@ This is the one skill, trigger, and routing owner for harness-specific Firstmate
 Load this router first, then exactly the common reference and one harness reference selected below.
 When an action spans rows, load the union once rather than every reference.
 Files under `references/` are resources of this skill, not additional catalogued skills.
+
+## Verified adapters
+
+The verified harnesses are `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `cursor`, and `omp`, plus `muse`, `gemini`, `rovo`, `agy`, and `devin` for crewmates and scouts only; never dispatch on an unverified adapter.
 
 ## Path contract
 

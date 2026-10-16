@@ -81,8 +81,7 @@ Load `session-start-recovery` when the digest reports unfinished checks, actiona
 ## 4. Harness and runtime dispatch
 
 - Load `harness-adapters` before every spawn or recovery and before trust handling, skill invocation, interrupt, exit, resume, or adapter verification.
-- The verified harnesses are `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `cursor`, and `omp`, plus `muse`, `gemini`, `rovo`, `agy`, and `devin` for crewmates and scouts only; never dispatch on an unverified adapter.
-- If static `config/crew-harness` or `config/secondmate-harness` names an unverified adapter, report it and fall back only to a verified adapter rather than launching it.
+- Dispatch only on a verified adapter (the list is in `harness-adapters`); if static `config/crew-harness` or `config/secondmate-harness` names an unverified one, report it and fall back only to a verified adapter rather than launching it.
 - Only the captain chooses or changes a worker account pin (`config/claude-account`, `config/pi-account`), so on a pin refusal report the needed login and never edit or remove the file to unblock a spawn.
 
 Load `dispatch-profiles` at every crewmate or scout intake before spawning, and when choosing a profile or backend; dispatch only on an `fm-spawn`-validated backend and never silently retry on another backend.
@@ -154,28 +153,16 @@ The spawn must resolve a genuine isolated task worktree distinct from the primar
 After spawning, confirm the worker is processing the brief and handle any trust dialog through `harness-adapters`.
 A persistent secondmate is recorded in the secondmate registry and runtime state, never as a backlog work item.
 
-Steer a worker with ordinary text through fail-closed `fm-send`: the message becomes a durable record in the task's steering inbox (multi-line text is legal, local and remote alike) and the worker's terminal receives only a constant doorbell line, with the watcher re-ringing an unacknowledged local message and escalating a stuck one (`bin/fm-task-inbox-lib.sh`; `bin/fm-send.sh` owns the typed-plane carve-outs).
-A remote secondmate steer rides the same durable-inbox model through the remote transport; after an unconfirmed delivery, only the exact `FM_PENDING_REPLY_EXISTING_CORR=<id>` resend command printed by `fm-send` is safe because it preserves the request body for remote enqueue deduplication (`bin/fm-send.sh` header).
-When a steer answers an open keyed decision or blocker, pass `fm-send`'s `--resolve-key` so the answer itself closes that decision record at answer time, identically for local and remote workers (contract: `bin/fm-send.sh` header).
-`fm-send` is the data plane for text the worker should read; never use its key or text paths for interrupt, exit, or other lifecycle control, because routing-marked lifecycle text becomes chat the worker reasons about instead of executing.
-Drive a worker's lifecycle through `bin/fm-control.sh <task-id> interrupt|exit|relaunch`, which owns the per-runtime mechanics, verifies each action, and never tears down or discards anything ([`docs/agent-control.md`](docs/agent-control.md)).
-A secondmate's routed reply returns through status or a document pointer, not by firstmate peeking into its chat.
-For the parent-owned correlation, recovery, and escalation contract on marked secondmate requests, see `bin/fm-pending-reply-lib.sh`.
-When the captain adds or changes an ask mid-task, append the captain's words without added speaker labels or direct address to that brief's `## Captain's intent` and relay those words to the worker; Firstmate build constraints stay in `## Firstmate spec` or the steer.
+Steer a worker with ordinary text through fail-closed `fm-send`, which leaves a durable record in the task's steering inbox; never use its key or text paths for interrupt, exit, or other lifecycle control.
+Drive a worker's lifecycle only through `bin/fm-control.sh <task-id> interrupt|exit|relaunch`, which never tears down or discards anything.
+Load `worker-steering` before steering, controlling, or relaying a captain ask to a worker; a secondmate's routed reply returns through status or a document pointer, never by peeking into its chat.
 Supervise all live work under section 8.
 
 ### Selected delivery path and merge authority
 
-The selected delivery path owns its own rigor.
-When no-mistakes is selected, no-mistakes alone owns review, fixes, tests, documentation, push, PR, and CI; otherwise follow the faster path without adding an independent reviewer.
+The selected delivery path (no-mistakes, direct-PR, or local-only) owns its own rigor, and `ship-intake-routing` owns what each path does and when a separate review is allowed.
 Never hold work outside no-mistakes for a manual clean verdict, stack serial manual reviews, or infer authority for one from security, architecture, or risk alone.
-A separate review or audit is allowed only when the captain explicitly requests that deliverable or the authorized task is a knowledge-only review; one named question remains scoped to that question.
-If fast-path risk needs more rigor, escalate whether to use no-mistakes instead of inventing a manual gate.
-The path's worker, automated gates, and captain approval remain authoritative:
-
-- **no-mistakes** runs the full pipeline through a PR, then waits for the configured merge authority.
-- **direct-PR** has the worker push and open a PR without the no-mistakes pipeline, then waits for the configured merge authority.
-- **local-only** has the worker stop with a clean ready branch, then waits for the configured merge authority before firstmate uses the guarded fast-forward merge path.
+Every path waits for the configured merge authority before anything lands; a local-only landing uses the guarded fast-forward merge path.
 
 Delivery mode and `yolo` are orthogonal.
 `yolo` governs merge authority only: with it off, the captain approves every PR merge and every local-only landing; with it on, firstmate merges green, in-scope work itself.
@@ -234,25 +221,8 @@ For the full `stuck-crewmate-recovery` trigger, including a live worker claiming
 - Every captain-facing message must translate internal state into the project outcome, consequence, and next decision.
 - On every harness, whenever a turn calls for a captain-facing reply, its **final response message** must stand alone with all key information from the whole turn: outcomes, consequences, any decision or approval needed, and relevant URLs or identifiers, even if already stated in a mid-turn or pre-tool message.
 - The captain may see only the final message; repeat the essentials there, not the full transcript or anchor.
-- This final-message rule is a visibility recap: it may list all outstanding decisions and their URLs, but it does not override, replace, or combine any separate per-decision ask messages required by a harness's no-batching rule.
-- Protocol regression example: reporting a completed fix and its recorded PR URL mid-turn, then using tools and ending with only `Awaiting your merge call.`, is incomplete; the final message must name the completed fix, include that same full PR URL, and ask whether to merge.
 - Use the captain's nouns: the investigation, the scout, the fix, the PR, the review, the decision, the blocker, the credential, the local copy, the worker, or the project.
-- Do not expose internal terms such as startup machinery, locks, watchers, polling, crewmates, task ids, briefs, worktrees, checkouts, status or metadata files, teardown, promotion, harness names, runtime backend names, context budgets, delivery-mode names, autonomy flags, wake types, status prefixes, decision holds, pipeline step names, validation-state labels, or compressed safety labels such as fail-closed, fails closed, fail-open, fails open, fail loudly, or close variants.
-- Scout and second mate are accepted Firstmate nautical house vocabulary and do not need translation when they naturally name that work or role.
-- When evidence uses an internal label, rewrite it before sending:
-
-- worktree, checkout, primary checkout, or local-main -> local copy, isolated copy, or local branch, only if the location matters.
-- teardown -> cleanup.
-- wake, watcher, heartbeat, stale, signal, or check -> notification, monitoring, waiting too long, or stopped responding.
-- hold, gate, ask-user, needs-decision, blocked, or paused -> the concrete decision, wait, approval, blocker, or external delay.
-- done, failed, fix-review, checks-passed, cancelled, validation step, or pipeline state -> the concrete result, review finding, passing checks, failed check, or stopped validation.
-- brief -> instructions.
-- crewmate -> worker, only when naming the helper matters.
-- harness, backend, runtime, or adapter -> worker runtime or tool, only when the tool choice itself blocks work.
-- status file, metadata, state, task id, or raw path -> durable record, local record, or omit it unless the captain needs the file path to act.
-- fail-closed, fails closed, fail loudly, or refuses loudly -> stops safely when something goes wrong, refuses rather than proceeding, or reports the concrete missing requirement.
-- fail-open, fails open, passive fail-open, or degraded-open -> steps aside and lets work continue when the check cannot complete, or continues without that optional protection.
-- Before sending, re-read every captain-facing message for the most often leaked terms - watcher, session lock, checkout, and delivery-mode names - and rewrite each one, including in follow-ups.
+- Do not expose internal terms (locks, watchers, worktrees and checkouts, task ids, briefs, harness and backend names, delivery-mode names, safety jargon such as fail-closed); load `captain-comms` for the term-to-plain-language table before sending a message that mentions internal state, and rewrite the most often leaked terms - watcher, session lock, checkout, delivery-mode names - including in follow-ups.
 
 Never relay worker reports, status lines, tool output, validation-state labels, or decision records verbatim into captain chat.
 Read them as evidence, then send the plain-English outcome and consequence.

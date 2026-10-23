@@ -737,15 +737,70 @@ assert_contains "$out" '  status: escalate' "tie escalates"
 assert_contains "$out" '  reason: genuine spendPriority tie' "tie is named"
 pass "tie: equal spendPriority never breaks by array order"
 
-# --- nothing rankable escalates -------------------------------------------------
+# --- no rankable eligible candidate ----------------------------------------------
+# When nothing is rankable, the first eligible unranked candidate in declared order
+# is picked, and only no eligibility at all still escalates.
+reset_log
+UNRANKED_PICK="$TMP_ROOT/unranked-pick.json"
+jq '
+  .providers |= map(
+    if .provider == "claude" then
+      .quotaSemantics |= (.status = "unknown" | .effectiveAvailability = [])
+    elif .provider == "cursor" then
+      .quotaSemantics.effectiveAvailability |= map(.selection.spendPriority = "high")
+    else . end)
+' "$QUOTA" > "$UNRANKED_PICK"
+write_response "$RESPONSE" rule_4 0.9
+TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$UNRANKED_PICK" run code out err "$BRIEF"
+expect_code 0 "$code" "unranked fallback exits 0"
+assert_contains "$out" '  status: clear' "no rankable candidate resolves clear through the unranked fallback"
+assert_contains "$out" 'candidate: claude:sonnet  provider=claude  -> eligible, unranked: provider claude unmeasured (unknown): disclosed uncertainty' "an unmeasured provider stays eligible and unranked"
+assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  scope=all_models  remaining=91%  spendPriority=-  runway=through_reset  -> eligible, unranked: spendPriority missing or non-numeric at all_models: not rankable: disclosed uncertainty' "malformed ranking evidence stays eligible and unranked"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high'" "the first eligible unranked candidate in declared order is picked"
+assert_contains "$out" '  note: picked first eligible unranked candidate: claude:sonnet (provider claude unmeasured)' "the pick is named with its unmeasured provider"
+
+# A rankable candidate still wins over an earlier-declared unranked one.
+reset_log
+RANKED_WINS="$TMP_ROOT/ranked-wins.json"
+jq '(.providers[] | select(.provider == "claude") | .quotaSemantics) |= (.status = "unknown" | .effectiveAvailability = [])' "$QUOTA" > "$RANKED_WINS"
+write_response "$RESPONSE" rule_4 0.9
+TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$RANKED_WINS" run code out err "$BRIEF"
+assert_contains "$out" '  status: clear' "ranked evidence still resolves clear"
+assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium'" "a rankable candidate wins over an earlier-declared unranked one"
+assert_contains "$out" '  note: 2 eligible candidate(s) unranked (claude, kimi)' "the rankable-path unranked note is unchanged"
+assert_not_contains "$out" 'picked first eligible unranked candidate' "the unranked fallback note is absent when a ranked candidate wins"
+
+# Ineligible candidates never block the unranked fallback.
 reset_log
 NONE="$TMP_ROOT/none.json"
 jq '.providers |= map(if .provider == "cursor" or .provider == "claude" then .quotaSemantics.effectiveAvailability |= map(.runway.status = "exhausted_now") else . end)' "$QUOTA" > "$NONE"
+write_response "$RESPONSE" rule_4 0.9
 TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$NONE" run code out err "$BRIEF"
-assert_contains "$out" '  status: escalate' "no rankable candidate escalates"
-assert_contains "$out" '  reason: no rankable eligible candidate' "no-candidate reason"
+assert_contains "$out" '  status: clear' "an unranked eligible candidate is picked over exhausted ones"
 assert_contains "$out" '-> not eligible: runway exhausted_now' "exhausted candidates keep their reason"
-pass "no rankable candidate: the tool escalates instead of guessing"
+assert_contains "$out" "  profile: --harness 'kimi' --model 'kimi-code/k3'" "the only eligible unranked candidate is picked"
+assert_contains "$out" '  note: picked first eligible unranked candidate: kimi:kimi-code/k3 (provider kimi unmeasured)' "the pick names the unmeasured provider"
+
+# No eligible candidate at all still escalates.
+reset_log
+NOTHING_ELIGIBLE="$TMP_ROOT/nothing-eligible.json"
+jq '
+  .providers |= map(
+    if .provider == "cursor" or .provider == "claude" then
+      .quotaSemantics.effectiveAvailability |= map(.runway.status = "exhausted_now")
+    elif .provider == "kimi" then
+      .quotaSemantics = {"status":"known","effectiveAvailability":[
+        {"scope":"all_models","status":"known","effectivePercentRemaining":0,"runway":{"status":"exhausted_now"},"selection":{"spendPriority":-1}}]}
+    else . end)
+' "$QUOTA" > "$NOTHING_ELIGIBLE"
+write_response "$RESPONSE" rule_4 0.9
+TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$NOTHING_ELIGIBLE" run code out err "$BRIEF"
+assert_contains "$out" '  status: escalate' "no eligible candidate at all escalates"
+assert_contains "$out" '  reason: no rankable eligible candidate' "the no-candidate reason is unchanged"
+assert_contains "$out" '-> not eligible: runway exhausted_now' "every candidate keeps its ineligibility reason"
+assert_not_contains "$out" '  profile:' "the no-eligible outcome emits no profile"
+assert_not_contains "$out" 'picked first eligible unranked candidate' "the no-eligible outcome has no unranked pick note"
+pass "no rankable eligible candidate: the first eligible unranked candidate wins in declared order, and only no eligibility escalates"
 
 # --- schema 6: rows keyed by provider + accountKey bind per account ----------------
 # quota-axi emits schema 6 once a provider expands to several accounts; every

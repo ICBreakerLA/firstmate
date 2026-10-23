@@ -1492,7 +1492,7 @@ Typed resolution additively recognizes `gemini` because AGENTS.md section 4 veri
 
 | Harness | Provider declaration on the opted-in resolver path |
 | --- | --- |
-| `claude`, `codex`, `grok`, `kimi`, `cursor`, `agy`, `muse` | The resolver has an authoritative single-provider mapping. |
+| `claude`, `codex`, `grok`, `kimi`, `cursor`, `agy`, `muse` | The resolver has an authoritative single-provider mapping; a `claude` model starting with `or:` maps to `openrouter` instead (see [OpenRouter worker profile](#openrouter-worker-profile)). |
 | Every other verified harness | Must declare `provider` explicitly; this includes multi-provider `pi`, `pi-signed`, `omp`, and `opencode`, and unmapped `gemini`, `rovo`, and `devin`; omission is an actionable configuration error before any request. |
 
 This single-provider table is separate from the frozen legacy mapping used by `fm-quota-choose.sh`, so additions cannot alter no-key routing.

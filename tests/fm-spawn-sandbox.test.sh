@@ -401,7 +401,7 @@ test_a_dispatch_flag_without_a_local_model_changes_nothing() {
 # The OpenRouter profile: a fake curl answers the zero-retention probe by model
 # id (200 unless a status file says otherwise) and logs requests with the key
 # redacted.
-OR_KEY=sk-or-v1-FAKE-SPAWN-KEY-0123456789
+OR_KEY=sk-or-v1-FAKE-SPAWN-KEY
 
 or_world() { # <case> [sandbox-config]
   new_case "$1" "${2:-sbx}"

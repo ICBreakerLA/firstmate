@@ -764,7 +764,7 @@ test_local_llm_unreachable_from_the_vm_removes_the_sandbox() {
 }
 
 
-OR_KEY=sk-or-v1-FAKE-WRAPPER-KEY-0123456789
+OR_KEY=sk-or-v1-FAKE-WRAPPER-KEY
 
 # or_world <case>: the standard world plus the OpenRouter key file and a fake
 # curl that answers the host-side usage reading from a counter (1.00 before,

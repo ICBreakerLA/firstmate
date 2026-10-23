@@ -1,0 +1,27 @@
+$ fm_openrouter_resolve cfg or:qwen   # no key file
+error: the OpenRouter profile needs its key in /tmp/tmp.DmUzpN1Z7B/nokey (a regular file holding the spend-limited worker key)
+rc=1
+$ fm_openrouter_resolve cfg or:freebie
+error: meta-llama/llama-3.3-70b-instruct:free is a :free OpenRouter model; free models cannot meet the zero-retention requirement and are refused
+rc=1
+$ fm_openrouter_resolve cfg or:nosuch
+error: no alias 'nosuch' in /tmp/tmp.DmUzpN1Z7B/cfg/openrouter-models.list (lines look like 'alias: vendor/model, vendor/fallback')
+rc=1
+$ fm_openrouter_chain cfg qwen
+qwen/qwen3.8-27b
+qwen/qwen3-32b
+$ fm_openrouter_resolve cfg or:qwen   # bogus key against real https://openrouter.ai/api
+error: OpenRouter rejected the worker key (HTTP 403); check /tmp/tmp.DmUzpN1Z7B/key
+rc=1
+$ fm_openrouter_env qwen/qwen3.8-27b
+ANTHROPIC_BASE_URL=https://openrouter.ai/api
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=qwen/qwen3.8-27b
+ANTHROPIC_DEFAULT_OPUS_MODEL=qwen/qwen3.8-27b
+ANTHROPIC_DEFAULT_SONNET_MODEL=qwen/qwen3.8-27b
+ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen/qwen3.8-27b
+ANTHROPIC_SMALL_FAST_MODEL=qwen/qwen3.8-27b
+CLAUDE_CODE_SUBAGENT_MODEL=qwen/qwen3.8-27b
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000
+CLAUDE_CODE_ATTRIBUTION_HEADER=0
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1

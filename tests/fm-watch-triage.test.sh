@@ -21,6 +21,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-classify-lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-wake-triage-lib.sh"
 
 WATCH="$ROOT/bin/fm-watch.sh"
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
@@ -6603,6 +6605,147 @@ test_paused_until_that_passed_is_rechecked_before_the_cadence() {
   pass "a declared wait whose until time has passed is rechecked at once, then held to the cadence"
 }
 
+# --- deterministic wake triage: R1/R2/R3 as pure functions -------------------
+# These drive bin/fm-wake-triage-lib.sh directly with a hermetic STATE/CONFIG so
+# they are deterministic and do not depend on which watcher path routes a status.
+# The behavioral guarantee that the gate is wired at wedge_timer_check - and that
+# a no-meta lane still escalates there - is covered by
+# test_wedge_defer_refuses_a_half_filled_wait_record.
+
+# --- R1: the single owner of "no stale for a torn-down task" ---
+test_wake_triage_r1_guard() {
+  local dir state task
+  dir=$(fm_test_tmproot wake-triage-r1); state="$dir/state"
+  mkdir -p "$state" "$dir/config"
+  STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
+  wake_triage_init
+  task="ghost"
+  printf 'working: last line before teardown\n' > "$state/$task.status"
+  # No meta: torn down -> suppress (0), and the decision is logged.
+  if wake_triage_r1_guard "$task"; then :; else
+    fail "R1 guard should suppress a torn-down task (no meta)"
+  fi
+  grep -F "R1" "$state/wake-triage.log" >/dev/null || fail "R1 suppression was not logged"
+  # With a meta: live -> proceed (1).
+  printf 'window=test:fm-ghost\nkind=ship\n' > "$state/$task.meta"
+  if wake_triage_r1_guard "$task"; then
+    fail "R1 guard should proceed for a live task (meta present)"
+  fi
+  # An empty task name cannot be resolved to a torn-down task: proceed (1).
+  if wake_triage_r1_guard ""; then
+    fail "R1 guard must proceed on an empty task (it cannot name a torn-down task)"
+  fi
+  # Teardown drops any leaked per-task backoff marker.
+  printf '240 1 x' > "$state/.wake-backoff-$task"; printf 's' > "$state/.wake-backoff-sig-$task"
+  rm -f "$state/$task.meta"
+  wake_triage_r1_guard "$task"
+  [ ! -e "$state/.wake-backoff-$task" ] && [ ! -e "$state/.wake-backoff-sig-$task" ] \
+    || fail "R1 teardown did not drop the leaked backoff markers"
+  pass "R1 suppresses and logs a torn-down task's stale, proceeds for a live task, and drops its backoff"
+}
+
+# --- R2: the per-(task, endpoint) declared-wait backoff ---
+test_wake_triage_r2_backoff() {
+  local dir state task key f
+  local cur_interval cur_next cur_key
+  dir=$(fm_test_tmproot wake-triage-r2); state="$dir/state"
+  mkdir -p "$state" "$dir/config"
+  STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
+  wake_triage_init
+  task="held"; key="test:fm-held"
+  printf 'window=test:fm-held\nkind=ship\n' > "$state/$task.meta"
+  printf 'paused: waiting on an external release\n' > "$state/$task.status"
+  f="$state/.wake-backoff-$task"
+  # First call: no marker -> allow and arm the gap.
+  if wake_triage_backoff_allow "$task" "$key" 240; then :; else
+    fail "R2 first call should allow and arm the backoff"
+  fi
+  [ -e "$f" ] || fail "R2 did not arm its per-task marker"
+  # Immediate repeat, same status + endpoint -> within the gap -> suppress.
+  if wake_triage_backoff_allow "$task" "$key" 240; then
+    fail "R2 repeat within the gap should suppress"
+  fi
+  # Age next-allowed into the past (preserve the function's own interval + key):
+  # the gap has elapsed -> allow, and the interval doubles to 480.
+  read -r cur_interval cur_next cur_key < "$f"
+  printf '%s %s %s' "$cur_interval" "$(( $(date +%s) - 1 ))" "$cur_key" > "$f"
+  if wake_triage_backoff_allow "$task" "$key" 240; then :; else
+    fail "R2 should allow once the gap has elapsed"
+  fi
+  read -r cur_interval _ _ < "$f"
+  [ "$cur_interval" = 480 ] || fail "R2 did not double the interval to 480 (got $cur_interval)"
+  # A NEW status line resets the backoff: allow again, interval back to the gap.
+  printf 'working: resumed after the release\n' > "$state/$task.status"
+  if wake_triage_backoff_allow "$task" "$key" 240; then :; else
+    fail "R2 should reset (allow) on a new status line"
+  fi
+  read -r cur_interval _ _ < "$f"
+  [ "$cur_interval" = 240 ] || fail "R2 reset did not restore the base gap (got $cur_interval)"
+  # A changed endpoint (key) also resets.
+  if wake_triage_backoff_allow "$task" "test:fm-other" 240; then :; else
+    fail "R2 should reset (allow) on an endpoint change"
+  fi
+  pass "R2 allows then backs off a declared-wait recheck, doubling to the gap, and resets on a new status line or endpoint"
+}
+
+# --- R3: a repeated identical check result adds no new wake ---
+test_wake_triage_r3_check_repeat() {
+  local dir state key reason
+  dir=$(fm_test_tmproot wake-triage-r3); state="$dir/state"
+  mkdir -p "$state" "$dir/config"
+  STATE="$state"; CONFIG="$dir/config"
+  wake_triage_init
+  key="pr_poll"; reason="check: pr 12 is green"
+  # First sighting: new -> allow (0) and record.
+  if wake_triage_check_repeat "$key" "$reason"; then :; else
+    fail "R3 first check result should be allowed (new)"
+  fi
+  # Identical repeat: suppress (1).
+  if wake_triage_check_repeat "$key" "$reason"; then
+    fail "R3 identical check repeat should be suppressed"
+  fi
+  # Changed result: new again -> allow (0).
+  if wake_triage_check_repeat "$key" "check: pr 12 has a new check"; then :; else
+    fail "R3 changed check result should be allowed again"
+  fi
+  pass "R3 allows a new check result, suppresses an identical repeat, and re-allows a change"
+}
+
+# --- the gate: the R2 decision point wired at wedge_timer_check ---
+# The gate owns R2 only. It deliberately leaves R1 to the other stale sites:
+# wedge_timer_check is a leaf reached only through the meta-backed backbone in the
+# real watcher, and its direct-drive tests (test_wedge_defer_refuses_a_half_filled_
+# wait_record) exercise no-meta lanes that must still escalate.
+test_wake_triage_gate_decision() {
+  local dir state task key
+  dir=$(fm_test_tmproot wake-triage-gate); state="$dir/state"
+  mkdir -p "$state" "$dir/config"
+  STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
+  wake_triage_init
+  key="test:fm-gate"
+  # A non-stale kind is never gated.
+  task="g"
+  printf 'window=test:fm-gate\nkind=ship\n' > "$state/$task.meta"
+  printf 'working: alive\n' > "$state/$task.status"
+  wake_triage_gate signal "$task" "$key" "signal: note" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "a non-stale kind must not be gated"
+  # A working (non-declared-wait) stale is emitted, with or without a meta: the
+  # gate does not gate on R1, so a no-meta lane still escalates.
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "a working task's stale must be emitted"
+  rm -f "$state/$task.meta"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "a no-meta working stale must still escalate (the gate leaves R1 to the other sites)"
+  # A declared-wait task: first gate allows (arms), immediate repeat suppresses (R2).
+  task="held"; printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
+  printf 'paused: external release\n' > "$state/$task.status"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "a declared-wait stale must be allowed on first sight"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = suppress ] || fail "a declared-wait stale within the backoff must be suppressed (R2)"
+  pass "the gate emits working/non-stale wakes (including a no-meta lane) and backs off a declared-wait recheck (R2)"
+}
+
 # CI's stock macOS Bash lane sets FM_TEST_ONLY to run just the bash-3.2
 # churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 if [ -n "${FM_TEST_ONLY:-}" ]; then
@@ -6751,3 +6894,7 @@ test_captain_held_rechecked_under_a_quiet_record
 test_paused_until_near_future_is_quiet_before_the_cadence
 test_paused_until_wrong_year_is_bounded_by_the_cadence
 test_paused_until_that_passed_is_rechecked_before_the_cadence
+test_wake_triage_r1_guard
+test_wake_triage_r2_backoff
+test_wake_triage_r3_check_repeat
+test_wake_triage_gate_decision

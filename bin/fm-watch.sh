@@ -183,6 +183,15 @@ WATCH_HOME_EXISTED=0
 # runtime needlessly spends per-root CI lint memory while adding no uncovered file.
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
+# Deterministic wake triage (R1/R2/R3 + opt-in batching) that decides, in bash,
+# whether a stale:/check: wake is emitted, backed off, or held - no model reads
+# a wake and decides it. See the lib header for the contract and state files.
+# Sourced after the transition owner because its batch flush is invoked from
+# wake(); like that owner it is a leaf this runtime only calls, so keep it an
+# analysis boundary here too.
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/fm-wake-triage-lib.sh"
+wake_triage_init
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # Only for the arm-time check on FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS below;
@@ -1176,6 +1185,11 @@ resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min
     [ "$age" -ge "$min_age" ] || return 0
     [ "$(age_of "$throttle")" -ge "$PAUSE_RESURFACE_SECS" ] || return 0   # 999999 when no prior re-surface
   fi
+  # R1: a torn-down task is not resurfaced on the pause cadence - its meta is
+  # gone, so there is no record left to reconcile.
+  if wake_triage_r1_guard "$(window_to_task "$win" "$STATE")"; then
+    return 0
+  fi
   fm_wake_append stale "$win" "$reason" || exit 1
   if [ -n "$scope" ]; then printf '%s' "$scope" > "$throttle"; else date +%s > "$throttle"; fi
   wake "$reason"
@@ -1551,6 +1565,19 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         if wedge_dead_record "$win" "$since_file" "$label" "$age" "$hash" "$task"; then
           return 0
         fi
+        # Wake triage (R1/R2/R3 + batching): a torn-down task and a declared-wait
+        # recheck do not re-alarm every STALE_ESCALATE_SECS. Decide before the
+        # escalation counter moves, so a hold or suppression is not counted as an
+        # escalation. The emit path below is the unchanged alarm.
+        reason="stale: $win (idle ${age}s, possible wedge)"
+        wake_triage_gate stale "$task" "$win" "$reason" "$STALE_ESCALATE_SECS"
+        case "$WAKE_TRIAGE_ACTION" in
+          emit) ;;
+          *)
+            rm -f "$since_file"
+            return 0
+            ;;
+        esac
         n=$(( $(cat "$escalation_file" 2>/dev/null || echo 0) + 1 ))
         echo "$n" > "$escalation_file"
         reason="stale: $win (idle ${age}s, possible wedge, escalation $n)"
@@ -1696,7 +1723,11 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
         triage_log "absorbed busy over-age pane (captain-held, never rechecked while the away-posture record exists): $win"
         return 0
       fi
-      if [ "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" != "$declared" ]; then
+      # R1: a torn-down task's busy-over-age pane is not re-alarmed; the
+      # declaration suppressor still advances so it is not re-detected.
+      if wake_triage_r1_guard "$task"; then
+        printf '%s' "$declared" > "$STATE/.stale-$key"
+      elif [ "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" != "$declared" ]; then
         fm_wake_append stale "$win" "stale: $win" || exit 1
         printf '%s' "$declared" > "$STATE/.stale-$key"
         wake "stale: $win"
@@ -1944,6 +1975,11 @@ surface_nonterminal_stale() {  # <window> <hash>
     throttled=0
   elif [ -n "$STALE_WAIT_DECLARATION" ]; then
     bounded=0
+  fi
+  # R1: a torn-down task's nonterminal stale is not re-alarmed; the bookkeeping
+  # below still marks the pane seen so it is not re-detected.
+  if [ "$throttled" -ne 0 ] && wake_triage_r1_guard "$task"; then
+    throttled=0
   fi
   if [ "$throttled" -ne 0 ]; then
     fm_wake_append stale "$win" "stale: $win" || exit 1
@@ -2937,9 +2973,16 @@ EOF
           wake "$reason"
         fi
         pr_poll_control_release || exit 1
-        fm_wake_append check "$c" "$reason" || exit 1
-        touch "$STATE/.last-check"
-        wake "$reason"
+        # R3: a repeated identical check result for the same key adds no new
+        # wake; a changed result re-surfaces.
+        if wake_triage_check_repeat "$c" "$reason"; then
+          fm_wake_append check "$c" "$reason" || exit 1
+          touch "$STATE/.last-check"
+          wake "$reason"
+        else
+          touch "$STATE/.last-check"
+          wake_triage_log check "$(basename "$c")" R3 suppress
+        fi
       fi
       pr_poll_control_release || exit 1
     done
@@ -3187,19 +3230,26 @@ EOF
               clear_write_tracking "$key"
               triage_log "absorbed stale (open captain call already surfaced for this status): $w"
             else
-              fm_wake_append stale "$w" "stale: $w" || exit 1
-              stale_wait_record "$key"
-              printf '%s' "$h" > "$sf"
-              rm -f "$ssf"
-              clear_write_tracking "$key"
-              stale_status="$STATE/$(window_to_task "$w" "$STATE").status"
-              stale_record=$(status_span_first_actionable_record "$stale_status" 0)
-              case $? in
-                0|1) stale_end=${stale_record%%$'\t'*}; stale_rest=${stale_record#*$'\t'}; stale_ident=${stale_rest%%$'\t'*} ;;
-                *) stale_end=''; stale_ident='' ;;
-              esac
-              mark_surfaced "$stale_status" "$stale_end" "$stale_ident"
-              wake "stale: $w"
+              if wake_triage_r1_guard "$task"; then
+                # Torn down: absorb it as a static pane (mark seen), no alarm.
+                printf '%s' "$h" > "$sf"
+                rm -f "$ssf"
+                clear_write_tracking "$key"
+              else
+                fm_wake_append stale "$w" "stale: $w" || exit 1
+                stale_wait_record "$key"
+                printf '%s' "$h" > "$sf"
+                rm -f "$ssf"
+                clear_write_tracking "$key"
+                stale_status="$STATE/$(window_to_task "$w" "$STATE").status"
+                stale_record=$(status_span_first_actionable_record "$stale_status" 0)
+                case $? in
+                  0|1) stale_end=${stale_record%%$'\t'*}; stale_rest=${stale_record#*$'\t'}; stale_ident=${stale_rest%%$'\t'*} ;;
+                  *) stale_end=''; stale_ident='' ;;
+                esac
+                mark_surfaced "$stale_status" "$stale_end" "$stale_ident"
+                wake "stale: $w"
+              fi
             fi
           elif [ -e "$ssf" ]; then
             # This exact hash was already overridden as provably-working (a

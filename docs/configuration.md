@@ -1127,6 +1127,58 @@ What does exist is the server's own prefix cache: with one slot, a worker whose 
 How much of the roughly 30,000-token start prompt is byte-identical across tasks is unmeasured here, because the working directory, the git status, and the brief differ per task.
 A slot restore before launch is the next step once that has been measured on the host.
 
+
+### OpenRouter worker profile
+
+A sandboxed Claude worker can run on an OpenRouter model, so the Claude plan only orchestrates and reviews while a cheaper model does the building, in parallel, with zero data retention.
+The profile is selected per spawn by the model id alone: a Claude launch whose model starts with `or:`, given as `--model` or as the model of a [dispatch profile](#crew-dispatch-profiles-configcrew-dispatchjson), is an OpenRouter worker.
+`or:<vendor>/<model>` names one OpenRouter model, and `or:<alias>` names a chain of fallbacks in `config/openrouter-models.list`.
+Unlike the local-model profile it holds no lock, so any number of OpenRouter workers run in parallel.
+
+`config/openrouter-models.list` is local and gitignored.
+Each non-blank, non-`#` line is `alias: id1, id2, ...`, for example `qwen: qwen/qwen3.8-27b, qwen/qwen3-coder`.
+An id with a slash is a direct model id and an id without one is an alias.
+
+The spend-limited worker key lives in `~/.config/firstmate/openrouter-worker-key` (`FM_OPENROUTER_KEY_FILE` overrides it, for tests).
+It must be a regular file, not a symlink, and is read on the host only.
+The key is sent to `curl` on stdin so it is never in a host argument list, and it enters the sandbox only as the worker's `ANTHROPIC_AUTH_TOKEN`.
+It is never printed, logged, or written into the task record, status, brief, or any test output.
+`sbx create` receives it as an `-e` argument, so it is briefly visible in the host process list to the same user.
+
+A launch with an `or:` model refuses, before any endpoint, clone, or task record exists, when any of these holds:
+
+- The worker is not a task worker on the claude harness with `config/worker-sandbox` set to `sbx`.
+- The key file is missing, a symlink, or empty, or OpenRouter rejects the key.
+- An id is `:free`, because free models cannot meet the zero-retention requirement, or an id is not a plain `vendor/model`.
+- The alias has no line in `config/openrouter-models.list`.
+- No id of the chain answers a 1-token request to `/api/v1/chat/completions` that demands a zero-retention endpoint (`provider.zdr` true and `provider.data_collection` `deny`).
+
+The ids are probed in order and the first that answers wins.
+A 402, 429, 5xx, no zero-retention endpoint, or a timeout skips to the next id; a 401 or 403 stops at once.
+There is no fallback to Claude: an unavailable OpenRouter profile refuses.
+The task record carries `model=or:<resolved id>` and, for an alias, `model_alias=<alias>`, and a relaunch keeps both.
+
+The sandbox gets this environment on top of the usual allowlist, built by `fm_openrouter_env` in `bin/fm-openrouter-lib.sh` plus the token:
+
+| Variable | Value |
+| --- | --- |
+| `ANTHROPIC_BASE_URL` | `https://openrouter.ai/api`. |
+| `ANTHROPIC_AUTH_TOKEN` | The worker key. |
+| `ANTHROPIC_API_KEY` | Empty, so Claude Code uses the bearer token. |
+| `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL` | The resolved model id, so every tier, the background model, and subagents use the one model. |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `200000`. |
+| `CLAUDE_CODE_ATTRIBUTION_HEADER` | `0`. |
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1`. |
+
+No `--effort` is passed, and the claude `--model` flag carries the bare id so it matches the environment.
+The network rules are per sandbox and go away with it: `sbx policy allow network --sandbox <name> openrouter.ai`, `sbx policy deny network --sandbox <name> api.anthropic.com`, and `sbx secret rm anthropic --sandbox <name>`, so the captain's Claude sign-in never reaches the sandbox.
+Before the worker starts, the wrapper checks from inside the VM that `https://openrouter.ai/api/v1/models` answers and that `https://api.anthropic.com/v1/models` does not, and stops the launch and removes the sandbox when either check fails.
+
+The wrapper reads the key's lifetime spend from `/api/v1/key` before the worker starts and again when it exits, and appends `at= model= before= after= cost_usd=` to `data/<id>/openrouter-usage.log`.
+A reading that cannot be made writes nothing, and with parallel workers each line also includes the other workers' spend over the same period.
+
+In a [dispatch profile](#crew-dispatch-profiles-configcrew-dispatchjson) a Claude `or:` model is attributed to the `openrouter` quota provider, which carries no quota measurement, so it counts as unmeasured and unranked rather than drawing on the Claude plan.
+
 ### Lifecycle
 
 `bin/fm-sbx-run.sh` (reached as `bin/claude-sbx`, so the pane's foreground command classifies as a Claude launch) runs as a child of the pane shell, and its exit, hangup, terminate, and interrupt traps remove the sandbox, stop the relay after a final drain, and bring the clone's commits back.

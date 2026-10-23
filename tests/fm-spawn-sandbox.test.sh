@@ -397,6 +397,124 @@ test_a_dispatch_flag_without_a_local_model_changes_nothing() {
   pass "--from-dispatch leaves a non-local model alone"
 }
 
+
+# The OpenRouter profile: a fake curl answers the zero-retention probe by model
+# id (200 unless a status file says otherwise) and logs requests with the key
+# redacted.
+OR_KEY=sk-or-v1-FAKE-SPAWN-KEY-0123456789
+
+or_world() { # <case> [sandbox-config]
+  new_case "$1" "${2:-sbx}"
+  mkdir -p "$CASE/or-status"
+  : >"$CASE/curl.log"
+  printf '%s\n' "$OR_KEY" >"$CASE/or-key"
+  printf 'qwen: qwen/qwen3.8-27b, qwen/qwen3-coder\nfree: vendor/model:free\n' >"$HOME_DIR/config/openrouter-models.list"
+  cat >"$FAKEBIN/curl" <<SH
+#!/usr/bin/env bash
+cfg=\$(cat)
+printf '%s\\n' "\$cfg" | sed "s/$OR_KEY/<KEY>/g" >>"$CASE/curl.log"
+id=\$(printf '%s' "\$cfg" | sed -n 's/.*\\\\"model\\\\":\\\\"\\([^\\\\]*\\)\\\\".*/\\1/p' | tr '/' '_')
+printf '\\n%s' "\$(cat "$CASE/or-status/\$id" 2>/dev/null || echo 200)"
+SH
+  chmod +x "$FAKEBIN/curl"
+  export FM_OPENROUTER_KEY_FILE="$CASE/or-key"
+}
+
+or_key_leaks() { # <id>: nonzero-free check that the key is in no record
+  ! grep -rqF -- "$OR_KEY" "$HOME_DIR/state" "$HOME_DIR/data" "$CASE/launch.log" "$CASE/curl.log" 2>/dev/null
+}
+
+test_the_openrouter_profile_resolves_the_chain_and_launches_the_wrapper() {
+  local out rc
+  or_world or sbx
+  printf '402' >"$CASE/or-status/qwen_qwen3.8-27b"
+  out=$(spawn_task sbx-or --model or:qwen --effort high); rc=$?
+  expect_code 0 "$rc" "the OpenRouter profile should spawn: $out"
+  assert_grep "bin/claude-sbx" "$CASE/launch.log" "the launch goes through the wrapper"
+  assert_grep "--openrouter 'qwen/qwen3-coder'" "$CASE/launch.log" "the first answering id is the worker's model"
+  assert_grep "--model 'qwen/qwen3-coder'" "$CASE/launch.log" "the bare id is the claude model"
+  assert_no_grep "--effort" "$CASE/launch.log" "an OpenRouter model gets no effort flag"
+  assert_no_grep "--local-llm" "$CASE/launch.log" "it is not the local profile"
+  assert_grep "model=or:qwen/qwen3-coder" "$HOME_DIR/state/sbx-or.meta" "the meta records the resolved model"
+  assert_grep "model_alias=qwen" "$HOME_DIR/state/sbx-or.meta" "the meta records the alias"
+  assert_grep "sandbox=sbx" "$HOME_DIR/state/sbx-or.meta" "the task is a sandboxed task"
+  or_key_leaks || fail "the key must be in no meta, log or output"
+  assert_not_contains "$out" "$OR_KEY" "the key is not printed"
+  pass "the OpenRouter profile resolves the chain, records model and alias, and never records the key"
+}
+
+test_a_direct_openrouter_id_has_no_alias() {
+  local out rc
+  or_world or-direct sbx
+  out=$(spawn_task sbx-ord --model or:vendor/model-x); rc=$?
+  expect_code 0 "$rc" "a direct id should spawn: $out"
+  assert_grep "model=or:vendor/model-x" "$HOME_DIR/state/sbx-ord.meta" "the model is recorded"
+  assert_no_grep "model_alias" "$HOME_DIR/state/sbx-ord.meta" "a direct id records no alias"
+  pass "a direct OpenRouter id records no alias"
+}
+
+test_the_openrouter_profile_refuses_before_any_side_effect() {
+  local out rc
+  or_world or-refuse sbx
+  rm -f "$CASE/or-key"
+  out=$(spawn_task or-nokey --model or:qwen); rc=$?
+  expect_code 1 "$rc" "a missing key must refuse"
+  assert_refused_cleanly or-nokey "$out" "needs its key in"
+  printf '%s\n' "$OR_KEY" >"$CASE/or-key"
+  printf '503' >"$CASE/or-status/qwen_qwen3.8-27b"
+  printf '429' >"$CASE/or-status/qwen_qwen3-coder"
+  out=$(spawn_task or-down --model or:qwen); rc=$?
+  expect_code 1 "$rc" "no answering model must refuse"
+  assert_refused_cleanly or-down "$out" "no OpenRouter model answered"
+  out=$(spawn_task or-free --model or:vendor/model:free); rc=$?
+  expect_code 1 "$rc" "a :free id must refuse"
+  assert_refused_cleanly or-free "$out" ":free"
+  out=$(spawn_task or-freechain --model or:free); rc=$?
+  expect_code 1 "$rc" "a chain with a :free id must refuse"
+  assert_refused_cleanly or-freechain "$out" ":free"
+  out=$(spawn_task or-noalias --model or:nope); rc=$?
+  expect_code 1 "$rc" "an unknown alias must refuse"
+  assert_refused_cleanly or-noalias "$out" "no alias 'nope'"
+  out=$(spawn_task or-codex --model or:qwen --harness codex); rc=$?
+  expect_code 1 "$rc" "another harness must refuse"
+  assert_refused_cleanly or-codex "$out" "claude"
+  or_key_leaks || fail "the key must be in no log or output"
+  pass "a missing key, a silent chain, a :free id, an unknown alias or another harness refuses before anything is created"
+}
+
+test_the_openrouter_profile_needs_the_sandbox() {
+  local out rc
+  or_world or-bare -
+  rm -f "$FAKEBIN/sbx"
+  out=$(spawn_task or-nosbx --model or:qwen); rc=$?
+  expect_code 1 "$rc" "no sandbox must refuse"
+  assert_refused_cleanly or-nosbx "$out" "sandbox"
+  pass "the OpenRouter profile refuses to run outside the sandbox"
+}
+
+test_an_ordinary_sandboxed_spawn_is_not_the_openrouter_profile() {
+  local out rc
+  or_world or-not sbx
+  out=$(spawn_task sbx-plain2 --model claude-fable-5-1 --effort high); rc=$?
+  expect_code 0 "$rc" "an ordinary model must not need OpenRouter: $out"
+  assert_no_grep "--openrouter" "$CASE/launch.log" "no OpenRouter flag for another model"
+  assert_no_grep "model_alias" "$HOME_DIR/state/sbx-plain2.meta" "no alias for another model"
+  assert_not_contains "$(cat "$CASE/curl.log")" "model" "nothing is probed"
+  pass "a non-OpenRouter model neither probes OpenRouter nor gets the flag"
+}
+
+test_the_openrouter_profile_takes_no_lock_and_leaves_local_spawns_alone() {
+  local out rc
+  or_world or-lock sbx
+  exec 7>"$CASE/llm.lock"
+  flock -n 7 || fail "test could not take the lock"
+  out=$(FM_LOCAL_LLM_LOCK="$CASE/llm.lock" spawn_task sbx-orl --model or:qwen); rc=$?
+  exec 7>&-
+  expect_code 0 "$rc" "a held local slot must not stop an OpenRouter worker: $out"
+  pass "the OpenRouter profile is not serialized behind the local slot"
+}
+
+
 test_absent_config_keeps_the_launch_unchanged
 test_explicit_off_is_the_same_as_absent
 test_sbx_rewrites_the_launch_and_records_the_sandbox
@@ -418,5 +536,11 @@ test_the_configured_start_command_brings_the_server_up_first
 test_a_start_command_that_never_answers_falls_back
 test_comfyui_holding_the_gpu_falls_back_without_starting
 test_a_dispatch_flag_without_a_local_model_changes_nothing
+test_the_openrouter_profile_resolves_the_chain_and_launches_the_wrapper
+test_a_direct_openrouter_id_has_no_alias
+test_the_openrouter_profile_refuses_before_any_side_effect
+test_the_openrouter_profile_needs_the_sandbox
+test_an_ordinary_sandboxed_spawn_is_not_the_openrouter_profile
+test_the_openrouter_profile_takes_no_lock_and_leaves_local_spawns_alone
 
 echo "# all fm-spawn-sandbox tests passed"

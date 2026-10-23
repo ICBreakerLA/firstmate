@@ -102,6 +102,12 @@
 #   local model (docs/configuration.md "Local-model worker profile") that is
 #   unavailable falls back to claude-haiku-4-5 at low effort, with one notice
 #   line, instead of refusing; an explicit --model without it still refuses.
+#   --model or:<vendor>/<model> or or:<alias> selects the OpenRouter profile
+#   (docs/configuration.md "OpenRouter worker profile"): a sandboxed claude task
+#   worker on OpenRouter. The spawn resolves the alias through
+#   config/openrouter-models.list, probes each id with a 1-token zero-retention
+#   request, and records the answering id as model=or:<id> and the alias as
+#   model_alias=; it refuses before anything exists, with no fallback.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -711,6 +717,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-sbx-lib.sh"
 # shellcheck source=bin/fm-local-llm-lib.sh
 . "$SCRIPT_DIR/fm-local-llm-lib.sh"
+# shellcheck source=bin/fm-openrouter-lib.sh
+. "$SCRIPT_DIR/fm-openrouter-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -2631,6 +2639,37 @@ if fm_local_llm_is_model "$MODEL"; then
     fm_local_llm_claim "$ID" || exit 1
     LOCAL_LLM_ACTIVE=1
   fi
+fi
+
+# OpenRouter profile (bin/fm-openrouter-lib.sh): selected by an `or:` model id.
+# Like the local-model profile it runs only as a sandboxed Claude task worker,
+# and every refusal below, including the key and zero-retention probe in
+# fm_openrouter_resolve, happens before any endpoint, worktree, clone or record
+# exists. The resolved model is recorded as or:<id> with its alias, so a
+# relaunch re-selects the profile from the task record. There is no
+# concurrency lock and no fallback to another profile.
+OPENROUTER_ACTIVE=0
+MODEL_ALIAS=
+if fm_openrouter_is_model "$MODEL"; then
+  [ "$KIND" != secondmate ] || {
+    echo "error: the OpenRouter profile ($MODEL) runs only sandboxed task workers, not a persistent secondmate" >&2
+    exit 1
+  }
+  [ "$HARNESS" = claude ] || {
+    echo "error: the OpenRouter profile ($MODEL) runs only on the claude harness, not $HARNESS" >&2
+    exit 1
+  }
+  [ "$SBX_ACTIVE" -eq 1 ] || {
+    echo "error: the OpenRouter profile ($MODEL) runs only inside the worker sandbox; set config/worker-sandbox to sbx (a relaunch follows the task's recorded sandbox)" >&2
+    exit 1
+  }
+  OPENROUTER_RESOLVED=$(fm_openrouter_resolve "$CONFIG" "$MODEL") || exit 1
+  MODEL_ALIAS=${OPENROUTER_RESOLVED%%$'\t'*}
+  MODEL=$FM_OPENROUTER_PREFIX${OPENROUTER_RESOLVED#*$'\t'}
+  if [ "$RELAUNCH" -eq 1 ] && [ -z "$MODEL_ALIAS" ] && [ "$(fm_meta_get "$RELAUNCH_META" model)" = "$MODEL" ]; then
+    MODEL_ALIAS=$(fm_meta_get "$RELAUNCH_META" model_alias)
+  fi
+  OPENROUTER_ACTIVE=1
 fi
 
 secondmate_registry_value() {
@@ -5308,7 +5347,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider model_fallback_from sandbox sandbox_name busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model model_alias effort account account_provider model_fallback_from sandbox sandbox_name busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5328,6 +5367,7 @@ preserve_relaunch_meta() {
   [ -z "$BASE_BRANCH" ] || echo "base_branch=$BASE_BRANCH"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
+  [ -z "$MODEL_ALIAS" ] || echo "model_alias=$MODEL_ALIAS"
   [ -z "$MODEL_FELL_BACK_FROM" ] || echo "model_fallback_from=$MODEL_FELL_BACK_FROM"
   # The worker account pin, only when this home declares one, so an unpinned
   # task record stays byte-identical.
@@ -5475,11 +5515,14 @@ sq_ompcfg=$(shell_quote "${OMP_WORKER_CFG:-$FM_ROOT/.omp/fm-worker-overlay.yml}"
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 sq_worktree=$(shell_quote "$WT")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
+# The worker names the model to OpenRouter without the profile prefix.
+[ "$OPENROUTER_ACTIVE" -eq 0 ] || MODELFLAG=$(model_flag_for_harness "$HARNESS" "${MODEL#"$FM_OPENROUTER_PREFIX"}")
 # A pinned Pi launch confines Pi's model lookup to the declared provider.
 [ -z "$WORKER_ACCOUNT_PROVIDER" ] || MODELFLAG="--provider $(shell_quote "$WORKER_ACCOUNT_PROVIDER") $MODELFLAG"
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL") || exit 1
 # The local server fixes its own reasoning effort, so no --effort is passed.
 [ "$LOCAL_LLM_ACTIVE" -eq 0 ] || EFFORTFLAG=
+[ "$OPENROUTER_ACTIVE" -eq 0 ] || EFFORTFLAG=
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 # Relaunch session continuity. Computed here, where the adopted endpoint (T) is
@@ -5503,6 +5546,7 @@ if [ "$SBX_ACTIVE" -eq 1 ]; then
   [ -z "$FM_SBX_ALLOW" ] || CLAUDE_BIN="$CLAUDE_BIN --allow $(shell_quote "$FM_SBX_ALLOW")"
   [ "$FM_SBX_VERIFY" != app ] || CLAUDE_BIN="$CLAUDE_BIN --verify app"
   [ "$LOCAL_LLM_ACTIVE" -eq 0 ] || CLAUDE_BIN="$CLAUDE_BIN --local-llm"
+  [ "$OPENROUTER_ACTIVE" -eq 0 ] || CLAUDE_BIN="$CLAUDE_BIN --openrouter $(shell_quote "${MODEL#"$FM_OPENROUTER_PREFIX"}")"
   [ ! -d "$DATA/sbx-npm-cache" ] || CLAUDE_BIN="$CLAUDE_BIN --npm-cache $(shell_quote "$DATA/sbx-npm-cache")"
   CLAUDE_BIN="$CLAUDE_BIN --"
 fi

@@ -413,6 +413,13 @@ TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 assert_contains "$out" 'candidate: gemini:gemini-3.8-flash-high  provider=google  scope=all_models  remaining=72%  spendPriority=0.3  runway=through_reset  -> eligible' "Gemini resolves through its explicit provider"
 assert_contains "$out" "  profile: --harness 'gemini' --model 'gemini-3.8-flash-high'" "Gemini is a typed verified dispatch harness"
 
+OR_RULE="$TMP_ROOT/openrouter-rule.json"
+printf '%s\n' '{"rules":[{"when":"Cheap build work.","use":{"harness":"claude","model":"or:qwen"}}]}' > "$OR_RULE"
+cp "$OR_RULE" "$RULES"
+reset_log
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+assert_contains "$out" 'candidate: claude:or:qwen  provider=openrouter  -> eligible, unranked: provider openrouter not in the quota snapshot' "an or: model is attributed to the openrouter provider, not to Claude's quota"
+
 cp "$ROOT/docs/examples/crew-dispatch.json" "$RULES"
 cat > "$RESPONSE" <<'JSON'
 {"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"default","confidence":0.9,"probabilities":{"rule_1":0.02,"rule_2":0.02,"rule_3":0.02,"default":0.94}}},"usage":{"input_tokens":812,"output_tokens":60}}

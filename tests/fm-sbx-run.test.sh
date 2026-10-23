@@ -51,6 +51,7 @@ secret)
 exec)
   case "\$*" in
   *"api.anthropic.com"*) [ -f "$W/vm.anthropic" ] || exit 22 ;;
+  *"openrouter.ai/api"*) [ ! -f "$W/vm.unreachable" ] || exit 7 ;;
   *"host.docker.internal"*) [ ! -f "$W/vm.unreachable" ] || exit 7 ;;
   *"no-mistakes --version"*) cat "$W/vm.nmver" 2>/dev/null; exit 0 ;;
   *"no-mistakes init"*) [ ! -f "$W/init.fail" ] || exit 1 ;;
@@ -763,6 +764,128 @@ test_local_llm_unreachable_from_the_vm_removes_the_sandbox() {
 }
 
 
+OR_KEY=sk-or-v1-FAKE-WRAPPER-KEY-0123456789
+
+# or_world <case>: the standard world plus the OpenRouter key file and a fake
+# curl that answers the host-side usage reading from a counter (1.00 before,
+# 1.25 after).
+or_world() {
+  new_world "$1"
+  printf '%s\n' "$OR_KEY" >"$W/or-key"
+  cat >"$FAKE/curl" <<SH
+#!/usr/bin/env bash
+cat >/dev/null
+n=\$(cat "$W/curl.n" 2>/dev/null || echo 0)
+echo \$((n + 1)) >"$W/curl.n"
+if [ "\$n" = 0 ]; then u=1.00; else u=1.25; fi
+printf '{"data":{"usage":%s}}\n200' "\$u"
+SH
+  chmod +x "$FAKE/curl"
+}
+
+or_wrap() { FM_OPENROUTER_KEY_FILE="$W/or-key" wrap "$@"; }
+
+test_openrouter_gets_its_environment_scoped_rules_and_checks() {
+  local create
+  or_world or
+  or_wrap --kind scout --openrouter qwen/qwen3.8-27b -- claude --model qwen/qwen3.8-27b >/dev/null 2>&1
+  create=$(grep '^create ' "$LOG")
+  assert_contains "$create" "-e ANTHROPIC_BASE_URL=https://openrouter.ai/api" "the worker talks to OpenRouter"
+  assert_contains "$create" "-e ANTHROPIC_AUTH_TOKEN=$OR_KEY" "the key is the bearer token"
+  assert_contains "$create" "-e ANTHROPIC_API_KEY=" "the API key variable is empty"
+  assert_not_contains "$create" "ANTHROPIC_API_KEY=$OR_KEY" "the key is not the API key"
+  assert_contains "$create" "-e ANTHROPIC_MODEL=qwen/qwen3.8-27b" "the model is set"
+  assert_contains "$create" "-e ANTHROPIC_DEFAULT_OPUS_MODEL=qwen/qwen3.8-27b" "the top tier maps to the model"
+  assert_contains "$create" "-e ANTHROPIC_DEFAULT_SONNET_MODEL=qwen/qwen3.8-27b" "the middle tier maps to the model"
+  assert_contains "$create" "-e ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen/qwen3.8-27b" "the background tier maps to the model"
+  assert_contains "$create" "-e CLAUDE_CODE_SUBAGENT_MODEL=qwen/qwen3.8-27b" "subagents map to the model"
+  assert_contains "$create" "-e CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000" "auto-compact is 200000"
+  assert_contains "$create" "-e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" "nonessential traffic is off"
+  assert_contains "$create" "-e CLAUDE_CODE_ATTRIBUTION_HEADER=0" "the attribution header is off"
+  assert_contains "$(log)" "policy allow network --sandbox $NAME openrouter.ai" "OpenRouter is allowed for this sandbox only"
+  assert_not_contains "$(log)" "policy allow network openrouter.ai" "no global allow"
+  assert_contains "$(log)" "policy deny network --sandbox $NAME api.anthropic.com" "the Anthropic API is denied for this sandbox only"
+  assert_not_contains "$(log)" "policy deny network api.anthropic.com" "no global deny"
+  assert_contains "$(log)" "secret rm anthropic --sandbox $NAME -f" "the inherited sign-in is removed for this sandbox only"
+  assert_not_contains "$(log)" "secret set anthropic" "no Anthropic secret is stored in its place"
+  assert_contains "$(log)" "exec $NAME curl -fsS --max-time 10 https://openrouter.ai/api/v1/models" "OpenRouter is checked from the VM"
+  assert_contains "$(log)" "exec $NAME curl -fsS --max-time 10 https://api.anthropic.com/v1/models" "the lack of Anthropic access is checked"
+  assert_not_contains "$(log)" "LOCK-" "there is no concurrency lock"
+  [ "$(grep -n 'secret rm anthropic' "$LOG" | cut -d: -f1)" -lt "$(grep -n '^run ' "$LOG" | head -1 | cut -d: -f1)" ] ||
+    fail "the sign-in must be gone before the worker starts"
+  [ "$(grep -n 'policy allow' "$LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n '^run ' "$LOG" | head -1 | cut -d: -f1)" ] ||
+    fail "the rules must exist before the worker starts"
+  pass "the OpenRouter profile gets its environment, sandbox-scoped rules and checks before the worker starts"
+}
+
+test_openrouter_off_changes_nothing() {
+  local create
+  or_world or-off
+  or_wrap --kind scout -- claude >/dev/null 2>&1
+  create=$(grep '^create ' "$LOG")
+  assert_not_contains "$create" "ANTHROPIC_AUTH_TOKEN" "no OpenRouter environment without the flag"
+  assert_not_contains "$(log)" "openrouter.ai" "no OpenRouter rule without the flag"
+  assert_absent "$DATA/t1/openrouter-usage.log" "no usage log without the flag"
+  pass "without --openrouter nothing OpenRouter is added"
+}
+
+test_openrouter_refuses_before_any_sandbox_exists() {
+  local out rc
+  or_world or-nokey
+  rm -f "$W/or-key"
+  out=$(or_wrap --kind scout --openrouter qwen/qwen3.8-27b -- claude 2>&1); rc=$?
+  expect_code 1 "$rc" "a missing key must refuse"
+  assert_contains "$out" "needs its key in" "the refusal says why"
+  assert_not_contains "$(log)" "create " "no sandbox is created"
+  or_world or-badid
+  out=$(or_wrap --kind scout --openrouter 'not-an-id' -- claude 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || fail "a bad model id must refuse: $out"
+  assert_not_contains "$(log)" "create " "no sandbox is created for a bad id"
+  or_world or-both
+  out=$(or_wrap --kind scout --openrouter qwen/qwen3.8-27b --local-llm -- claude 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || fail "both profiles must refuse: $out"
+  assert_not_contains "$(log)" "create " "no sandbox is created for both profiles"
+  pass "a missing key, a bad id or both profiles refuse before a sandbox exists"
+}
+
+test_openrouter_reachable_anthropic_stops_the_launch() {
+  local out rc
+  or_world or-anthropic
+  : >"$W/vm.anthropic"
+  out=$(or_wrap --kind scout --openrouter qwen/qwen3.8-27b -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "a sandbox that still reaches Anthropic must stop the launch"
+  assert_contains "$out" "can still reach api.anthropic.com" "the refusal says why"
+  assert_not_contains "$out" "$OR_KEY" "the key is not printed"
+  ! grep -q '^run ' "$LOG" || fail "no worker may be started"
+  [ ! -s "$LIVE" ] || fail "no sandbox may remain: $(cat "$LIVE")"
+  pass "an OpenRouter sandbox that can still reach the Anthropic API stops the launch and is removed"
+}
+
+test_openrouter_unreachable_from_the_vm_removes_the_sandbox() {
+  local out rc
+  or_world or-vm
+  : >"$W/vm.unreachable"
+  out=$(or_wrap --kind scout --openrouter qwen/qwen3.8-27b -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "an unreachable OpenRouter must stop the launch"
+  assert_contains "$out" "cannot reach OpenRouter" "the refusal says why"
+  ! grep -q '^run ' "$LOG" || fail "no worker may be started"
+  assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed"
+  [ ! -s "$LIVE" ] || fail "no sandbox may remain: $(cat "$LIVE")"
+  pass "a VM that cannot reach OpenRouter stops the launch and removes the sandbox"
+}
+
+test_openrouter_logs_the_tasks_cost_without_the_key() {
+  or_world or-usage
+  or_wrap --kind scout --openrouter qwen/qwen3.8-27b -- claude >/dev/null 2>&1
+  assert_grep "model=qwen/qwen3.8-27b before=1.00 after=1.25 cost_usd=0.250000" "$DATA/t1/openrouter-usage.log" "the log has the task's spend"
+  assert_no_grep "$OR_KEY" "$DATA/t1/openrouter-usage.log" "the key is not logged"
+  or_world or-nousage
+  printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 22\n' >"$FAKE/curl"
+  or_wrap --kind scout --openrouter qwen/qwen3.8-27b -- claude >/dev/null 2>&1
+  assert_absent "$DATA/t1/openrouter-usage.log" "an unreadable usage writes nothing"
+  pass "the task's OpenRouter cost is logged without the key, and an unreadable usage writes nothing"
+}
+
 test_creates_with_minimal_mounts_and_cleans_up
 test_environment_is_an_explicit_allowlist
 test_the_commit_identity_reaches_the_sandbox_environment
@@ -800,5 +923,11 @@ test_local_llm_failed_preflight_releases_the_slot
 test_local_llm_without_its_spawns_claim_is_refused
 test_local_llm_reachable_anthropic_stops_the_launch
 test_local_llm_unreachable_from_the_vm_removes_the_sandbox
+test_openrouter_gets_its_environment_scoped_rules_and_checks
+test_openrouter_off_changes_nothing
+test_openrouter_refuses_before_any_sandbox_exists
+test_openrouter_reachable_anthropic_stops_the_launch
+test_openrouter_unreachable_from_the_vm_removes_the_sandbox
+test_openrouter_logs_the_tasks_cost_without_the_key
 
 echo "# all fm-sbx-run tests passed"

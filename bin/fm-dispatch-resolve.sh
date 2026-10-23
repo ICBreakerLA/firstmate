@@ -358,7 +358,7 @@ RESULT=$(jq -n --arg floor "$CONFIDENCE_FLOOR" --argjson lat "$LAT_MS" --arg non
   def prov($p; $lane): quota_row($q; $p; $lane);
   def rows($p; $lane): (prov($p; $lane) | .quotaSemantics.effectiveAvailability // []);
   def bare($m): ($m | split("/") | last);
-  def provider_of($c): ($c.provider // $pmap[$c.harness] // null);
+  def provider_of($c): ($c.provider // (if (($c.model // "") | startswith("or:")) then "openrouter" else null end) // $pmap[$c.harness] // null);
   def lane_of($c): quota_lane($c.harness; $c.model);
   def measured($p; $lane):
     (prov($p; $lane) != null and (["known", "partial"] | index(prov($p; $lane).quotaSemantics.status)) != null);

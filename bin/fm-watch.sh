@@ -3400,6 +3400,10 @@ EOF
     fi
   fi
 
+  # Batch window (opt-in): when non-urgent wakes have been held for at least
+  # WAKE_BATCH_SECS since the first hold, emit one batch wake carrying them.
+  wake_triage_maybe_flush_batch_window
+
   # Terminal wait: a bounded native-event wait for push-capable homes (herdr),
   # else the blind poll sleep. See event_wait_or_sleep.
   event_wait_or_sleep

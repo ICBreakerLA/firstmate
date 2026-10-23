@@ -6746,6 +6746,72 @@ test_wake_triage_gate_decision() {
   pass "the gate emits working/non-stale wakes (including a no-meta lane) and backs off a declared-wait recheck (R2)"
 }
 
+# --- opt-in batching (Step 3): hold, flush, and the gate's hold branch --------
+
+# The flush stub lives ONLY inside a subshell so the fm_wake_append override does
+# not leak into other tests (fm-wake-lib.sh is not sourced by this file).
+test_wake_triage_hold_and_flush() {
+  local dir state cap
+  dir=$(fm_test_tmproot wake-triage-batch-hold); state="$dir/state"
+  cap="$dir/append.log"
+  mkdir -p "$state" "$dir/config"
+  STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
+  FM_WAKE_BATCH_SECS=300; wake_triage_init   # batching on for this case
+  # Hold two distinct rows and a duplicate: the file holds two, since is set once.
+  wake_triage_hold stale "k1" "stale: a"
+  wake_triage_hold stale "k2" "stale: b"
+  wake_triage_hold stale "k1" "stale: a"   # duplicate -> not re-added
+  [ "$(grep -c '' "$state/.wake-batch")" = 2 ] || fail "hold did not dedup (got $(grep -c '' "$state/.wake-batch") rows)"
+  [ -e "$state/.wake-batch-since" ] || fail "the first hold did not record the window start"
+  # Flush: the rows are appended and the batch file + since marker are cleared.
+  : > "$cap"; WAKE_TRIAGE_FLUSH_CAPTURE="$cap"
+  ( fm_wake_append() { printf '%s\n' "$*" >> "$WAKE_TRIAGE_FLUSH_CAPTURE"; }
+    wake_triage_flush_held )
+  [ "$(grep -c '' "$cap")" = 2 ] || fail "flush did not append every held row (got $(grep -c '' "$cap"))"
+  [ ! -e "$state/.wake-batch" ] && [ ! -e "$state/.wake-batch-since" ] \
+    || fail "flush did not clear the batch file and since marker"
+  # A second flush with nothing held appends nothing.
+  wake_triage_flush_held
+  [ "$WAKE_TRIAGE_FLUSHED_COUNT" = 0 ] || fail "an empty flush must report zero rows"
+  pass "batching holds deduped durable rows and flushes them all, clearing the file"
+}
+
+test_wake_triage_gate_holds_when_batch_on() {
+  local dir state task key
+  dir=$(fm_test_tmproot wake-triage-gate-hold); state="$dir/state"
+  mkdir -p "$state" "$dir/config"
+  STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
+  FM_WAKE_BATCH_SECS=300; wake_triage_init   # batching on
+  task="held"; key="test:fm-held"
+  printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
+  printf 'paused: external release\n' > "$state/$task.status"
+  # First gate: R2 arms and, with batching on, HOLDS (not emit).
+  wake_triage_gate stale "$task" "$key" "stale: held" 240
+  [ "$WAKE_TRIAGE_ACTION" = hold ] || fail "a batched declared-wait recheck must be held (got $WAKE_TRIAGE_ACTION)"
+  [ -f "$state/.wake-batch" ] || fail "the held recheck was not written to the batch file"
+  grep -F "$key" "$state/.wake-batch" >/dev/null || fail "the held row did not carry its key"
+  pass "with batching on, the gate holds a declared-wait recheck in the durable batch file"
+}
+
+test_wake_triage_batch_off_default() {
+  local dir state task key
+  dir=$(fm_test_tmproot wake-triage-batch-off); state="$dir/state"
+  mkdir -p "$state" "$dir/config"
+  STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
+  unset FM_WAKE_BATCH_SECS 2>/dev/null || true
+  wake_triage_init                              # batching off (default)
+  task="held"; key="test:fm-held"
+  printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
+  printf 'paused: external release\n' > "$state/$task.status"
+  # Off: the gate EMITS (never holds) and creates no batch file - byte-for-byte.
+  wake_triage_gate stale "$task" "$key" "stale: held" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "with batching off the gate must emit (got $WAKE_TRIAGE_ACTION)"
+  [ ! -e "$state/.wake-batch" ] || fail "batching off must not create the batch file"
+  wake_triage_maybe_flush_batch_window
+  [ ! -e "$state/.wake-batch" ] || fail "the window check must be a no-op when batching is off"
+  pass "with batching off (the default) nothing is held and the window check is inert"
+}
+
 # CI's stock macOS Bash lane sets FM_TEST_ONLY to run just the bash-3.2
 # churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 if [ -n "${FM_TEST_ONLY:-}" ]; then
@@ -6898,3 +6964,6 @@ test_wake_triage_r1_guard
 test_wake_triage_r2_backoff
 test_wake_triage_r3_check_repeat
 test_wake_triage_gate_decision
+test_wake_triage_hold_and_flush
+test_wake_triage_gate_holds_when_batch_on
+test_wake_triage_batch_off_default

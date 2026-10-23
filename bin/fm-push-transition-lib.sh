@@ -91,6 +91,12 @@ triage_log() {
 # Exit after reporting one actionable wake. Tests override this callback.
 wake() {
   local output_status=0
+  # Batch flush (opt-in): an urgent wake delivers any held non-urgent rows in the
+  # same turn. The callback lives in fm-wake-triage-lib.sh, sourced by fm-watch.sh
+  # but not by this lib's standalone smoke test, hence the command -v guard.
+  if [ "${FM_WAKE_TRIAGE_BATCH_ON:-0}" = 1 ] && command -v wake_triage_flush_held >/dev/null 2>&1; then
+    wake_triage_flush_held
+  fi
   case "$1" in
     heartbeat*) echo $(( $(cat "$STATE/.heartbeat-streak" 2>/dev/null || echo 0) + 1 )) > "$STATE/.heartbeat-streak" ;;
     *) echo 0 > "$STATE/.heartbeat-streak" ;;

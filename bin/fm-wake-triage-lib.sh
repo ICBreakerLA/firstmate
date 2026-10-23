@@ -31,12 +31,15 @@
 # "<time> <kind> <task> <rule> <action>" so a wrongly dropped wake is visible.
 # The file is size-capped.
 
-# Resolve the triage state paths and the batch window once, at watcher start.
+# Resolve the triage state paths and the batch window at watcher start. The
+# paths are derived from $STATE on every call (not cached from a prior init) so a
+# re-init against a different state dir - as the tests do per case - points at
+# the right home rather than the last init's.
 wake_triage_init() {
-  WAKE_TRIAGE_LOG="${WAKE_TRIAGE_LOG:-$STATE/wake-triage.log}"
+  WAKE_TRIAGE_LOG="$STATE/wake-triage.log"
   WAKE_TRIAGE_LOG_MAX_BYTES=${FM_WAKE_TRIAGE_LOG_MAX_BYTES:-262144}
-  WAKE_BATCH_FILE="${WAKE_BATCH_FILE:-$STATE/.wake-batch}"
-  WAKE_BATCH_SINCE="${WAKE_BATCH_SINCE:-$STATE/.wake-batch-since}"
+  WAKE_BATCH_FILE="$STATE/.wake-batch"
+  WAKE_BATCH_SINCE="$STATE/.wake-batch-since"
   WAKE_BATCH_SECS=0
   if [ -n "${FM_WAKE_BATCH_SECS:-}" ]; then
     case "$FM_WAKE_BATCH_SECS" in *[!0-9]*|'') : ;; *) WAKE_BATCH_SECS=$FM_WAKE_BATCH_SECS ;; esac
@@ -174,6 +177,69 @@ wake_triage_gate() {
       wake_triage_log "$kind" "$task" R2 suppress
       return 0
     fi
+    # R2 allowed the recheck. With batching on, hold it for the window instead of
+    # re-arming now; it flushes with the next urgent wake or the window wake.
+    if wake_triage_batch_on; then
+      wake_triage_hold "$kind" "$key" "$reason"
+      WAKE_TRIAGE_ACTION=hold
+      wake_triage_log "$kind" "$task" batch hold
+      return 0
+    fi
   fi
   return 0
+}
+
+# --- opt-in batching (Step 3) -----------------------------------------------
+# Inert unless a positive window is configured (FM_WAKE_BATCH_SECS or the file
+# config/wake-batch-secs). When on, the R2-allowed declared-wait recheck is held
+# in a durable file instead of re-arming the supervisor now; an urgent wake
+# flushes the held rows with it, and the watcher raises one batch wake when the
+# window elapses since the first hold.
+
+# Hold one non-urgent wake as a durable row <kind>\t<key>\t<reason> (tabs in the
+# reason flattened to spaces). An identical already-held row is not duplicated.
+# The since marker records the first hold so the window is measured from there,
+# not re-based on every hold.
+wake_triage_hold() {
+  local kind=$1 key=$2 reason=$3 row
+  reason=${reason//$'\t'/ }
+  row=$(printf '%s\t%s\t%s' "$kind" "$key" "$reason")
+  if [ -f "$WAKE_BATCH_FILE" ] && grep -F -x -q -- "$row" "$WAKE_BATCH_FILE" 2>/dev/null; then
+    return 0
+  fi
+  [ -e "$WAKE_BATCH_SINCE" ] || date +%s > "$WAKE_BATCH_SINCE" 2>/dev/null || true
+  printf '%s\n' "$row" >> "$WAKE_BATCH_FILE" 2>/dev/null || true
+}
+
+# Flush the held rows into the live queue via fm_wake_append (so the drain
+# delivers them in the same turn), then clear the batch file and since marker.
+# Sets WAKE_TRIAGE_FLUSHED_COUNT to the number of rows flushed.
+wake_triage_flush_held() {
+  WAKE_TRIAGE_FLUSHED_COUNT=0
+  [ -f "$WAKE_BATCH_FILE" ] || return 0
+  local kind key reason
+  while IFS=$'\t' read -r kind key reason; do
+    [ -n "$kind" ] || continue
+    fm_wake_append "$kind" "$key" "$reason" 2>/dev/null || true
+    WAKE_TRIAGE_FLUSHED_COUNT=$(( WAKE_TRIAGE_FLUSHED_COUNT + 1 ))
+  done < "$WAKE_BATCH_FILE"
+  rm -f "$WAKE_BATCH_FILE" "$WAKE_BATCH_SINCE" 2>/dev/null
+  return 0
+}
+
+# Raise one batch wake when the window has elapsed since the first held row. The
+# held rows are flushed into the live queue (drained with this wake), so the
+# supervisor is re-armed once for the whole batch rather than per row. The since
+# marker holds an epoch (not an mtime), so its age is now minus that epoch.
+wake_triage_maybe_flush_batch_window() {
+  wake_triage_batch_on || return 0
+  [ -f "$WAKE_BATCH_FILE" ] || return 0
+  local since now age n
+  since=$(cat "$WAKE_BATCH_SINCE" 2>/dev/null || true)
+  case "$since" in ''|*[!0-9]*) return 0 ;; esac
+  now=$(date +%s); age=$(( now - since ))
+  [ "$age" -ge "$WAKE_BATCH_SECS" ] || return 0
+  wake_triage_flush_held
+  n=${WAKE_TRIAGE_FLUSHED_COUNT:-0}
+  wake "stale: wake-batch: flushed $n held non-urgent wake(s)"
 }

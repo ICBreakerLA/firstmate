@@ -12,7 +12,8 @@
 #   claude-sbx --id ID --config DIR --state DIR --data DIR
 #       --root DIR --wt DIR --clone DIR --name SANDBOX [--cpus N] [--memory Ng]
 #       [--busy-gen GEN] [--kind ship|scout] [--nm] [--nm-pin VERSION]
-#       [--allow HOSTS] [--npm-cache DIR] [--verify app] [--local-llm] -- CLAUDE_ARGS...
+#       [--allow HOSTS] [--npm-cache DIR] [--verify app] [--local-llm]
+#       [--openrouter MODEL] -- CLAUDE_ARGS...
 #
 #   --wt, --clone   the host worktree and the standalone clone bin/fm-sbx-bridge.sh
 #                   made of it; only the clone is mounted, and the VM sees a
@@ -51,6 +52,20 @@
 #                   api.anthropic.com and one sandbox-scoped allow for the
 #                   server's port, and the launch stops if the VM cannot reach
 #                   the server or can reach the Anthropic API.
+#   --openrouter MODEL
+#                   the OpenRouter profile (bin/fm-openrouter-lib.sh,
+#                   docs/configuration.md "OpenRouter worker profile"): the
+#                   worker talks to OpenRouter's Anthropic-compatible API with
+#                   the OpenRouter model id MODEL instead of the Anthropic API.
+#                   The spend-limited key is read on the host from its key file
+#                   and enters the VM only as ANTHROPIC_AUTH_TOKEN; the sandbox
+#                   loses its inherited anthropic secret, gets a
+#                   sandbox-scoped deny for api.anthropic.com and one
+#                   sandbox-scoped allow for openrouter.ai, and the launch
+#                   stops if the VM cannot reach OpenRouter or can reach the
+#                   Anthropic API. The key's spend before and after the task is
+#                   appended to data/<id>/openrouter-usage.log.
+#                   There is no concurrency lock.
 #   CLAUDE_ARGS     the claude command line, exactly as the launch built it.
 #
 # What this script does, in order: remove any sandbox of the same name, create
@@ -93,12 +108,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 # shellcheck source=bin/fm-local-llm-lib.sh
 . "$SCRIPT_DIR/fm-local-llm-lib.sh"
+# shellcheck source=bin/fm-openrouter-lib.sh
+. "$SCRIPT_DIR/fm-openrouter-lib.sh"
 # shellcheck source=bin/fm-operational-input.sh
 . "$SCRIPT_DIR/fm-operational-input.sh"
 
 ID='' CONFIG='' STATE='' DATA='' ROOT='' WT='' CLONE='' NAME=''
 CPUS=4 MEMORY=4g BUSY_GEN='' KIND=ship NM=0 NM_PIN='' ALLOW='' NPM_CACHE=''
-RELAY_PID='' CLEANED=0 VERIFY='' VERIFY_PID='' LOCAL_LLM=0
+RELAY_PID='' CLEANED=0 VERIFY='' VERIFY_PID='' LOCAL_LLM=0 OPENROUTER='' OR_KEY='' OR_USAGE_BEFORE=''
 BROKER="$SCRIPT_DIR/fm-sbx-verify-broker.sh"
 CLAUDE_USER_HOME=/home/agent
 
@@ -127,6 +144,7 @@ while [ "$#" -gt 0 ]; do
   --npm-cache) NPM_CACHE=${2:-}; shift 2 ;;
   --verify) VERIFY=${2:-}; shift 2 ;;
   --local-llm) LOCAL_LLM=1; shift ;;
+  --openrouter) OPENROUTER=${2:-}; shift 2 ;;
   --) shift; break ;;
   *) die "unknown argument '$1' (see the script header)" ;;
   esac
@@ -152,12 +170,18 @@ done
 fm_sbx_preflight || exit 1
 [ -z "$VERIFY" ] || "$BROKER" check --config "$CONFIG" --state "$STATE" || exit 1
 [ "$LOCAL_LLM" = 0 ] || fm_local_llm_health || exit 1
+if [ -n "$OPENROUTER" ]; then
+  [ "$LOCAL_LLM" = 0 ] || die "--openrouter cannot be combined with --local-llm"
+  fm_openrouter_valid_id "$OPENROUTER" || die "--openrouter takes an OpenRouter model id (vendor/model)"
+  OR_KEY=$(fm_openrouter_key) || exit 1
+fi
 
 CHANNEL=$(fm_sbx_channel_dir "$STATE" "$ID")
 RELAY=$(fm_sbx_relay_dir "$STATE" "$ID")
 INBOX="$STATE/$ID.inbox"
 mkdir -p "$CHANNEL" "$RELAY" "$INBOX/handled" "$DATA/$ID" || die "could not create the task channel directories"
 chmod 755 "$CHANNEL"
+[ -z "$OPENROUTER" ] || OR_USAGE_BEFORE=$(fm_openrouter_usage 2>/dev/null || true)
 if [ -n "$VERIFY" ]; then
   "$BROKER" init --id "$ID" --state "$STATE" || die "could not create the verification spool"
   VERIFY_DIR=$(fm_sbx_verify_dir "$STATE" "$ID")
@@ -172,6 +196,18 @@ bridge_back() {
     echo "notice: the sandbox branch could not be brought back to the worktree yet; teardown retries and refuses to discard it" >&2
     return 1
   }
+}
+
+# The task's OpenRouter cost: the key's lifetime spend before and after, one
+# line in the task's data directory. Nothing is written when either reading
+# is unavailable.
+# shellcheck disable=SC2329 # reached through cleanup
+or_usage_log() {
+  local after delta
+  [ -n "$OPENROUTER" ] && [ -n "$OR_USAGE_BEFORE" ] || return 0
+  after=$(fm_openrouter_usage 2>/dev/null) || return 0
+  delta=$(awk -v a="$after" -v b="$OR_USAGE_BEFORE" 'BEGIN { printf "%.6f", a - b }')
+  printf 'at=%s model=%s before=%s after=%s cost_usd=%s\n' "$(date +%s)" "$OPENROUTER" "$OR_USAGE_BEFORE" "$after" "$delta" >>"$DATA/$ID/openrouter-usage.log" 2>/dev/null || true
 }
 
 # Runs once on any exit path.
@@ -199,6 +235,7 @@ cleanup() {
     "$BROKER" stop --id "$ID" --state "$STATE" --config "$CONFIG" >/dev/null 2>&1 || echo "notice: the verification broker for $ID could not be stopped cleanly; the next lease holder retries the emulator shutdown" >&2
   fi
   bridge_back || true
+  or_usage_log
 }
 trap 'cleanup' EXIT
 trap 'cleanup; exit 129' HUP
@@ -239,6 +276,10 @@ if [ -n "$git_name" ] && [ -n "$git_email" ]; then
 fi
 if [ "$LOCAL_LLM" = 1 ]; then
   while IFS= read -r kv; do add_env "${kv%%=*}" "${kv#*=}"; done < <(fm_local_llm_env)
+fi
+if [ -n "$OPENROUTER" ]; then
+  while IFS= read -r kv; do add_env "${kv%%=*}" "${kv#*=}"; done < <(fm_openrouter_env "$OPENROUTER")
+  add_env ANTHROPIC_AUTH_TOKEN "$OR_KEY"
 fi
 if [ "$NM" = 1 ]; then
   add_env NM_HOME "$CLAUDE_USER_HOME/nm"
@@ -371,6 +412,17 @@ if [ "$LOCAL_LLM" = 1 ]; then
     die "$NAME cannot reach the local model server at $FM_LOCAL_LLM_VM_URL; no worker was started"
   ! sbx exec "$NAME" curl -fsS --max-time 10 "https://$FM_LOCAL_LLM_ANTHROPIC_HOST/v1/models" >/dev/null 2>&1 ||
     die "$NAME can still reach $FM_LOCAL_LLM_ANTHROPIC_HOST with a credential; no worker was started"
+fi
+if [ -n "$OPENROUTER" ]; then
+  sbx secret rm anthropic --sandbox "$NAME" -f </dev/null >/dev/null 2>&1 || true
+  sbx policy deny network --sandbox "$NAME" "$FM_OPENROUTER_ANTHROPIC_HOST" >/dev/null 2>&1 ||
+    die "could not add the per-sandbox deny rule ($FM_OPENROUTER_ANTHROPIC_HOST) for $NAME"
+  sbx policy allow network --sandbox "$NAME" "$FM_OPENROUTER_POLICY_HOST" >/dev/null 2>&1 ||
+    die "could not add the per-sandbox network rule ($FM_OPENROUTER_POLICY_HOST) for $NAME"
+  sbx exec "$NAME" curl -fsS --max-time 10 "$FM_OPENROUTER_VM_URL/v1/models" >/dev/null 2>&1 ||
+    die "$NAME cannot reach OpenRouter at $FM_OPENROUTER_VM_URL; no worker was started"
+  ! sbx exec "$NAME" curl -fsS --max-time 10 "https://$FM_OPENROUTER_ANTHROPIC_HOST/v1/models" >/dev/null 2>&1 ||
+    die "$NAME can still reach $FM_OPENROUTER_ANTHROPIC_HOST with a credential; no worker was started"
 fi
 
 # A sandboxed validation ship needs its clone prepared for the in-VM pipeline

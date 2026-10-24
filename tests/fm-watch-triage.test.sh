@@ -6617,6 +6617,7 @@ test_wake_triage_r1_guard() {
   local dir state task
   dir=$(fm_test_tmproot wake-triage-r1); state="$dir/state"
   mkdir -p "$state" "$dir/config"
+  # shellcheck disable=SC2034 # Read by the sourced triage lib, not in this file.
   STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
   wake_triage_init
   task="ghost"
@@ -6647,9 +6648,10 @@ test_wake_triage_r1_guard() {
 # --- R2: the per-(task, endpoint) declared-wait backoff ---
 test_wake_triage_r2_backoff() {
   local dir state task key f
-  local cur_interval cur_next cur_key
+  local cur_interval cur_key
   dir=$(fm_test_tmproot wake-triage-r2); state="$dir/state"
   mkdir -p "$state" "$dir/config"
+  # shellcheck disable=SC2034 # Read by the sourced triage lib, not in this file.
   STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
   wake_triage_init
   task="held"; key="test:fm-held"
@@ -6667,7 +6669,7 @@ test_wake_triage_r2_backoff() {
   fi
   # Age next-allowed into the past (preserve the function's own interval + key):
   # the gap has elapsed -> allow, and the interval doubles to 480.
-  read -r cur_interval cur_next cur_key < "$f"
+  read -r cur_interval _ cur_key < "$f"
   printf '%s %s %s' "$cur_interval" "$(( $(date +%s) - 1 ))" "$cur_key" > "$f"
   if wake_triage_backoff_allow "$task" "$key" 240; then :; else
     fail "R2 should allow once the gap has elapsed"
@@ -6693,6 +6695,7 @@ test_wake_triage_r3_check_repeat() {
   local dir state key reason
   dir=$(fm_test_tmproot wake-triage-r3); state="$dir/state"
   mkdir -p "$state" "$dir/config"
+  # shellcheck disable=SC2034 # Read by the sourced triage lib, not in this file.
   STATE="$state"; CONFIG="$dir/config"
   wake_triage_init
   key="pr_poll"; reason="check: pr 12 is green"
@@ -6720,6 +6723,7 @@ test_wake_triage_gate_decision() {
   local dir state task key
   dir=$(fm_test_tmproot wake-triage-gate); state="$dir/state"
   mkdir -p "$state" "$dir/config"
+  # shellcheck disable=SC2034 # Read by the sourced triage lib, not in this file.
   STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
   wake_triage_init
   key="test:fm-gate"
@@ -6755,7 +6759,9 @@ test_wake_triage_hold_and_flush() {
   dir=$(fm_test_tmproot wake-triage-batch-hold); state="$dir/state"
   cap="$dir/append.log"
   mkdir -p "$state" "$dir/config"
+  # shellcheck disable=SC2034 # Read by the sourced triage lib, not in this file.
   STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
+  # shellcheck disable=SC2034 # Read by the sourced triage lib, not in this file.
   FM_WAKE_BATCH_SECS=300; wake_triage_init   # batching on for this case
   # Hold two distinct rows and a duplicate: the file holds two, since is set once.
   wake_triage_hold stale "k1" "stale: a"
@@ -6765,7 +6771,8 @@ test_wake_triage_hold_and_flush() {
   [ -e "$state/.wake-batch-since" ] || fail "the first hold did not record the window start"
   # Flush: the rows are appended and the batch file + since marker are cleared.
   : > "$cap"; WAKE_TRIAGE_FLUSH_CAPTURE="$cap"
-  ( fm_wake_append() { printf '%s\n' "$*" >> "$WAKE_TRIAGE_FLUSH_CAPTURE"; }
+  ( # shellcheck disable=SC2329 # Invoked by wake_triage_flush_held below, in this subshell.
+    fm_wake_append() { printf '%s\n' "$*" >> "$WAKE_TRIAGE_FLUSH_CAPTURE"; }
     wake_triage_flush_held )
   [ "$(grep -c '' "$cap")" = 2 ] || fail "flush did not append every held row (got $(grep -c '' "$cap"))"
   [ ! -e "$state/.wake-batch" ] && [ ! -e "$state/.wake-batch-since" ] \
@@ -6780,7 +6787,9 @@ test_wake_triage_gate_holds_when_batch_on() {
   local dir state task key
   dir=$(fm_test_tmproot wake-triage-gate-hold); state="$dir/state"
   mkdir -p "$state" "$dir/config"
+  # shellcheck disable=SC2034 # Read by the sourced triage lib, not in this file.
   STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
+  # shellcheck disable=SC2034 # Read by the sourced triage lib, not in this file.
   FM_WAKE_BATCH_SECS=300; wake_triage_init   # batching on
   task="held"; key="test:fm-held"
   printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
@@ -6797,6 +6806,7 @@ test_wake_triage_batch_off_default() {
   local dir state task key
   dir=$(fm_test_tmproot wake-triage-batch-off); state="$dir/state"
   mkdir -p "$state" "$dir/config"
+  # shellcheck disable=SC2034 # Read by the sourced triage lib, not in this file.
   STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
   unset FM_WAKE_BATCH_SECS 2>/dev/null || true
   wake_triage_init                              # batching off (default)

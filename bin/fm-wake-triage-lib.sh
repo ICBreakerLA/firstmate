@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # bin/fm-wake-triage-lib.sh - deterministic wake triage for bin/fm-watch.sh.
 #
 # Sourced by fm-watch.sh after the push-transition lib; it provides no standalone
@@ -47,8 +48,8 @@ wake_triage_init() {
     WAKE_BATCH_SECS=$(tr -cd '0-9' < "$CONFIG/wake-batch-secs" 2>/dev/null || true)
   fi
   case "${WAKE_BATCH_SECS:-0}" in *[!0-9]*|'') WAKE_BATCH_SECS=0 ;; esac
-  FM_WAKE_TRIAGE_BATCH_ON=0
-  wake_triage_batch_on && FM_WAKE_TRIAGE_BATCH_ON=1
+  # shellcheck disable=SC2034 # Read by wake() in fm-push-transition-lib.sh, analyzed file by file.
+  if wake_triage_batch_on; then FM_WAKE_TRIAGE_BATCH_ON=1; else FM_WAKE_TRIAGE_BATCH_ON=0; fi
 }
 
 # 0 when batching is enabled (a positive window is configured).
@@ -69,17 +70,13 @@ wake_triage_log() {
     local keep tmp
     keep=$(( WAKE_TRIAGE_LOG_MAX_BYTES / 2 ))
     tmp="${WAKE_TRIAGE_LOG}.cap"
-    tail -c "$keep" "$WAKE_TRIAGE_LOG" > "$tmp" 2>/dev/null && mv -f "$tmp" "$WAKE_TRIAGE_LOG" 2>/dev/null \
-      || rm -f "$tmp"
+    if tail -c "$keep" "$WAKE_TRIAGE_LOG" > "$tmp" 2>/dev/null; then
+      mv -f "$tmp" "$WAKE_TRIAGE_LOG" 2>/dev/null || rm -f "$tmp"
+    else
+      rm -f "$tmp"
+    fi
   fi
   return 0
-}
-
-# R1: 0 iff <task> names a live task (a state/<task>.meta exists).
-wake_triage_task_alive() {
-  local task=$1
-  [ -n "$task" ] || return 1
-  [ -e "$STATE/$task.meta" ]
 }
 
 # R2 predicate: 0 iff <status-file>'s latest status line is a declared wait -
@@ -99,7 +96,7 @@ wake_triage_declared_wait() {
 # change resets the backoff; a new latest status line does the same.
 wake_triage_backoff_allow() {
   local task=$1 key=$2 gap=$3 f sf now sig interval next
-  local cur_interval= cur_next= cur_key= cur_sig=
+  local cur_interval='' cur_next='' cur_key='' cur_sig=''
   case "$gap" in ''|*[!0-9]*) gap=${STALE_ESCALATE_SECS:-240} ;; esac
   [ "$gap" -gt 0 ] || gap=240
   key=$(printf '%s' "$key" | tr -c 'A-Za-z0-9' '_')
@@ -181,6 +178,7 @@ wake_triage_gate() {
     # re-arming now; it flushes with the next urgent wake or the window wake.
     if wake_triage_batch_on; then
       wake_triage_hold "$kind" "$key" "$reason"
+      # shellcheck disable=SC2034 # Result variable, read by the caller (fm-watch.sh) after the gate returns.
       WAKE_TRIAGE_ACTION=hold
       wake_triage_log "$kind" "$task" batch hold
       return 0

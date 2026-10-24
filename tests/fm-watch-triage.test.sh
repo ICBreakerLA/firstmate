@@ -6806,7 +6806,7 @@ test_wake_triage_batch_off_default() {
   local dir state task key
   dir=$(fm_test_tmproot wake-triage-batch-off); state="$dir/state"
   mkdir -p "$state" "$dir/config"
-  # shellcheck disable=SC2034 # Read by the sourced triage lib, not in this file.
+  # shellcheck disable=SC2034 # read by the sourced lib
   STATE="$state"; CONFIG="$dir/config"; STALE_ESCALATE_SECS=240
   unset FM_WAKE_BATCH_SECS 2>/dev/null || true
   wake_triage_init                              # batching off (default)

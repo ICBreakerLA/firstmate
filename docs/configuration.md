@@ -1113,6 +1113,9 @@ The sandbox gets this environment on top of the usual allowlist, built by `fm_lo
 | `CLAUDE_CODE_ATTRIBUTION_HEADER` | `0`, so the start of every request stays byte-identical and the server's prompt cache can reuse it. |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1`. |
 
+The local model is slow enough that the no-mistakes default 30m step timeouts kill its pipeline runs, so before the worker starts the wrapper also merges three larger timeouts into the sandbox's own `$NM_HOME/config.yaml` with `fm_sbx_nm_local_timeouts` in `bin/fm-sbx-lib.sh`: `agent_timeout: "90m"`, `review_agent_timeout: "60m"`, and `test_agent_timeout: "120m"`.
+Present keys are replaced in place, missing keys are appended, every other key is left alone, and the host's no-mistakes home is never touched.
+
 No `--effort` is passed, because the server fixes its own reasoning effort.
 The sandbox's own network rule is `sbx policy allow network --sandbox <name> localhost:8080`, the name the `sbx` proxy uses for the host's port 8080; it is removed with the sandbox and never touches the global policy.
 

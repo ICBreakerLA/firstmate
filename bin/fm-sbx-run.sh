@@ -429,6 +429,9 @@ fi
 # (fm_sbx_nm_prepare) before the worker starts.
 if [ "$NM" = 1 ] && [ "$KIND" = ship ]; then
   fm_sbx_nm_prepare "$NAME" "$CLONE" "$CLAUDE_USER_HOME/nm" || die "the sandbox clone could not be prepared for the pipeline"
+  [ "$LOCAL_LLM" = 0 ] ||
+    fm_sbx_nm_local_timeouts "$NAME" "$CLAUDE_USER_HOME/nm" ||
+    die "the local-model sandbox could not be given its pipeline timeouts"
 fi
 
 relay_args=(--id "$ID" --state "$STATE" --config "$CONFIG" --channel "$CHANNEL" --relay "$RELAY")

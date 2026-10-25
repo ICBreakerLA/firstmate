@@ -20,6 +20,7 @@ cat >"$FAKEBIN/sbx" <<'SH'
 printf '%s\n' "$*" >>"$SBX_LOG"
 case "$1" in
 daemon) printf 'Status: %s\n' "${SBX_DAEMON_STATE:-running}"; [ "${SBX_DAEMON_STATE:-running}" = running ] ;;
+exec) if [ "${SBX_EXEC_FAILS:-0}" = 1 ]; then exit 1; fi ;;
 ls) cat "$SBX_LIVE" 2>/dev/null; exit 0 ;;
 rm)
   [ "${SBX_RM_STICKS:-0}" = 1 ] && exit 0
@@ -149,6 +150,44 @@ test_preflight_names_the_missing_requirement() {
   pass "preflight passes on a running daemon and names what is missing otherwise"
 }
 
+test_local_timeouts_merge_into_an_existing_config() {
+  local d f
+  d=$(mktemp -d "$TMP_ROOT/nm.XXXXXX")
+  f="$d/config.yaml"
+  printf 'model: "x"\nagent_timeout: "30m"\ntest_agent_timeout: "30m"\n' >"$f"
+  sh -c "$FM_SBX_NM_LOCAL_TIMEOUTS_SCRIPT" nm-timeouts "$d" || fail "the merge should succeed on an existing file"
+  assert_equals "$(printf 'model: "x"\nagent_timeout: "90m"\ntest_agent_timeout: "120m"\nreview_agent_timeout: "60m"\n')" "$(cat "$f")" "present keys are replaced in place, the missing key is appended, and other keys are kept"
+  sh -c "$FM_SBX_NM_LOCAL_TIMEOUTS_SCRIPT" nm-timeouts "$d" || fail "a second merge should succeed"
+  assert_equals "$(printf 'model: "x"\nagent_timeout: "90m"\ntest_agent_timeout: "120m"\nreview_agent_timeout: "60m"\n')" "$(cat "$f")" "the merge is idempotent"
+  pass "an existing config keeps its keys and gets the three timeouts"
+}
+
+test_local_timeouts_create_an_absent_config() {
+  local d
+  d="$TMP_ROOT/nm-absent"
+  rm -rf "$d"
+  sh -c "$FM_SBX_NM_LOCAL_TIMEOUTS_SCRIPT" nm-timeouts "$d" || fail "the merge should succeed on an absent file"
+  assert_equals "$(printf 'agent_timeout: "90m"\nreview_agent_timeout: "60m"\ntest_agent_timeout: "120m"\n')" "$(cat "$d/config.yaml")" "an absent config is created with the three timeouts"
+  pass "an absent config is created, not skipped"
+}
+
+test_local_timeouts_run_inside_the_named_sandbox() {
+  local n
+  n=$(fm_sbx_name /home/a task-nm-timeouts)
+  : >"$SBX_LOG"
+  fm_sbx_nm_local_timeouts "$n" /home/agent/nm || fail "the helper should succeed against a live sandbox"
+  grep -q "^exec $n sh -c" "$SBX_LOG" || fail "the merge must run inside the sandbox"
+  grep -q 'nm-timeouts /home/agent/nm' "$SBX_LOG" || fail "the merge must name the sandbox no-mistakes home"
+  pass "the helper runs the merge inside the named sandbox"
+}
+
+test_local_timeouts_report_a_failed_run() {
+  local err
+  err=$(SBX_EXEC_FAILS=1 fm_sbx_nm_local_timeouts my-sbx /home/agent/nm 2>&1) && fail "a failed in-VM merge must fail"
+  assert_contains "$err" "timeouts" "the refusal names the timeouts"
+  pass "a failed in-VM merge is reported, not hidden"
+}
+
 test_absent_and_off_leave_the_default_off
 test_sbx_defaults_and_options
 test_malformed_values_are_refused
@@ -157,6 +196,10 @@ test_name_is_stable_distinct_and_safe
 test_only_fleet_names_are_removable
 test_removal_is_idempotent_and_verified
 test_preflight_names_the_missing_requirement
+test_local_timeouts_merge_into_an_existing_config
+test_local_timeouts_create_an_absent_config
+test_local_timeouts_run_inside_the_named_sandbox
+test_local_timeouts_report_a_failed_run
 
 test_github_slugs_and_the_fork_remote
 

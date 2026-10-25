@@ -19,6 +19,9 @@
 #                       http://127.0.0.1:8080); the sandbox's base URL and
 #                       network rule stay on port 8080
 #   FM_LOCAL_LLM_LOCK   the host-wide lock file
+#   FM_LOCAL_LLM_SLOTS_URL   the endpoint fm_local_llm_server_processing reads to
+#                       decide whether the server is mid-request (default
+#                       http://127.0.0.1:8080/slots)
 #   FM_LOCAL_LLM_START_WAIT   seconds a configured start command is given to make
 #                             the server answer (default 120)
 #   FM_LOCAL_LLM_START_POLL   seconds between those answers checks (default 2)
@@ -78,6 +81,28 @@ fm_local_llm_health() {
   esac
   echo "error: the local model server at $url is up but does not list the model $FM_LOCAL_LLM_MODEL; check local-llm status" >&2
   return 1
+}
+
+# fm_local_llm_server_processing
+# 0 when the host's server is mid-request: the first slot in its /slots report
+# carries "is_processing": true. That is the one wire signal a long prefill - the
+# tens of minutes the server spends reading one large request after a context
+# compaction - shows, when neither the pane nor the task worktree moves. The
+# deferral in bin/fm-watch.sh rides on this, so a read that is not positive proof
+# of a busy server must decline: a down or slow server (curl fails or the 3s
+# bound lapses) and a body with no parsable first-slot is_processing value both
+# return 1, leaving the wedge ladder the caller was about to take. The local model
+# is the single-slot server the profile claims, so its first slot is the slot.
+# FM_LOCAL_LLM_SLOTS_URL overrides the endpoint so a test points at a stub.
+fm_local_llm_server_processing() {
+  local url body first
+  url=${FM_LOCAL_LLM_SLOTS_URL:-http://127.0.0.1:8080/slots}
+  body=$(curl -s -m 3 "$url" 2>/dev/null) || return 1
+  first=$(printf '%s' "$body" | grep -oE '"is_processing"[[:space:]]*:[[:space:]]*(true|false)' | head -n 1)
+  case "$first" in
+    *true*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # fm_local_llm_claim <task-id>

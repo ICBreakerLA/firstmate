@@ -249,6 +249,12 @@ wake_triage_init
 . "$SCRIPT_DIR/fm-handoff-journal-lib.sh"
 # shellcheck source=bin/fm-gate-park-lib.sh
 . "$SCRIPT_DIR/fm-gate-park-lib.sh"
+# The local-model worker profile: this watcher's wedge timer uses its model-id
+# predicate to know a stale lane is a local-model worker, and its
+# fm_local_llm_server_processing probe to tell a long prefill (the server chewing
+# one large request) from a real wedge. Both are pure reads, safe to source here.
+# shellcheck source=bin/fm-local-llm-lib.sh
+. "$SCRIPT_DIR/fm-local-llm-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -1221,6 +1227,42 @@ wedge_defer_writing() {  # <window> <since-file> <triage-label> <idle-age>
   triage_log "absorbed $label (worktree written since the idle window opened, idle ${age}s): $win"
 }
 
+# 0 when <task>'s record names the local-model worker (bin/fm-local-llm-lib.sh's
+# model id). This is the first, cheap half of the local-model deferral below: it
+# reads one meta field and, for the common non-local lane, declines before the
+# server probe ever runs, so only a local-model lane pays for the curl.
+wedge_task_is_local_model() {  # <task>
+  local task=$1 model
+  [ -n "$task" ] || return 1
+  model=$(fm_backend_meta_exact_value "$STATE/$task.meta" model) || return 1
+  fm_local_llm_is_model "$model"
+}
+
+# Defer ONE wedge escalation for a local-model worker whose server is still
+# mid-request (a long prefill after a context compaction, when the pane and the
+# worktree both sit still for tens of minutes). Deliberately the same shape as
+# wedge_defer_writing: a DEFERRAL, not a cancellation - the idle timer restarts,
+# so the next window probes the server again and a prefill that ENDS is
+# escalating again within one STALE_ESCALATE_SECS - and a .localmodel-since-<key>
+# marker ages the whole deferral chain so the pane still re-surfaces once every
+# PAUSE_RESURFACE_SECS through the shared resurface_absorbed above, throttled by
+# its own .localmodel-resurfaced-<key> marker. The escalation counter is left
+# alone, exactly as the write deferral leaves it: this is not an escalation, and a
+# later genuine one must keep the demand-deep-inspection history it earned. The
+# server probe (fm_local_llm_server_processing) already declined every non-busy
+# reading, so a server that is idle or unreachable never reaches here.
+wedge_defer_local_model() {  # <window> <since-file> <triage-label> <idle-age>
+  local win=$1 since_file=$2 label=$3 age=$4 key wsf wage
+  key=$(window_key "$win")
+  wsf="$STATE/.localmodel-since-$key"
+  [ -e "$wsf" ] || date +%s > "$wsf"
+  wage=$(age_of "$wsf")
+  date +%s > "$since_file"
+  resurface_absorbed "$win" "$STATE/.localmodel-resurfaced-$key" "$wage" \
+    "stale: $win (idle ${age}s, local model server still processing its request for ${wage}s, rechecked on a long cadence not a wedge; confirm the prefill is real progress)"
+  triage_log "absorbed $label (local model server processing, idle ${age}s): $win"
+}
+
 # One wait record, carrying every field a recheck needs to be correct. Emitting
 # them together is the point: a recheck that names the wrong human, or asks for
 # an action that does not clear the lane, points the reader away from the only
@@ -1445,12 +1487,14 @@ EOF
   return 0
 }
 
-# Drop a window's write-deferral chain wherever its stale bookkeeping resets, so
-# the bounded re-surface cadence is measured from the CURRENT quiet stretch and a
-# long-finished one cannot make the next deferral resurface immediately.
+# Drop a window's write-deferral and local-model-deferral chains wherever its
+# stale bookkeeping resets, so each bounded re-surface cadence is measured from
+# the CURRENT quiet stretch and a long-finished one cannot make the next deferral
+# resurface immediately.
 clear_write_tracking() {  # <window-key>
   local key=$1
-  rm -f "$STATE/.writing-since-$key" "$STATE/.writing-resurfaced-$key"
+  rm -f "$STATE/.writing-since-$key" "$STATE/.writing-resurfaced-$key" \
+    "$STATE/.localmodel-since-$key" "$STATE/.localmodel-resurfaced-$key"
 }
 
 # The question the wedge timer never asked before it alarmed: is there still an
@@ -1560,6 +1604,17 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         fi
         if crew_worktree_written_since "$task" "$STATE" "$since_file"; then
           wedge_defer_writing "$win" "$since_file" "$label" "$age"
+          return 0
+        fi
+        # A local-model worker's long prefill shows on neither pane nor worktree:
+        # only its server says the request is still being read. Defer while the
+        # server is processing, but only after the two cheaper deferrals above
+        # have kept their panes, and before the dead-record probe, so a lane the
+        # server is actively feeding does not pay for a backend read it does not
+        # need. A non-busy or unreachable server declines the probe and keeps the
+        # unchanged ladder, exactly as a lane with no write evidence does.
+        if wedge_task_is_local_model "$task" && fm_local_llm_server_processing; then
+          wedge_defer_local_model "$win" "$since_file" "$label" "$age"
           return 0
         fi
         if wedge_dead_record "$win" "$since_file" "$label" "$age" "$hash" "$task"; then

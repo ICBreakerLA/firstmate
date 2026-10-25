@@ -91,7 +91,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-gate-refuse-lib.sh`  | Shared gate-context lifecycle boundary for real and lab homes                      |
 | `fm-watch-arm.sh`        | Verified home-scoped watcher arm wrapper with loud cycle endings and bounded lifecycle ledger |
 | `fm-watch-checkpoint.sh` | Run one bounded foreground watcher checkpoint for Codex-style supervision            |
-| `fm-watch.sh`            | Singleton-safe watcher: absorb benign wakes, detect stalled local-secondmate wake queues, and exit on actionable ones |
+| `fm-watch.sh`            | Singleton-safe watcher: absorb benign wakes, detect stalled local-secondmate wake queues, and exit on actionable ones; defers a provably-working local-model pane while its server is still processing its prefill |
 | `fm-inactive-reconcile.sh` | Reconcile long-inactive direct crewmate terminal outcomes without forge access |
 | `fm-afk-contract.sh`     | Own the away-or-quiet record's posture, schema, entry, read-back, archive, and cross-subsystem authority lock |
 | `fm-afk-start.sh`        | Run the common sourceable away-mode daemon entry in the foreground                      |
@@ -109,7 +109,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-host-lint.sh`        | Lint a sandboxed worker's clone on the host in parallel partitions and print the evidence plus the answer text for a parked lint gate, never answering it; also the worker's pipeline-fix patch export |
 | `fm-nm-run-lib.sh`       | Single owner of shared no-mistakes run-attribution primitives and rules             |
 | `fm-sbx-lib.sh`          | Single owner of the `config/worker-sandbox` grammar, sandbox names, the sbx preflight, and idempotent sandbox removal |
-| `fm-local-llm-lib.sh`    | Single owner of the local-model worker profile: model selection, the server health check, the one-local-worker claim and its handoff, the dispatch-chosen availability fallback and optional server start, and the sandbox environment |
+| `fm-local-llm-lib.sh`    | Single owner of the local-model worker profile: model selection, the server health check, the fail-closed server-mid-request probe the watcher's local-model deferral reads, the one-local-worker claim and its handoff, the dispatch-chosen availability fallback and optional server start, and the sandbox environment |
 | `fm-openrouter-lib.sh`   | Single owner of the OpenRouter worker profile: the `or:` model selector, the key file, the alias chain and zero-retention probe, the sandbox environment, and the key's usage reading |
 | `fm-sbx-run.sh`          | Run a Claude worker in its own sbx microVM (also reached as `claude-sbx`), with traps that remove the sandbox and bring its commits back |
 | `fm-sbx-bridge.sh`       | Create a sandboxed task's standalone clone and bring its branches back with a fast-forward-only fetch, treating the clone as untrusted |

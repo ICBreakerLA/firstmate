@@ -192,6 +192,44 @@ fm_sbx_nm_prepare() {
   }
 }
 
+# The in-VM script fm_sbx_nm_local_timeouts runs: it merges the three
+# no-mistakes agent timeouts into $1/config.yaml, replacing a key's line when
+# present, appending a missing key, and creating the file and its directory
+# when absent, leaving every other key in place.
+# shellcheck disable=SC2016  # the script is meant to expand inside the VM, not here
+FM_SBX_NM_LOCAL_TIMEOUTS_SCRIPT='
+f="$1/config.yaml"
+if [ ! -f "$f" ]; then
+  mkdir -p "$(dirname "$f")"
+  : >"$f"
+fi
+if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then
+  printf "\n" >>"$f"
+fi
+for kv in "agent_timeout: \"90m\"" "review_agent_timeout: \"60m\"" "test_agent_timeout: \"120m\""; do
+  key=${kv%%:*}
+  if grep -q "^${key}:" "$f"; then
+    sed -i "s|^${key}:.*|${kv}|" "$f"
+  else
+    printf "%s\n" "$kv" >>"$f"
+  fi
+done
+'
+
+# fm_sbx_nm_local_timeouts <name> <nm-home>
+# The local model spends minutes where Claude spends seconds, so a sandboxed
+# local-model ship gets the pipeline's agent timeouts raised before its in-VM
+# no-mistakes run can start: agent_timeout 90m, review_agent_timeout 60m,
+# test_agent_timeout 120m, merged into the sandbox's own <nm-home>/config.yaml.
+# The host's no-mistakes home is never touched.
+fm_sbx_nm_local_timeouts() {
+  local name=$1 nmhome=$2
+  sbx exec "$name" sh -c "$FM_SBX_NM_LOCAL_TIMEOUTS_SCRIPT" nm-timeouts "$nmhome" >/dev/null 2>&1 || {
+    echo "error: could not set the local-model no-mistakes timeouts inside $name" >&2
+    return 1
+  }
+}
+
 # fm_sbx_github_slug <url>
 # The lowercased owner/repo of a github.com URL (https, ssh:// or scp form, with
 # or without credentials or a .git suffix); returns 1 for any other URL.

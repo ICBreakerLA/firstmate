@@ -196,6 +196,7 @@ fm_sbx_nm_prepare() {
 # no-mistakes agent timeouts into $1/config.yaml, replacing a key's line when
 # present, appending a missing key, and creating the file and its directory
 # when absent, leaving every other key in place.
+# shellcheck disable=SC2016  # the script is meant to expand inside the VM, not here
 FM_SBX_NM_LOCAL_TIMEOUTS_SCRIPT='
 f="$1/config.yaml"
 if [ ! -f "$f" ]; then

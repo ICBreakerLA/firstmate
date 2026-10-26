@@ -438,6 +438,18 @@ test_npm_cache_is_mounted_read_only_with_offline_settings() {
   pass "an npm seed cache is mounted read-only with offline settings, and only when given"
 }
 
+test_user_claude_agents_are_copied_only_when_the_folder_exists() {
+  new_world agents
+  mkdir -p "$W/userhome/.claude/agents"
+  wrap --kind scout -- claude >/dev/null 2>&1
+  assert_contains "$(log)" "exec $NAME mkdir -p /home/agent/.claude" "the VM user home .claude directory is prepared"
+  assert_contains "$(log)" "cp $W/userhome/.claude/agents $NAME:/home/agent/.claude/" "the host agent definitions are copied into the VM user home"
+  new_world agents-none
+  wrap --kind scout -- claude >/dev/null 2>&1
+  assert_not_contains "$(log)" ".claude/agents" "no agents folder, no agents copy"
+  pass "the host Claude agents are copied only when the folder exists"
+}
+
 test_hooks_path_mount_requires_the_homes_own_state() {
   local create
   new_world hooks
@@ -905,6 +917,7 @@ test_nm_version_mismatch_and_pin_refuse
 test_nm_init_failure_refuses_and_removes
 test_nm_without_a_host_binary_refuses_and_still_removes
 test_npm_cache_is_mounted_read_only_with_offline_settings
+test_user_claude_agents_are_copied_only_when_the_folder_exists
 test_hooks_path_mount_requires_the_homes_own_state
 test_links_resolve_the_brief_paths_inside_the_vm
 test_refusals_happen_before_any_sandbox_exists

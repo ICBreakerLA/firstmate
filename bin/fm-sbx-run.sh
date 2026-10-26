@@ -321,11 +321,15 @@ vm_root sh -c 'mkdir -p "$1" "$2" && ln -sfn "$3" "$4" && ln -sfn "$5" "$6"' sh 
   "$STATE" "$(dirname "$WT")" "$ID.sbx/status" "$STATE/$ID.status" "$CLONE" "$WT" >/dev/null 2>&1 ||
   die "could not link the status path and worktree path into $NAME"
 
-# User-level skills and the model table the host session relies on; these are
-# optional, so a failed copy never blocks the launch.
+# User-level skills, agent definitions, and the model table the host session
+# relies on; these are optional, so a failed copy never blocks the launch.
 if [ -d "${HOME:-/nonexistent}/.claude/skills" ]; then
   sbx_quiet sbx exec "$NAME" mkdir -p "$CLAUDE_USER_HOME/.claude"
   sbx_quiet sbx cp "$HOME/.claude/skills" "$NAME:$CLAUDE_USER_HOME/.claude/"
+fi
+if [ -d "${HOME:-/nonexistent}/.claude/agents" ]; then
+  sbx_quiet sbx exec "$NAME" mkdir -p "$CLAUDE_USER_HOME/.claude"
+  sbx_quiet sbx cp "$HOME/.claude/agents" "$NAME:$CLAUDE_USER_HOME/.claude/"
 fi
 if [ -f "${HOME:-/nonexistent}/.agents/pstack-models.md" ]; then
   sbx_quiet sbx exec "$NAME" mkdir -p "$CLAUDE_USER_HOME/.agents"

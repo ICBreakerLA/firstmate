@@ -987,7 +987,8 @@ The sandbox mounts only these paths:
 - The home's own git-hooks directory and trailer-strip script, read-only, so commits in the VM honor the same trailer rule.
 - The home's read-only npm cache, when one exists.
 
-The firstmate home as a whole, `projects/`, the project's own repository, the host home directory, and every host credential are never mounted or copied.
+The firstmate home as a whole, `projects/`, the project's own repository, the host home directory, and every host credential are never mounted or copied in full.
+The narrow exception is a small set of optional user-level files: when present on the host, `~/.claude/skills`, `~/.claude/agents`, and `~/.agents/pstack-models.md` are copied into the VM's user home (`/home/agent`); each copy is best-effort, so a missing source or a failed copy never blocks the launch.
 Only an explicit allowlist of environment variables reaches the VM.
 The worker's status lines and hook events arrive through the channel, and a host-side relay (`bin/fm-sbx-relay.sh`) is the only thing that turns those bytes into the task's real status and busy-state records.
 

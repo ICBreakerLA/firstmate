@@ -1928,18 +1928,18 @@ test_uncertain_thread_launch_keeps_lease() {
 # url.insteadOf with an embedded token), so the T3 env file carries only
 # Firstmate's own hook entry, for every harness's file.
 test_spawn_never_writes_inherited_git_config() {
-  local harness model id out rc settings secret=fm-inherited-secret-7f3a
+  local harness model id out rc settings canary=fm-inherited-secret-7f3a
   for harness in claude codex; do
     case "$harness" in claude) model=claude-sonnet-5 ;; codex) model=gpt-5.6-sol ;; esac
     id=$(t3_uid "t3gitcfgz$harness")
     t3_case "spawn-git-config-$harness"
     t3_worker_setup "$id"
     out=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://example.invalid/.extraheader \
-      GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer $secret" \
+      GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer $canary" \
       t3_worker_spawn "$id" "$harness" --model "$model"); rc=$?
     expect_code 0 "$rc" "a $harness spawn with inherited Git config entries should succeed"$'\n'"$out"
-    if grep -rqF "$secret" "$WORKER_WT" "$CASE_DIR/state"; then
-      fail "an inherited GIT_CONFIG_VALUE must never be written to disk by a $harness spawn: $(grep -rlF "$secret" "$WORKER_WT" "$CASE_DIR/state")"
+    if grep -rqF "$canary" "$WORKER_WT" "$CASE_DIR/state"; then
+      fail "an inherited GIT_CONFIG_VALUE must never be written to disk by a $harness spawn: $(grep -rlF "$canary" "$WORKER_WT" "$CASE_DIR/state")"
     fi
   done
   t3_case spawn-git-config-entries

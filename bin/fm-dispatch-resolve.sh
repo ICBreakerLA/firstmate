@@ -56,12 +56,14 @@
 #     candidate: <harness>:<model> provider=.. scope=.. remaining=..% spendPriority=.. runway=.. -> eligible | eligible, unranked: <reason> | not eligible: <reason>
 #     profile: --harness <h> [--model <m>] [--effort <e>]     (status clear only)
 #   clear     -> pass the profile line to fm-spawn.sh unless you state a reason to override
-#               when no eligible candidate is rankable but one or more are eligible and
-#               unranked, the first such candidate in declared order is picked, with a
-#               "picked first eligible unranked candidate: <harness>:<model> (provider
-#               <p> unmeasured)" note line, instead of escalating
+#               when no eligible candidate is rankable, no preferred_provider family
+#               candidate is eligible, and one or more are eligible and unranked, the
+#               first such candidate in declared order is picked, with a "picked first
+#               eligible unranked candidate: <harness>:<model> (provider <p>
+#               unmeasured)" note line, instead of escalating
 #   ambiguous -> confidence below the floor; decide as today from the probabilities
-#   escalate  -> the rule requires captain approval, no candidate is eligible at all, or a genuine tie
+#   escalate  -> the rule requires captain approval, no candidate is eligible at all, eligible
+#               preferred_provider family candidates none of which is rankable, or a genuine tie
 #   error     -> API, network, response, or quota-axi failure; decide as today
 #   Every outcome exits 0 so an intake is never blocked by this tool.
 #   Exit 2 only for a usage or configuration error (unreadable brief, an

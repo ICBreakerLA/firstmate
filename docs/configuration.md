@@ -2247,7 +2247,8 @@ No qualifying option, or two equally probable qualifying options, produces `ambi
 
 - Any applicable `exhausted_now` row or known zero bound makes that candidate ineligible, and a known profile-floor shortfall does the same before unrelated quota uncertainty is considered.
 - Missing or nonnumeric `spendPriority` evidence is never ranked, and every candidate is printed beside its evidence or the reason it was not rankable, including on ambiguous and approval-gated outcomes that emit no profile.
-- When no eligible candidate is rankable, the tool picks the first eligible unranked candidate in declared order with a `note:` line naming it, and escalates only when no candidate is eligible at all.
+- When no eligible candidate is rankable and no `preferred_provider` family candidate is eligible, the tool picks the first eligible unranked candidate in declared order with a `note:` line naming it, and escalates when no candidate is eligible at all.
+- When the `preferred_provider` family has eligible candidates but none is rankable, the tool escalates rather than falling back, because uncertainty does not authorize fallback.
 - On the opted-in path, duplicate concrete profiles with the same harness, model, and effort inside one rule or the default array are configuration errors rather than ties.
 
 **Outcomes and exit status**
@@ -2256,7 +2257,7 @@ No qualifying option, or two equally probable qualifying options, produces `ambi
 | --- | --- |
 | `clear` | A `profile:` line ready for `fm-spawn.sh`. |
 | `ambiguous` | Confidence below the floor with no runner-up taken. |
-| `escalate` | An approval-gated rule, unverifiable rule floor, no eligible candidate at all, or a genuine tie. |
+| `escalate` | An approval-gated rule, unverifiable rule floor, no eligible candidate at all, eligible preferred-family candidates with none rankable, or a genuine tie. |
 | `error` | API, network, malformed response metadata, rendering, or quota-axi failure. |
 
 Every result above exits 0.

@@ -2,7 +2,8 @@
 name: fmx-respond
 description: >-
   Load on x-mention or x-mode-error check wakes (Relay mentions),
-  milestone/terminal wakes for Relay-linked tasks, or public-followup wakes;
+  milestone/terminal wakes for Relay-linked tasks, public-followup wakes, or
+  a promised final public reply to create, reconcile, or deliver;
   Relay must be enabled.
 user-invocable: false
 metadata:

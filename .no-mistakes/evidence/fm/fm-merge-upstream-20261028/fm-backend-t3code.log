@@ -1,0 +1,58 @@
+fm-afk-launch: away-posture record archived at /tmp/fm-backend-t3code-tests.1FJign/restart-unknown-completed/home/state/afk-contracts/1793286719.afk-contract
+fm-afk-launch: away mode stopped; no daemon terminal was running, .afk cleared, and the posture record archived
+fm-afk-launch: away-posture record archived at /tmp/fm-backend-t3code-tests.1FJign/restart-unknown-failed/home/state/afk-contracts/1793286723.afk-contract
+fm-afk-launch: away mode stopped; no daemon terminal was running, .afk cleared, and the posture record archived
+ok - native restart re-arms discarded T3 stale warnings exactly once and preserves delivered suppression
+ok - away housekeeping preserves unknown stale rechecks and reports possible wedges until work resumes
+ok - away daemon on T3: a stall reported while unknown is not reported again once T3 reads idle
+ok - T3 stale watcher: harness=codex status=failed turn=fresh -> dead
+ok - t3code: a failed thread read reports unknown busy state, submits no away-mode injection, and keeps stale rechecks uncertain
+ok - T3 stale lookup honors paused and captain-held declarations
+ok - T3 stale watcher: harness=codex status=running turn=fresh -> absorb
+ok - T3 stale watcher: harness=claude status=running turn=fresh -> absorb
+ok - T3 stale watcher: harness=codex status=waiting turn=fresh -> absorb
+ok - T3 stale watcher: harness=codex status=starting turn=fresh -> surface
+ok - T3 stale watcher: harness=codex status=completed turn=fresh -> surface
+ok - T3 stale watcher: harness=codex status=failed turn=fresh -> dead
+ok - T3 stale watcher: harness=codex status=running turn=hung -> surface
+ok - fm_backend_t3code_runtime_check: a missing credential names the sign-in
+ok - fm_backend_t3code_runtime_check: a 401 names the fresh sign-in
+warning: T3 telemetry at http://127.0.0.1:46105 is on; run the server that hosts Firstmate workers with T3CODE_TELEMETRY_ENABLED=false (docs/t3code-backend.md)
+ok - fm_backend_t3code_runtime_check: the tools/list gate and environment pin refuse control and teardown without a mutation
+ok - fm_backend_t3code_project_ensure: matches by realpath, otherwise creates with the fm- title
+ok - fm_backend_t3code_model_selection: T3's catalog decides driver, model, and effort; overrides keep other options; default handling, instances file
+ok - fm_backend_t3code_thread_create/turn_start: verified t3_thread_launch and t3_thread_send payloads
+ok - fm_backend_t3code_thread_create: a lost reply is uncertain and never retried; a mis-bound thread is archived and refused
+ok - fm_backend_t3code_thread_for_home: zero, one, ambiguous, and unreachable
+ok - T3 requires explicit selection and does not query the server during runtime detection
+ok - fm_backend_t3code_capture: renders the activity tail and the thread's status line
+ok - fm_backend_t3code_send_key: Escape and C-c interrupt, Enter no-ops, others refuse
+ok - fm_backend_t3code_send_text_submit: empty on accept, send-failed on rejection
+ok - t3code send: a reply lost after commit is unconfirmed through the adapter and fm-send, and the resend lands once
+ok - t3code send: a held request id stays unconfirmed when the next attempt fails locally, and the retry lands once
+ok - t3code send: a lost reply to a secondmate names its armed correlation instead of advising a resend
+ok - t3code status table: every V2 thread status, a pending request, archived, archived-but-draining, missing, unreachable, and unreadable rows
+ok - t3code push wait: a pending question wakes the supervisor once with how to answer it, approvals are named apart, and answering clears it
+ok - fm-t3-answer.sh: lists a T3 worker's pending questions and answers one by request id
+ok - secondmate liveness backend=t3code: a failed run is resumed on its own thread, never archived and replaced
+ok - secondmate liveness backend=t3code: a missing thread re-proves its archive before replacement, and an unproved close spawns nothing
+ok - away daemon on T3: an unconfirmed digest is frozen and retried verbatim; a later event goes in the next digest, each event once
+ok - away daemon on T3: a delivered frozen digest leaves the items behind it with the first one's undelivered age
+ok - away daemon on T3: a supervisor thread waiting on a pending request defers digests until it is answered
+ok - t3code helper: runs through a symlinked Firstmate root, and a kill that cannot read the thread fails closed
+ok - secondmate liveness backend=t3code: an archived thread whose run still drains is left in place, not replaced
+ok - fm_backend_t3code_kill: interrupt then archive with a proven close, idempotent on archived and missing, loud on failure
+ok - fm-backend dispatcher: routes every t3code primitive, validates and resolves t3_thread_id records, and joins the push wait
+ok - T3 harness admission refuses every non-T3 adapter and launch-time typing refuses without a thread read
+ok - fm_busy_classify: t3code native busy, idle, and unknown are trusted without a record
+ok - fm-control-lib: t3code key set, state-verified, no-exit, and no-replacement membership
+ok - fm-control.sh backend=t3code: exit refuses before any call (V2 has no session stop); interrupt ends the turn natively
+ok - fm-control.sh relaunch backend=t3code: refused before anything is stopped, by the control plane and by the launch owner
+ok - fm-spawn.sh --backend t3code: leases the slot, launches the thread on it, records metadata, sends the launch brief
+ok - t3code Claude PR-tool clause: dropped only at or past the verified T3 build, kept for older or unreadable servers
+skip: live: codex absent
+not ok - teardown must restore the tracked config
+warning: T3 telemetry at http://127.0.0.1:46105 is on; run the server that hosts Firstmate workers with T3CODE_TELEMETRY_ENABLED=false (docs/t3code-backend.md)
+fm-captain-hold: compatible tasks-axi is required
+REFUSED: scout task t3codextrk2dc1c144dd has not passed the captain-call completion gate.
+Inventory its report and any visual review through bin/fm-captain-hold.sh before teardown.: expected exit 0, got 1

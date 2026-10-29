@@ -1,0 +1,16 @@
+ok - T3 stale watcher: harness=codex status=failed turn=fresh -> dead
+ok - T3 stale watcher: harness=codex status=running turn=fresh -> absorb
+ok - T3 stale watcher: harness=claude status=running turn=fresh -> absorb
+ok - T3 stale watcher: harness=codex status=waiting turn=fresh -> absorb
+ok - T3 stale watcher: harness=codex status=starting turn=fresh -> surface
+ok - T3 stale watcher: harness=codex status=completed turn=fresh -> surface
+ok - T3 stale watcher: harness=codex status=failed turn=fresh -> dead
+ok - T3 stale watcher: harness=codex status=running turn=hung -> surface
+ok - fm-teardown.sh backend=t3code secondmate: interrupts and archives, then ends the home's lingering provider process before the home is removed; an unprovable scan keeps the home
+ok - fm-spawn.sh --backend t3code claude: refuses config/claude-permission-mode=auto it cannot honor before any mutation
+ok - fm-spawn.sh --backend t3code codex: refuses config/codex-approval-mode=approve-for-me it cannot honor before any mutation
+ok - fm-spawn.sh --backend t3code codex: refuses config/codex-permission-mode=restricted it cannot honor before any mutation
+ok - fm-spawn.sh --backend t3code claude: refuses config/launch-env-allowlist=HOME it cannot honor before any mutation
+ok - fm-spawn.sh --backend t3code: an abort archives the thread, then returns the lease
+ok - fm-spawn.sh --backend t3code: an abort that cannot archive the thread keeps the lease
+ok - fm-spawn.sh --backend t3code: inherited Git config values never reach the env file, which carries only Firstmate's hook entry

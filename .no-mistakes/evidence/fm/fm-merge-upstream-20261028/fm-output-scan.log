@@ -1,0 +1,15 @@
+ok - every secret shape is reported by shape and line without its value
+ok - clean text exits 0 silently
+ok - key=value with a word-only value is not a secret hit
+ok - an anthropic key reports once
+ok - multiple hits are listed in line order
+ok - an absent deny-list leaves personal-data rules off
+ok - deny-list entries drive the email, phone, home-path and personal-term shapes
+ok - a malformed or unreadable deny-list is exit 2, never a silent pass
+ok - usage and file errors exit 2
+ok - a file argument is scanned like stdin
+ok - --diff scans only added lines and reports path:line
+ok - secret shapes stay quiet over docs/ and .agents/skills/
+ok - fm-x-reply refuses a hit before posting and still posts clean text
+ok - fm-x-reply honors the deny-list
+ok - scout teardown holds a report that fails the output scan

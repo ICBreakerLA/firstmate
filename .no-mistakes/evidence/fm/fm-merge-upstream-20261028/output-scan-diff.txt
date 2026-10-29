@@ -1,0 +1,2 @@
+$ bin/fm-output-scan.sh --diff
+exit=0

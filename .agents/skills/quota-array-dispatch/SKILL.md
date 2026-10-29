@@ -1,8 +1,7 @@
 ---
 name: quota-array-dispatch
 description: >-
-  Agent-only decision procedure for matched profile-array selection. Load when
-  a dispatch rule or default resolves to more than one profile candidate.
+  Load when a crew-dispatch rule or default resolves to more than one profile candidate.
 user-invocable: false
 metadata:
   internal: true
@@ -15,11 +14,11 @@ This skill is the single owner of the completion-aware profile-array selection p
 `harness-adapters` owns harness verification, model/provider discovery, and effort fallback.
 `quota-axi` remains data-only: it publishes `spendPriority` as a comparable scalar and never recommends, selects, ranks, or infers a route.
 Do not add a daemon, opaque composite score, routing wrapper, hard-coded model-specific policy, or producer-side route recommendation.
-The [worker helper](../../../bin/fm-quota-choose.sh) and [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-env-typesafe_api_key) own their deterministic mapping boundaries.
+The [worker helper](../../../bin/fm-quota-choose.sh) and [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-env-fm_dispatch_provider-fm_dispatch_model) own their deterministic mapping boundaries.
 
 ## Matched-array intake rules
 
-Firstmate alone resolves a matched profile array: begin with `quota-axi`'s default TOON at that intake, using the skill's narrow TOON-then-`--json` fallback only for genuine ambiguity, evaluate every configured candidate against that current output, and choose with inspectable `spendPriority` as the one quota-perspective ranker after the skill's eligibility, reasoning-class, and runway-feasibility gates.
+Firstmate alone resolves a matched profile array: begin with `quota-axi`'s default TOON at that intake, using the skill's narrow TOON-then-`--json` fallback only for genuine ambiguity, evaluate every configured candidate against that current output, and choose under the skill's `preferred_provider` procedure with inspectable `spendPriority` as the one quota-perspective ranker after its eligibility, reasoning-class, and runway-feasibility gates.
 Account for every candidate with the catalog evidence, provider relationship, applicable quota and authentication facts, remaining uncertainty, fit and reasoning class, and the spendPriority and runway evidence used in selection; never omit a candidate, guess, fall back silently, or call the result quota-informed without them.
 Establish model support and provider family from that harness's own authoritative catalog, then apply the [account and scope matching rules above](#1-eligibility).
 Missing model-level quota, a missing authentication source, unmeasurable headroom, or unmodeled authentication is disclosed uncertainty that keeps a candidate eligible, never a credential or login escalation.
@@ -43,7 +42,7 @@ Authoritative multi-provider routing - including provider discovery from the har
 Use it only when the brief already fixed the candidate order and every candidate's provider is the harness's primary family.
 It does not replace the reasoning-class, runway-feasibility, or authentication gates above.
 Firstmate can optionally arm `bin/fm-procevent-quota.sh` for a recurring mid-task check that wakes when the tracked provider drops below its configured threshold or its runway becomes `exhausted_now`.
-The opt-in [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-env-typesafe_api_key) has its own documented gates.
+The opt-in [typed resolver](../../../docs/configuration.md#typed-dispatch-resolution-env-fm_dispatch_provider-fm_dispatch_model) has its own documented gates.
 It never removes this skill's authority, and its `ambiguous`, `escalate`, and `error` outcomes return here.
 
 ## Read the default TOON
@@ -59,13 +58,13 @@ Do not read `--json` on the normal path, and do not reach for `--full` to rebuil
 After reading the TOON, fall back to one `quota-axi --json` call only when that TOON is genuinely ambiguous for the decision, or when the installed quota-axi is somehow below the floor so its TOON lacks `spendPriority`.
 Ambiguous means a candidate's `spendPriority` is the literal `unknown` or unmeasurable, a real tie still needs extra evidence, or a candidate's eligibility is unclear from `quota[]` plus `attention[]`.
 The fallback therefore has an explicit TOON-then-JSON call sequence; reuse its JSON result and do not take any further quota snapshots.
-Below-floor is rare: bootstrap enforces `FM_QUOTA_AXI_MIN` and normally reports `MISSING` before dispatch; if an intake somehow reaches an older build whose TOON lacks `spendPriority`, use the defensive `--json` fallback rather than treating the missing scalar as healthy.
+Below-floor is rare: bootstrap enforces `FM_QUOTA_AXI_MIN` and normally reports `OUTDATED` before dispatch; if an intake somehow reaches an older build whose TOON lacks `spendPriority`, use the defensive `--json` fallback rather than treating the missing scalar as healthy.
 `--json` is a defensive belt, not a habit; never reach for it because it feels more complete.
 Read `quota-axi auth --json` only when a candidate's credential surface is in question.
 
 For each candidate, preserve explicit `harness`, `model`, and `provider`; `harness-adapters` owns identity, and model/provider never infer harness.
 
-## Three gates, then spendPriority
+## Three gates, then provider preference and spendPriority
 
 Apply the three cheap orthogonal gates first.
 `spendPriority` ranks only among candidates that pass all three.
@@ -121,7 +120,18 @@ Do not invent a generic percentage floor, and honor an explicit captain floor fo
 
 ## Rank by spendPriority
 
-Among candidates that pass all three gates, pick the highest known `spendPriority`.
+Among candidates that pass all three gates, first apply the optional top-level `preferred_provider` from `config/crew-dispatch.json`.
+Its schema is owned by [Crew dispatch profiles](../../../docs/configuration.md#crew-dispatch-profiles-configcrew-dispatchjson).
+Within the already matched rule or default, restrict ranking to eligible candidates of that family when any remain.
+Do not introduce other profiles, change a Claude-only rule, or override an explicit captain choice or approval requirement.
+Only concrete evidence that every matched preferred candidate is ineligible authorizes fallback to other families.
+Unknown quota, missing account evidence, and unrankable scalars do not establish ineligibility.
+If preferred candidates remain eligible but none can be ranked, escalate with that uncertainty instead of switching families.
+When no matched profile belongs to the preferred family, preserve the rule's candidate set.
+With the field absent, keep the existing candidate set unchanged.
+Print the preferred-family decision, including the reason for any fallback.
+
+Within the resulting candidate set, pick the highest known `spendPriority`.
 A higher known scalar is better: positive means paid allowance is on track to reach reset unused, `0` is exact utilization, and negative means overdrawn against the reset clock.
 Rank only from comparable known scalars.
 Never treat absent, `unknown`, or unmeasurable `spendPriority` as zero or as healthy; `0` means exact utilization, a different claim from unknown.

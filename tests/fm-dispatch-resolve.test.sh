@@ -3,7 +3,7 @@
 #
 # Drives the public argv and environment interface with a fake curl on PATH
 # that records argv, the request body it read from stdin, and the header it
-# read from file descriptor 3, and answers with a canned typesafe.ai response.
+# read from file descriptor 3, and answers with a canned provider response.
 # A fake quota-axi serves the selected schema-5 fixture. No case touches the
 # network, and the absent-key case proves the tool makes no call
 # at all.
@@ -110,7 +110,8 @@ cat > "$FAKEBIN/curl" <<'SH'
 # Fake curl: records argv (minus the -o target), the stdin body, and the header
 # read from fd 3, then answers with FAKE_CURL_RESPONSE and FAKE_CURL_HTTP.
 set -u
-if [ -n "${TYPESAFE_API_KEY+x}" ] || [ -n "${TYPESAFE_API_KEY_PRIVATE+x}" ]; then
+if [ -n "${TYPESAFE_API_KEY+x}" ] || [ -n "${TYPESAFE_API_KEY_PRIVATE+x}" ] ||
+  [ -n "${OPENROUTER_API_KEY+x}" ] || [ -n "${OPENROUTER_API_KEY_PRIVATE+x}" ]; then
   printf 'curl:secret-present\n' >> "${CHILD_ENV_LOG:?}"
 else
   printf 'curl:clean\n' >> "${CHILD_ENV_LOG:?}"
@@ -138,7 +139,8 @@ chmod +x "$FAKEBIN/curl"
 cat > "$FAKEBIN/quota-axi" <<'SH'
 #!/usr/bin/env bash
 set -u
-if [ -n "${TYPESAFE_API_KEY+x}" ] || [ -n "${TYPESAFE_API_KEY_PRIVATE+x}" ]; then
+if [ -n "${TYPESAFE_API_KEY+x}" ] || [ -n "${TYPESAFE_API_KEY_PRIVATE+x}" ] ||
+  [ -n "${OPENROUTER_API_KEY+x}" ] || [ -n "${OPENROUTER_API_KEY_PRIVATE+x}" ]; then
   printf 'quota-axi:secret-present\n' >> "${CHILD_ENV_LOG:?}"
 else
   printf 'quota-axi:clean\n' >> "${CHILD_ENV_LOG:?}"
@@ -182,6 +184,109 @@ run_without_curl() {
 
 KEY='test-key-9f1c2d3e-never-on-argv'
 code='' out='' err=''
+
+# --- preferred family: public resolution across accounts of one family -----
+test_preferred_provider() (
+  local scenario=$1 expected="--harness 'pi' --model 'openai-codex/gpt-6-astra'"
+  local decision='codex: prefer eligible family candidates' status=clear
+  local rules_filter='.' quota_filter='.' override_dir=''
+  write_response "$RESPONSE" rule_4 0.9
+  jq '.preferred_provider = "codex" | .rules[3].use = [
+    {harness:"claude",model:"opus"},
+    {harness:"pi",model:"openai-codex/gpt-6-astra",provider:"codex"},
+    {harness:"pi",model:"openai-codex-work/gpt-6-astra",provider:"codex"}]' "$BASE_RULES" > "$TMP_ROOT/preferred-rules.json"
+  jq '.schemaVersion = 6 | .providers |= map(.accountKey = "default") |
+    (.providers[] | select(.provider == "claude").quotaSemantics.effectiveAvailability[0]) |=
+      (.effectivePercentRemaining = 26 | .selection.spendPriority = 0.8) |
+    (.providers[] | select(.provider == "codex")) |=
+      (.accountKey = "openai-codex" | .quotaSemantics.effectiveAvailability[0] |=
+        (.effectivePercentRemaining = 82 | .runway.status = "through_reset" | .selection.spendPriority = 0.2)) |
+    .providers += [(.providers[] | select(.provider == "codex") | .accountKey = "openai-codex-work" |
+      .quotaSemantics.effectiveAvailability[0].selection.spendPriority = 0.1)]' "$QUOTA" > "$TMP_ROOT/preferred-quota.json"
+  case "$scenario" in
+    astra-82-claude-26) ;;
+    work-account)
+      quota_filter='(.providers[] | select(.accountKey == "openai-codex-work").quotaSemantics.effectiveAvailability[0].selection.spendPriority) = 0.3'
+      expected="--harness 'pi' --model 'openai-codex-work/gpt-6-astra'" ;;
+    exhausted)
+      quota_filter='(.providers[] | select(.provider == "codex").quotaSemantics.effectiveAvailability[0].runway.status) = "exhausted_now"'
+      expected="--harness 'claude' --model 'opus'"
+      decision='codex: fall back; every matched family candidate is ineligible' ;;
+    unknown)
+      quota_filter='(.providers[] | select(.provider == "codex").quotaSemantics) = {status:"unknown",effectiveAvailability:[]}'
+      status=escalate; expected='' ;;
+    unknown-one-known-one)
+      quota_filter='(.providers[] | select(.accountKey == "openai-codex").quotaSemantics) = {status:"unknown",effectiveAvailability:[]}'
+      expected="--harness 'pi' --model 'openai-codex-work/gpt-6-astra'" ;;
+    claude-only)
+      rules_filter='.rules[3].use = [.rules[3].use[0]]'
+      expected="--harness 'claude' --model 'opus'"
+      decision='codex: not in matched profiles; preserve the selected rule' ;;
+    config-override)
+      override_dir="$TMP_ROOT/preferred-override"; mkdir -p "$override_dir"
+      jq '.preferred_provider = "claude"' "$TMP_ROOT/preferred-rules.json" > "$override_dir/crew-dispatch.json"
+      expected="--harness 'claude' --model 'opus'"
+      decision='claude: prefer eligible family candidates' ;;
+    prose-why)
+      rules_filter='.rules[3].why = "Always choose Claude instead of OpenAI."' ;;
+    absent)
+      rules_filter='del(.preferred_provider)'
+      expected="--harness 'claude' --model 'opus'"; decision='' ;;
+    approval)
+      rules_filter='.rules[3].approval = "captain"'
+      status=escalate; expected=''; decision='' ;;
+    tie)
+      quota_filter='(.providers[] | select(.provider == "codex").quotaSemantics.effectiveAvailability[0].selection.spendPriority) = 0.2'
+      status=escalate; expected='' ;;
+    floor)
+      rules_filter='(.rules[3].use[] | select(.provider == "codex").floor) = {scope:"all_models",min_percent:90}'
+      expected="--harness 'claude' --model 'opus'"
+      decision='codex: fall back; every matched family candidate is ineligible' ;;
+  esac
+  jq "$rules_filter" "$TMP_ROOT/preferred-rules.json" > "$RULES"
+  jq "$quota_filter" "$TMP_ROOT/preferred-quota.json" > "$TMP_ROOT/preferred-case-quota.json"
+  reset_log
+  TYPESAFE_API_KEY=$KEY FM_CONFIG_OVERRIDE="${override_dir:-$HOME_DIR/config}" \
+    QUOTA_AXI_FIXTURE="$TMP_ROOT/preferred-case-quota.json" \
+    run code out err "$BRIEF"
+  expect_code 0 "$code" "$scenario resolves"
+  assert_contains "$out" "  status: $status" "$scenario status"
+  if [ -n "$expected" ]; then
+    assert_contains "$out" "  profile: $expected" "$scenario choice"
+  else
+    assert_not_contains "$out" '  profile:' "$scenario cannot authorize a profile"
+  fi
+  if [ -n "$decision" ]; then
+    assert_contains "$out" "  preferred_provider: $decision" "$scenario explains the family decision"
+  else
+    assert_not_contains "$out" '  preferred_provider:' "$scenario does not apply preference"
+  fi
+  if [ "$scenario" = prose-why ]; then
+    assert_not_contains "$(cat "$LOG/body")" 'Always choose Claude' 'rule why never reaches the rule matcher'
+  fi
+  pass "preferred provider: $scenario"
+)
+test_invalid_preferred_provider() (
+  local value=$1
+  jq --argjson value "$value" '.preferred_provider = $value' "$BASE_RULES" > "$RULES"
+  reset_log
+  TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+  expect_code 2 "$code" "invalid preferred_provider $value is refused"
+  assert_contains "$err" 'preferred_provider must be a lowercase provider ID (for example codex)' 'actionable preference error'
+  assert_absent "$LOG/argv" 'invalid preference never reaches the rule matcher'
+  assert_absent "$LOG/quota-axi.calls" 'invalid preference never reads quota'
+  pass "invalid preferred_provider: $value"
+)
+preferred_failures=0
+for value in null false 42 '[]' '{}' '""' '"Codex"' '"codex\\n"' '" codex"'; do
+  test_invalid_preferred_provider "$value" || preferred_failures=$((preferred_failures + 1))
+done
+for scenario in astra-82-claude-26 work-account exhausted unknown unknown-one-known-one claude-only config-override prose-why absent approval tie floor; do
+  test_preferred_provider "$scenario" || preferred_failures=$((preferred_failures + 1))
+done
+[ "$preferred_failures" -eq 0 ] || fail "$preferred_failures preferred-provider cases failed"
+cp "$BASE_RULES" "$RULES"
+reset_log
 
 # --- absent key: off, silent on stdout, no network, no quota read -----------
 reset_log
@@ -234,6 +339,7 @@ assert_contains "$argv" '@/dev/fd/3' "the header is read from a file descriptor"
 assert_equals "Authorization: Bearer $KEY" "$(cat "$LOG/header")" "curl receives the bearer header on fd 3"
 assert_equals $'curl:clean\nquota-axi:clean' "$(cat "$LOG/child-env")" "the API key is absent from every child environment"
 body=$(cat "$LOG/body")
+printf '%s\n' "$body" > "$TMP_ROOT/typesafe-body.json"
 assert_equals 'jev-latest' "$(jq -r .model <<<"$body")" "default model is jev-latest"
 assert_equals 'pager' "$(jq -r .state.task.project <<<"$body")" "project rides in the state"
 assert_contains "$(jq -r .state.task.brief <<<"$body")" 'off-by-one in the pager' "a brief without task headings rides whole in the state"
@@ -245,6 +351,85 @@ assert_not_contains "$body" 'SECRET-WHY-TEXT' "why text never leaves the machine
 assert_not_contains "$body" 'spendPriority' "quota never leaves the machine"
 assert_not_contains "$body" 'cursor-grok' "use profiles never leave the machine"
 pass "clear: one rule Choice request, key on the fd header only, spendPriority argmax over every candidate"
+
+# --- OpenRouter uses the same Choice validation and resolution path ---------
+OR_KEY='test-openrouter-key-never-in-child-env-or-argv'
+OR_RESPONSE="$TMP_ROOT/openrouter-response.json"
+write_openrouter_response() {
+  write_response "$OR_RESPONSE" "$1" "$2"
+  jq '.model = "typesafe/jev-1.13"' "$OR_RESPONSE" > "$TMP_ROOT/or-response.tmp"
+  mv "$TMP_ROOT/or-response.tmp" "$OR_RESPONSE"
+}
+reset_log
+write_openrouter_response rule_4 0.9
+OPENROUTER_API_KEY=$OR_KEY run code out err "$BRIEF"
+assert_equals '' "$out" "an OpenRouter key alone does not select the provider"
+assert_contains "$err" 'TYPESAFE_API_KEY absent' "unset provider retains the typesafe off gate"
+assert_absent "$LOG/argv" "an OpenRouter key alone sends nothing"
+reset_log
+FM_DISPATCH_PROVIDER=openrouter FM_DISPATCH_MODEL=typesafe/jev-1.13 \
+  OPENROUTER_API_KEY=$OR_KEY FAKE_CURL_RESPONSE=$OR_RESPONSE run code out err "$BRIEF" --project pager
+expect_code 0 "$code" "OpenRouter clear exits 0"
+assert_contains "$out" '  status: clear' "OpenRouter clear status"
+assert_contains "$out" '  probabilities: rule_1=0.01 rule_2=0.01 rule_3=0.01 rule_4=0.96 default=0.01' "OpenRouter preserves per-rule probabilities"
+assert_contains "$out" '  profile: --harness '\''cursor'\'' --model '\''cursor-grok-4.6-medium'\''' "OpenRouter uses the shared quota argmax"
+assert_contains "$(cat "$LOG/argv")" 'https://openrouter.ai/api/alpha/decisions' "OpenRouter endpoint"
+assert_contains "$(cat "$LOG/argv")" $'--max-time\n10' "OpenRouter timeout"
+assert_not_contains "$(cat "$LOG/argv")" "$OR_KEY" "OpenRouter key never appears in curl argv"
+assert_equals "Authorization: Bearer $OR_KEY" "$(cat "$LOG/header")" "OpenRouter key reaches curl only through fd 3"
+assert_equals $'curl:clean\nquota-axi:clean' "$(cat "$LOG/child-env")" "OpenRouter key is absent from child environments"
+assert_equals 'typesafe/jev-1.13' "$(jq -r .model "$LOG/body")" "OpenRouter model is explicit"
+assert_equals 'pager' "$(jq -r .state.task.project "$LOG/body")" "project reaches the model"
+assert_equals 'choice' "$(jq -r .questions.rule.type "$LOG/body")" "OpenRouter uses the native Choice request"
+assert_equals "$(jq -Sc 'del(.model)' "$TMP_ROOT/typesafe-body.json")" "$(jq -Sc 'del(.model)' "$LOG/body")" "providers send identical Choice inputs apart from model"
+assert_not_contains "$(cat "$LOG/body")" 'SECRET-WHY-TEXT' "OpenRouter never sends rule why text"
+pass "OpenRouter clear uses the same output contract and keeps its key out of argv and child environments"
+
+printf '%s\n' 'FM_DISPATCH_PROVIDER=openrouter' 'FM_DISPATCH_MODEL=typesafe/jev-1.13' "OPENROUTER_API_KEY=$OR_KEY" > "$HOME_DIR/.env"
+reset_log
+FAKE_CURL_RESPONSE=$OR_RESPONSE run code out err "$BRIEF"
+assert_contains "$out" '  status: clear' "OpenRouter provider, model, and key work from .env"
+assert_equals "Authorization: Bearer $OR_KEY" "$(cat "$LOG/header")" ".env OpenRouter key uses fd 3"
+reset_log
+OPENROUTER_API_KEY=env-wins FAKE_CURL_RESPONSE=$OR_RESPONSE run code out err "$BRIEF"
+assert_equals 'Authorization: Bearer env-wins' "$(cat "$LOG/header")" "OpenRouter environment key wins over .env"
+rm -f "$HOME_DIR/.env"
+reset_log
+printf '%s\n' 'pager' > "$HOME_DIR/config/dispatch-never-send"
+FM_DISPATCH_PROVIDER=openrouter FM_DISPATCH_MODEL=typesafe/jev-1.13 \
+  OPENROUTER_API_KEY=$OR_KEY FAKE_CURL_RESPONSE=$OR_RESPONSE run code out err "$BRIEF" --project pager
+assert_equals '' "$out" "OpenRouter never-send match withholds the request"
+assert_contains "$err" 'nothing sent)' "OpenRouter never-send reports withholding"
+assert_absent "$LOG/argv" "OpenRouter never-send makes no network call"
+rm -f "$HOME_DIR/config/dispatch-never-send"
+
+reset_log
+write_openrouter_response rule_4 0.5
+FM_DISPATCH_PROVIDER=openrouter FM_DISPATCH_MODEL=typesafe/jev-1.13 \
+  OPENROUTER_API_KEY=$OR_KEY FAKE_CURL_RESPONSE=$OR_RESPONSE run code out err "$BRIEF"
+assert_contains "$out" '  status: ambiguous' "OpenRouter low confidence is ambiguous"
+assert_not_contains "$out" '  profile:' "OpenRouter ambiguous response has no profile"
+reset_log
+printf '%s\n' '{"answers":{"rule":{"choice":"rule_4"}}}' > "$OR_RESPONSE"
+FM_DISPATCH_PROVIDER=openrouter FM_DISPATCH_MODEL=typesafe/jev-1.13 \
+  OPENROUTER_API_KEY=$OR_KEY FAKE_CURL_RESPONSE=$OR_RESPONSE run code out err "$BRIEF"
+assert_contains "$out" '  status: error' "malformed OpenRouter response is an error"
+assert_contains "$out" '  reason: response is not a rule Choice answer' "malformed OpenRouter response names the Choice contract"
+reset_log
+FM_DISPATCH_PROVIDER=openrouter FM_DISPATCH_MODEL=typesafe/jev-1.13 \
+  OPENROUTER_API_KEY=$OR_KEY FAKE_CURL_RESPONSE=$OR_RESPONSE FAKE_CURL_HTTP=429 run code out err "$BRIEF"
+assert_contains "$out" '  status: error' "OpenRouter HTTP error is reported"
+assert_contains "$out" '  reason: http 429 after' "OpenRouter HTTP status is reported"
+assert_not_contains "$out$err" "$OR_KEY" "OpenRouter HTTP error never includes the key"
+reset_log
+FM_DISPATCH_PROVIDER=openrouter OPENROUTER_API_KEY=$OR_KEY run code out err "$BRIEF"
+expect_code 2 "$code" "OpenRouter missing model is a configuration error"
+assert_contains "$err" 'FM_DISPATCH_MODEL required when FM_DISPATCH_PROVIDER=openrouter' "missing model is actionable"
+assert_absent "$LOG/argv" "missing model makes no network call"
+FM_DISPATCH_PROVIDER=unknown OPENROUTER_API_KEY=$OR_KEY run code out err "$BRIEF"
+expect_code 2 "$code" "unknown provider is a configuration error"
+assert_contains "$err" 'unknown FM_DISPATCH_PROVIDER' "unknown provider is actionable"
+pass "OpenRouter ambiguous, malformed, HTTP, and missing-model paths are handled"
 
 # --- never-send list: a match or a bad list withholds the request -------------
 NEVER_SEND="$HOME_DIR/config/dispatch-never-send"

@@ -124,6 +124,18 @@ fm_test_run() {
     shift
     kind=$(type -t "$name" 2>/dev/null || true)
     [ "$kind" = function ] || fail "fm_test_run: $name is not a function"
+    # tests/fm-test-slice-gate.sh arms FM_SLICE_COUNT for a sliced script; a
+    # registered list is the only call site it cannot see, so number it here.
+    if [ -n "${FM_SLICE_COUNT:-}" ]; then
+      FM_SLICE_SEEN=$((FM_SLICE_SEEN + 1))
+      case "$FM_SLICE_WANT" in
+        *",$(((FM_SLICE_SEEN - 1) % FM_SLICE_COUNT + 1)),"*)
+          [ -z "${FM_TEST_SLICE_LOG:-}" ] || printf 'ran %s\n' "$name" >>"$FM_TEST_SLICE_LOG" ;;
+        *)
+          [ -z "${FM_TEST_SLICE_LOG:-}" ] || printf 'skipped %s\n' "$name" >>"$FM_TEST_SLICE_LOG"
+          continue ;;
+      esac
+    fi
     "$name"
   done
   printf 'FM_TEST_COMPLETE\n'

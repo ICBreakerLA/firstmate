@@ -77,6 +77,7 @@ A script whose `test_*` calls are independent and listed flat at the end of the 
 `portable_serial_split_hints` in `bin/fm-test-run.sh` names each such script and its slice count, and `--list-split-hints` prints that table.
 Each slice becomes its own packed unit, and a shard that receives several slices of one script runs them together.
 `tests/fm-test-slice-gate.sh` is loaded through `BASH_ENV` for that one script and runs every n-th top-level `test_*` call, in call order, so the slices together run each call exactly once.
+A script that registers its tests through `fm_test_run` in `tests/lib.sh` is numbered there instead, in registration order, under the same slice variables.
 A slice that ran no call fails its shard unless the script declared its own capability skip, so a slice can never pass by doing nothing.
 The coverage guard requires every slice of every split script to be assigned exactly once, and `tests/fm-test-run.test.sh` proves the gate runs each call once and that every split script has at least one call per slice.
 Add a script to the split table only when its calls do not depend on one another's side effects.

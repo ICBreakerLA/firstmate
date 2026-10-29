@@ -221,9 +221,18 @@ set -eu
 
 # Print the header comment as usage before any FM_HOME check or target
 # resolution, so the contract this header owns is reachable through --help.
+fm_send_usage() {
+  cat <<'USAGE'
+usage: fm-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] <text...>
+       fm-send.sh <target> --key Enter
+  Steer a task by durable record; the text becomes the task's next steering message.
+example: fm-send.sh fix-login "rebase onto main, then rerun the checks"
+USAGE
+}
 case "${1:-}" in
   --help)
     awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"
+    fm_send_usage
     exit 0
     ;;
 esac
@@ -238,16 +247,8 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 # a crewmate (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
 
-fm_send_usage() {
-  cat <<'USAGE'
-usage: fm-send.sh <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] <text...>
-       fm-send.sh <target> --key Enter
-  Steer a task by durable record; the text becomes the task's next steering message.
-example: fm-send.sh fix-login "rebase onto main, then rerun the checks"
-USAGE
-}
 case "${1:-}" in
-  -h|--help) fm_send_usage; exit 0 ;;
+  -h) fm_send_usage; exit 0 ;;
   -*)
     echo "error: unknown flag '$1' - the first argument is the target"
     echo "next: run fm-send.sh --help for the expected form"

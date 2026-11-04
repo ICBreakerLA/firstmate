@@ -1,7 +1,8 @@
 ---
 name: ask-user-authority
 description: >-
-  Use before deciding any ask-user finding; owns the decision policy (decides findings unambiguous toward accepted intent, escalates genuinely ambiguous/expanding/destructive ones).
+  Single owner of ask-user finding policy.
+  Load before deciding any ask-user finding.
 user-invocable: false
 metadata:
   internal: true

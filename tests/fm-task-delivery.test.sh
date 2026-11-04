@@ -35,6 +35,7 @@ make_home() {  # <name> [<registry-line>...]
   fakebin="$TMP_ROOT/$name/bin"
   mkdir -p "$home/data" "$home/state" "$home/config" "$projects/proj" "$fakebin"
   git -C "$projects/proj" init -q || fail "could not initialize project fixture"
+  git -c user.name=test -c user.email=test@example.com -C "$projects/proj" commit -q --allow-empty -m init || fail "could not commit project fixture"
   printf '#!/bin/sh\nexit 1\n' > "$fakebin/tmux"
   chmod +x "$fakebin/tmux"
   if [ "$#" -gt 0 ]; then
@@ -273,6 +274,56 @@ test_promote_requires_and_records_the_delivery_contract() {
   pass "fm-promote: promotion requires the delivery contract and records it exactly once"
 }
 
+# A home with config/spawn-base-primary-checkout can start a scout from the
+# primary checkout's default branch, which may carry commits origin has never
+# received, so a promotion to a publishing mode names origin's default branch as
+# the base to return to. Local-only, a home without the flag, a project without
+# an origin remote (which spawn never moves off its slot's HEAD), and a named
+# base keep their wording.
+test_promote_names_origin_for_a_publishing_mode_in_an_opted_in_home() {
+  local flag remote mode rec home proj fakebin id instructions out status
+  for flag in on off; do
+    for remote in origin none; do
+      for mode in direct-PR no-mistakes local-only; do
+        rec=$(make_home "promote-base-$flag-$remote-$mode" "- proj [$mode] - fixture (added 2026-01-01)")
+        IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+        [ "$remote" = none ] || git -C "$proj" remote add origin "file://$TMP_ROOT/promote-base-$flag-$remote-$mode/origin.git"
+        id="promote-base-$flag-$remote-${mode%%-*}-c1"
+        [ "$flag" = off ] || : > "$home/config/spawn-base-primary-checkout"
+        write_brief "$home" "$id"
+        printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$proj" > "$home/state/$id.meta"
+
+        out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode "$mode" --yolo off 2>&1)
+        status=$?
+        expect_code 0 "$status" "flag $flag, remote $remote, $mode: the promotion should succeed"$'\n'"$out"
+        instructions="$home/data/$id/ship-instructions.md"
+        if [ "$flag" = on ] && [ "$remote" = origin ] && [ "$mode" != local-only ]; then
+          assert_grep "3. Return to a clean copy of origin's default branch rather than the primary checkout's, which can carry commits origin has never received, then create your branch" \
+            "$instructions" "flag $flag, remote $remote, $mode: a publishing promotion did not name origin's default branch as its base"
+        else
+          assert_grep '3. Return to a clean default-branch base, then create your branch' \
+            "$instructions" "flag $flag, remote $remote, $mode: the promotion changed the default-branch wording"
+        fi
+      done
+    done
+  done
+
+  home="$TMP_ROOT/promote-base-named/home"
+  id='promote-base-named-c1'
+  mkdir -p "$home/state" "$home/config"
+  : > "$home/config/spawn-base-primary-checkout"
+  write_brief "$home" "$id"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nbase_branch=feature/hub\n' "$id" > "$home/state/$id.meta"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo off 2>&1)
+  status=$?
+  expect_code 0 "$status" "a named-base promotion in an opted-in home should succeed"$'\n'"$out"
+  assert_grep "3. Return to a clean copy of the base branch \`feature/hub\`, then create your branch" \
+    "$home/data/$id/ship-instructions.md" "the opt-in changed a named base branch's promotion wording"
+  pass "fm-promote: an opted-in home sends a publishing promotion on a project with origin back to origin's default branch"
+}
+
 # A symlink at state/<id>.meta is the containment hazard the shared publisher
 # refuses: promotion must not rewrite the symlink target in place.
 test_promote_refuses_a_symlinked_task_record() {
@@ -492,6 +543,7 @@ test_local_merge_uses_the_recorded_ship_branch() {
 - $(basename "$proj") [local-only branch=contrib/] - changed after task intake (added 2026-01-01)
 EOF
   printf 'project=%s\nmode=local-only\nbranch=fix/%s\n' "$proj" "$id" > "$home/state/$id.meta"
+  printf 'local_done_head=%s\n' "$fix" >> "$home/state/$id.meta"
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$MERGE_LOCAL" "$id") \
     || fail "local merge did not use the branch recorded at task intake: $out"
   [ "$(git -C "$proj" rev-parse HEAD)" = "$fix" ] \
@@ -588,6 +640,49 @@ EOF
   assert_contains "$out" "## Captain's intent" \
     "unfilled ship spawn did not name the intent subsection to fill"
   assert_absent "$home/state/$id.meta" "unfilled ship spawn wrote task metadata"
+
+  id=delivery-herdr-lifecycle-unguarded
+  mkdir -p "$home/data/$id"
+  cat > "$home/data/$id/brief.md" <<'EOF'
+# Task
+## Captain's intent
+Run `herdr session stop` to reproduce the lifecycle operation.
+
+## Firstmate spec
+Use the existing task setup.
+
+# Definition of done
+Delivery contract: mode=direct-PR
+EOF
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  assert_not_contains "$out" "Herdr isolation contract" \
+    "the Herdr lifecycle guard changed the default-off spawn path"
+  : > "$home/config/herdr-lifecycle-spawn-guard"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a Herdr lifecycle brief without the isolation contract should be refused"
+  assert_contains "$out" "Herdr isolation contract" \
+    "Herdr lifecycle refusal did not name the missing isolation contract"
+  assert_contains "$out" "\`herdr session stop\`" \
+    "Herdr lifecycle refusal did not name the matched command"
+  assert_contains "$out" "fm-brief.sh --herdr-lab" \
+    "Herdr lifecycle refusal did not name the brief regeneration remedy"
+  assert_absent "$home/state/$id.meta" \
+    "Herdr lifecycle refusal wrote task metadata"
+  printf '\n# Herdr isolation - HARD SAFETY CONTRACT\n' >> "$home/data/$id/brief.md"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  assert_not_contains "$out" "Herdr isolation contract" \
+    "a brief carrying the Herdr isolation contract was refused"
+
+  id=delivery-herdr-lab-scaffold
+  FM_HOME="$home" "$BRIEF" "$id" proj --mode direct-PR --herdr-lab >/dev/null 2>&1 \
+    || fail "herdr-lab ship brief should scaffold"
+  fill_brief_subsections "$home/data/$id/brief.md" \
+    "Reproduce the session restart in an isolated lab." \
+    "Drive every lifecycle step through the lab helper."
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  assert_not_contains "$out" "Herdr isolation contract" \
+    "a brief scaffolded with --herdr-lab was refused by the Herdr lifecycle guard"
 
   id=delivery-filled-ship
   FM_HOME="$home" "$BRIEF" "$id" proj --mode direct-PR >/dev/null 2>&1 \
@@ -1039,6 +1134,7 @@ forge beside a mode|- fp [no-mistakes forge=gerrit] - fixture (added 2026-01-01)
 forge as the only token leaves the default mode|- fp [forge=gerrit] - fixture (added 2026-01-01)|no-mistakes off|gerrit
 forge before yolo on a direct-PR project|- fp [direct-PR forge=gerrit +yolo] - fixture (added 2026-01-01)|direct-PR off|gerrit
 forge under the conditional policy|- fp [no-mistakes-prod-only forge=gerrit] - fixture (added 2026-01-01)|no-mistakes off|gerrit
+an external review forge on direct-PR|- fp [direct-PR forge=external] - fixture (added 2026-01-01)|direct-PR off|external
 a project with no forge keeps yolo|- fp [direct-PR +yolo] - fixture (added 2026-01-01)|direct-PR on|none
 a keyed token that is not the forge is ignored|- fp [direct-PR owner=me] - fixture (added 2026-01-01)|direct-PR off|none
 an unregistered project|- other [direct-PR] - fixture (added 2026-01-01)|no-mistakes off|none
@@ -1189,6 +1285,25 @@ EOF
   assert_contains "$out" "--yolo on is refused" "the promotion refusal did not name the refused flag"
   grep -qx 'kind=scout' "$meta" || fail "the refused promotion still flipped the task record"
   pass "forge=gerrit: yolo is refused with its reason, never silently dropped"
+}
+
+# A scout launches without the push guard and task record a forge=external
+# ship carries, so promoting one onto such a project is refused outright rather
+# than handing it a contract nothing enforces.
+test_forge_external_refuses_promotion() {
+  local rec home proj fakebin meta out status
+  rec=$(make_home forge-external-promote "- proj [direct-PR forge=external] - fixture (added 2026-01-01)")
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  meta="$home/state/forge-ext-p1.meta"
+  printf 'window=fm-forge-ext-p1\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$proj" > "$meta"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" forge-ext-p1 --mode direct-PR --yolo off 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a promotion onto a forge=external project was accepted"
+  assert_contains "$out" "promotion is refused for forge=external" "the promotion refusal did not say why"
+  grep -qx 'kind=scout' "$meta" || fail "the refused promotion still flipped the task record"
+  pass "forge=external: promoting a scout is refused because only a ship spawn installs the push guard"
 }
 
 # The point of binding the forge is that it changes what no-mistakes MEANS for the
@@ -1520,6 +1635,59 @@ STUB
   pass "fm-promote: a promoted worker receives the project's registered forge contract with no flag to remember"
 }
 
+# forgejo is a value of the same binding, so the spawn's agreement check and
+# promotion's registry read carry it exactly as they carry gerrit, while its
+# contract differs only in naming tea and keeping +yolo: a Forgejo pull request
+# is merged through the ordinary merge authority, not an attributed vote.
+test_forge_forgejo_rides_the_same_binding() {
+  local rec home proj fakebin out status sendroot meta payload id
+  rec=$(make_home forge-forgejo "- proj [direct-PR +yolo forge=forgejo] - fixture (added 2026-01-01)")
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  write_brief "$home" forge-forgejo-s1 direct-PR
+  out=$(run_spawn "$home" "$fakebin" forge-forgejo-s1 "$proj" claude --mode direct-PR --yolo off 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a forgejo project launched on a brief that records no forge"
+  assert_contains "$out" "forge mismatch for forge-forgejo-s1" "the refusal did not name the drift it caught"
+  assert_contains "$out" "fm-brief.sh forge-forgejo-s1 proj --mode direct-PR --forge forgejo" \
+    "the refusal did not print the forgejo re-scaffold command"
+  assert_absent "$home/state/forge-forgejo-s1.meta" "the refused spawn still recorded a task"
+
+  FM_HOME="$home" "$BRIEF" forge-forgejo-s2 proj --mode direct-PR --forge forgejo >/dev/null \
+    || fail "a forgejo direct-PR brief should scaffold"
+  fill_brief_subsections "$home/data/forge-forgejo-s2/brief.md" "Open the pull request." "Ship it."
+  out=$(run_spawn "$home" "$fakebin" forge-forgejo-s2 "$proj" claude --mode direct-PR --yolo on 2>&1)
+  assert_not_contains "$out" "forge mismatch" "an agreeing forgejo brief and registry were reported as drift"
+  assert_not_contains "$out" "--yolo on is refused" "yolo was refused on forgejo, where only gerrit deactivates it"
+
+  sendroot="$TMP_ROOT/forge-forgejo/sendroot"
+  mkdir -p "$sendroot/bin"
+  cat > "$sendroot/bin/fm-send.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s' "$2" > "$FM_TEST_CAPTURE"
+STUB
+  chmod +x "$sendroot/bin/fm-send.sh"
+  id="forge-forgejo-p1"
+  meta="$home/state/$id.meta"
+  printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=%s\n' "$id" "$proj" > "$meta"
+  FM_HOME="$home" "$BRIEF" "$id" proj --scout >/dev/null 2>&1 \
+    || fail "scout brief generation should succeed"
+  fill_brief_subsections "$home/data/$id/brief.md" "Fix what the investigation found." "Carry over only the fix."
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode direct-PR --yolo on 2>&1) \
+    || fail "promotion should take the forgejo binding and keep yolo: $out"
+  payload="$TMP_ROOT/forge-forgejo/payload"
+  ( cd "$sendroot" \
+    && FM_TEST_CAPTURE="$payload" \
+       eval "$(printf '%s\n' "$out" | sed -n 's/^next: //p' | grep 'fm-send\.sh')" ) \
+    || fail "promotion's delivery command did not run"
+  grep -qx "Delivery contract: mode=direct-PR forge=forgejo" "$payload" \
+    || fail "the promoted worker did not receive the forgejo delivery contract"
+  # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
+  assert_grep 'open a PR with `tea`' "$payload" "the promoted forgejo worker was not told to open the PR with tea"
+  pass "forge=forgejo: spawn agreement and promotion carry the binding, name tea, and keep yolo"
+}
+
 # direct-PR composes with the forge: the mode still means "publish without the
 # pipeline", and on Gerrit publishing is one gerrit-axi call rather than a push
 # plus a pull request. The worker reports the published change, never submits or
@@ -1630,6 +1798,7 @@ test_spawn_refuses_a_brief_mode_mismatch
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
+test_promote_names_origin_for_a_publishing_mode_in_an_opted_in_home
 test_promote_refuses_a_symlinked_task_record
 test_promotion_delivers_the_real_definition_of_done
 test_promotion_persists_the_selected_ship_branch
@@ -1640,6 +1809,7 @@ test_project_mode_maps_the_conditional_policy
 test_project_mode_binds_the_forge_orthogonally
 test_project_mode_refuses_only_a_malformed_forge_binding
 test_forge_gerrit_refuses_yolo
+test_forge_external_refuses_promotion
 test_forge_gerrit_changes_what_no_mistakes_means
 test_forge_gerrit_direct_pr_publishes_one_change
 test_spawn_requires_the_brief_to_carry_the_registered_forge
@@ -1647,6 +1817,7 @@ test_spawn_requires_the_brief_to_carry_the_selected_branch
 test_spawn_notices_a_ship_branch_against_the_registry_prefix
 test_spawn_refuses_a_registry_forge_it_cannot_read
 test_promotion_carries_the_forge_binding
+test_forge_forgejo_rides_the_same_binding
 test_spawn_and_promote_require_filled_task_subsections
 test_project_mode_resolves_branch_prefix
 echo "# all fm-task-delivery tests passed"

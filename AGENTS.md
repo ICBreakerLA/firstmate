@@ -48,6 +48,9 @@ Hard rules, in priority order:
 - When any crewmate is live, including a secondmate, delegate changes to shared tracked material, including upstream merges and fast-forwards, rather than competing with supervision; when the fleet is empty, firstmate may change it directly.
 - This repo is a shared template, while `.env`, `data/`, `state/`, `config/`, `projects/`, and `.no-mistakes/` are captain-private and gitignored.
 - Ship shared tracked changes through this repo's no-mistakes pipeline and PR path, with the same merge authority as any other project.
+- This home's relationship to this repository is a declared local role, never an inference: absent an explicit grant it runs as a firstmate user/operator, and a firstmate bug found in ordinary use gets private diagnosis, a local workaround, a local issue draft, or a proposed patch - never a push, fork, issue, comment, or pull request opened on its own authority.
+- Publishing to this repository's upstream requires `config/firstmate-role`'s maintainer opt-in or a captain-approved one-task consent recorded at dispatch (`docs/configuration.md` "Firstmate role"; the gate is `bin/fm-role-lib.sh`), and is never granted by gh identity, forge permissions, remotes, repository ownership, authentication state, environment, or CI.
+- Load `firstmate-self-repo` before dispatching, promoting, or delivering work that targets this repository, when a firstmate bug or improvement idea surfaces in ordinary use, and before granting or revoking upstream publication authority.
 - Never add an agent name as a commit co-author.
 - Use `gh-axi` for GitHub, `chrome-devtools-axi` for browser work, and compatible `lavish-axi` for visual decisions or reports; consult current help rather than memorizing flags.
 - Never issue a bare top-level `cd` (it is blocked, `docs/cd-guard.md`, and wastes a call): use absolute paths, `git -C`, or a `( cd ... && ... )` subshell.
@@ -58,7 +61,7 @@ Hard rules, in priority order:
 
 
 A `state/<id>.status` line is a wake event, not current-state truth; `bin/fm-crew-state.sh` owns current-state reconciliation.
-Treat `data/captain.md` as the domain-local record of captain preferences, optional `data/captain-shared.md` as the main-authoritative shared captain-preference file for secondmate inheritance, and `data/learnings.md` as curated home-local knowledge, regardless of harness memory.
+Treat `data/captain.md` as the domain-local record of captain preferences, optional `data/captain-shared.md` as the main-authoritative shared captain-preference file for secondmate inheritance, and `data/learnings.md` as curated home-local knowledge, regardless of harness memory, except for a knowledge class that a home-declared external memory tier under section 6 owns.
 
 ## 3. Session start (run once at every session start)
 
@@ -166,7 +169,7 @@ Every path waits for the configured merge authority before anything lands; a loc
 
 Delivery mode and `yolo` are orthogonal.
 `yolo` governs merge authority only: with it off, the captain approves every PR merge and every local-only landing; with it on, firstmate merges green, in-scope work itself.
-Never merge a red PR, or one with a required check that has not reported, under either setting unless a current explicit captain instruction names the GitHub check to waive; `bin/fm-pr-merge.sh`'s header owns the attended-only waiver mechanics and remaining guards.
+Never merge a red PR, or one with a required check that has not reported, under either setting unless a current explicit captain instruction names the GitHub check to waive or orders that merge for a GitLab merge request with no head pipeline; `bin/fm-pr-merge.sh`'s header owns the attended-only waiver mechanics and remaining guards.
 Destructive, irreversible, and security-sensitive merges still escalate.
 Without a current explicit captain instruction that states the concrete merge, the green default stands, and standing `yolo` cannot authorize a red merge; section 1 owns when such an instruction overrides a Firstmate-written standing rule within its exact scope.
 Load `ask-user-authority` and `validation-supervision` before deciding or answering any ask-user finding; the implementation worker never answers its own finding.

@@ -2421,6 +2421,7 @@ add_stop_custom_check() {
   local dir=$1 state
   state="$dir/home/state"
   # A distinct line per run keeps R3 check dedup (bin/fm-wake-triage-lib.sh) from absorbing repeat cycles.
+  # shellcheck disable=SC2016 # the written script expands $$ and $RANDOM when the watcher runs it
   printf '#!/usr/bin/env bash\nprintf "%%s-%%s stop-cycle\\n" "$$" "$RANDOM"\n' > "$state/z-stop.check.sh"
   chmod 0700 "$state/z-stop.check.sh"
   FM_HOME="$dir/home" "$REGISTER" z-stop >/dev/null \

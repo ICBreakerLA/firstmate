@@ -1,6 +1,6 @@
 ---
 name: harness-adapters
-description: "Use before spawning/recovering crewmates/secondmates, handling trust dialogs, harness-specific invocations, interrupt/exit/resume, or verifying adapters (claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, gemini, muse, rovo, omp, agy, devin, commandcode, polytoken, cortex)."
+description: "Use before spawning/recovering crewmates/secondmates, handling trust dialogs, harness-specific invocations, interrupt/exit/resume, or verifying adapters (claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, gemini, muse, rovo, omp, agy, devin, commandcode, polytoken, cortex, kiro, hermes)."
 user-invocable: false
 metadata:
   internal: true
@@ -15,7 +15,7 @@ Files under `references/` are resources of this skill, not additional catalogued
 
 ## Verified adapters
 
-The verified harnesses are `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `cursor`, and `omp`, plus `muse`, `gemini`, `rovo`, `agy`, `devin`, `commandcode` (Command Code), `polytoken`, and `cortex` for crewmates and scouts only; never dispatch on an unverified adapter.
+The verified harnesses are `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `cursor`, `omp`, and `agy`, plus `muse`, `gemini`, `rovo`, `devin`, `commandcode` (Command Code), `polytoken`, `cortex`, `kiro`, and `hermes` for crewmates and scouts only; never dispatch on an unverified adapter.
 
 ## Path contract
 

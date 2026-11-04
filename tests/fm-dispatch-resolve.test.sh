@@ -530,15 +530,15 @@ pass "OpenRouter ambiguous, malformed, HTTP, and missing-model paths are handled
 # $CONFIG/dispatch-credential-sources.json names a source per provider. It is
 # read only when neither the environment nor .env supplied a key. The fake
 # Keychain holds one item file per service name.
-SECRET='kc-typesafe-4d7a1e90-never-on-argv'
-KC_OR_SECRET='kc-openrouter-8b21f6c3-never-on-argv'
-EFFECTIVE_SECRET='kc-effective-c07e5a12-never-on-argv'
+CANARY='kc-typesafe-4d7a1e90-never-on-argv'
+KC_OR_CANARY='kc-openrouter-8b21f6c3-never-on-argv'
+EFFECTIVE_CANARY='kc-effective-c07e5a12-never-on-argv'
 STORE="$TMP_ROOT/keychain"
 CRED="$HOME_DIR/config/dispatch-credential-sources.json"
 mkdir -p "$STORE"
-printf '%s\n' "$SECRET" > "$STORE/typesafe-svc"
-printf '%s\n' "$KC_OR_SECRET" > "$STORE/openrouter-svc"
-printf '%s\n' "$EFFECTIVE_SECRET" > "$STORE/effective-svc"
+printf '%s\n' "$CANARY" > "$STORE/typesafe-svc"
+printf '%s\n' "$KC_OR_CANARY" > "$STORE/openrouter-svc"
+printf '%s\n' "$EFFECTIVE_CANARY" > "$STORE/effective-svc"
 : > "$STORE/empty-svc"
 export FAKE_SECURITY_STORE="$STORE"
 
@@ -560,7 +560,7 @@ run code out err "$BRIEF" --project pager
 expect_code 0 "$code" "a declared source resolves"
 assert_contains "$out" '  status: clear' "a declared source turns the tool on"
 assert_equals 'find-generic-password -s typesafe-svc -a mike -w' "$(cat "$LOG/security.argv")" "the declared service and account are the whole Keychain lookup"
-assert_equals "Authorization: Bearer $SECRET" "$(cat "$LOG/header")" "the declared key reaches curl on the fd header"
+assert_equals "Authorization: Bearer $CANARY" "$(cat "$LOG/header")" "the declared key reaches curl on the fd header"
 rm -f "$CRED"
 declare_source "$CRED" typesafe typesafe-svc
 reset_log
@@ -614,13 +614,13 @@ FM_DISPATCH_PROVIDER=openrouter FM_DISPATCH_MODEL=typesafe/jev-1.13 FAKE_CURL_RE
   run code out err "$BRIEF" --project pager
 assert_contains "$out" '  status: clear' "OpenRouter resolves from its own declared source"
 assert_equals 'find-generic-password -s openrouter-svc -w' "$(cat "$LOG/security.argv")" "OpenRouter reads only its own declared service"
-assert_equals "Authorization: Bearer $KC_OR_SECRET" "$(cat "$LOG/header")" "OpenRouter's declared key reaches curl, not typesafe's"
+assert_equals "Authorization: Bearer $KC_OR_CANARY" "$(cat "$LOG/header")" "OpenRouter's declared key reaches curl, not typesafe's"
 assert_contains "$(cat "$LOG/argv")" 'https://openrouter.ai/api/alpha/decisions' "OpenRouter's declared key goes to OpenRouter's endpoint"
 reset_log
 write_response "$RESPONSE" rule_4 0.9
 FM_DISPATCH_PROVIDER=typesafe run code out err "$BRIEF" --project pager
 assert_equals 'find-generic-password -s typesafe-svc -w' "$(cat "$LOG/security.argv")" "typesafe reads only its own declared service"
-assert_equals "Authorization: Bearer $SECRET" "$(cat "$LOG/header")" "typesafe's declared key reaches curl, not OpenRouter's"
+assert_equals "Authorization: Bearer $CANARY" "$(cat "$LOG/header")" "typesafe's declared key reaches curl, not OpenRouter's"
 assert_contains "$(cat "$LOG/argv")" 'https://api.typesafe.ai/v1/systemone' "typesafe's declared key goes to the typesafe.ai endpoint"
 rm -f "$CRED"
 pass "provider isolation: each provider reads only its own declared service, and a declaration never selects a provider"
@@ -646,7 +646,7 @@ reset_log
 FM_CONFIG_OVERRIDE=$EFFECTIVE_CONFIG run code out err "$BRIEF" --project pager
 assert_contains "$out" '  status: clear' "an overridden config directory supplies its own declaration"
 assert_equals 'find-generic-password -s effective-svc -w' "$(cat "$LOG/security.argv")" "only the effective directory's declaration is read"
-assert_equals "Authorization: Bearer $EFFECTIVE_SECRET" "$(cat "$LOG/header")" "the effective directory's key is the one sent"
+assert_equals "Authorization: Bearer $EFFECTIVE_CANARY" "$(cat "$LOG/header")" "the effective directory's key is the one sent"
 rm -f "$EFFECTIVE_CONFIG/dispatch-credential-sources.json"
 reset_log
 FM_CONFIG_OVERRIDE=$EFFECTIVE_CONFIG run code out err "$BRIEF" --project pager
@@ -715,7 +715,7 @@ expect_unavailable() {
   assert_not_contains "$err" 'dispatch-resolve: off' "$label is not mistaken for an unconfigured resolver"
   assert_absent "$LOG/argv" "$label never calls curl"
   assert_absent "$LOG/quota-axi.calls" "$label never reads quota"
-  assert_not_contains "$out$err" "$SECRET" "$label never prints a stored key"
+  assert_not_contains "$out$err" "$CANARY" "$label never prints a stored key"
 }
 UNAVAILABLE='credential source macos-keychain declared for typesafe is unavailable; nothing sent'
 UNSUPPORTED='credential source macos-keychain declared for typesafe is not supported on this host; nothing sent'
@@ -765,20 +765,20 @@ pass "failure distinctions: off, a configuration error, and an unavailable sourc
 declare_source "$CRED" typesafe typesafe-svc mike
 SCAN_TMP="$TMP_ROOT/scan-tmp"
 mkdir -p "$SCAN_TMP"
-printf '%s' "$SECRET" > "$TMP_ROOT/canary"
+printf '%s' "$CANARY" > "$TMP_ROOT/canary"
 reset_log
 TMPDIR=$SCAN_TMP FAKE_CANARY_FILE="$TMP_ROOT/canary" FAKE_CANARY_DIRS="$SCAN_TMP $HOME_DIR" \
   run code out err "$BRIEF" --project pager
 assert_contains "$out" '  status: clear' "the containment run resolves"
-assert_equals "Authorization: Bearer $SECRET" "$(cat "$LOG/header")" "the key arrives only as the bearer header on the descriptor"
-assert_not_contains "$out" "$SECRET" "the key never reaches stdout"
-assert_not_contains "$err" "$SECRET" "the key never reaches stderr"
-assert_not_contains "$(cat "$LOG/argv")" "$SECRET" "the key never appears on curl argv"
-assert_not_contains "$(cat "$LOG/security.argv")" "$SECRET" "the key never appears on security argv"
-assert_not_contains "$(cat "$LOG/body")" "$SECRET" "the key never rides in the request body"
+assert_equals "Authorization: Bearer $CANARY" "$(cat "$LOG/header")" "the key arrives only as the bearer header on the descriptor"
+assert_not_contains "$out" "$CANARY" "the key never reaches stdout"
+assert_not_contains "$err" "$CANARY" "the key never reaches stderr"
+assert_not_contains "$(cat "$LOG/argv")" "$CANARY" "the key never appears on curl argv"
+assert_not_contains "$(cat "$LOG/security.argv")" "$CANARY" "the key never appears on security argv"
+assert_not_contains "$(cat "$LOG/body")" "$CANARY" "the key never rides in the request body"
 assert_equals $'security:clean\ncurl:clean\nquota-axi:clean' "$(cat "$LOG/child-env")" "the key is in no child environment, and in no file the tool holds while the request is in flight"
-! grep -rqF -- "$SECRET" "$HOME_DIR" || fail "the key was written under the home"
-! grep -rqF -- "$SECRET" "$SCAN_TMP" || fail "the key was left in the temporary directory"
+! grep -rqF -- "$CANARY" "$HOME_DIR" || fail "the key was written under the home"
+! grep -rqF -- "$CANARY" "$SCAN_TMP" || fail "the key was left in the temporary directory"
 rm -f "$CRED"
 pass "secret containment: the declared key is on no argv, in no output, environment, or file, and only on the fd header"
 

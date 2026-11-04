@@ -85,7 +85,7 @@ Load `session-start-recovery` when the digest reports unfinished checks, actiona
 
 - Load `harness-adapters` before every spawn or recovery and before trust handling, skill invocation, interrupt, exit, resume, or adapter verification.
 - Dispatch only on a verified adapter (the list is in `harness-adapters`); if static `config/crew-harness` or `config/secondmate-harness` names an unverified one, report it and fall back only to a verified adapter rather than launching it.
-- Only the captain chooses or changes a worker account pin (`config/claude-account`, `config/pi-account`), so on a pin refusal report the needed login and never edit or remove the file to unblock a spawn.
+- Only the captain chooses or changes a worker account pin or declared account list (`config/claude-account`, `config/pi-account`, `config/claude-accounts`), so on a pin refusal report the needed login and never edit or remove the file to unblock a spawn.
 
 Load `dispatch-profiles` at every crewmate or scout intake before spawning, and when choosing a profile or backend; dispatch only on an `fm-spawn`-validated backend and never silently retry on another backend.
 

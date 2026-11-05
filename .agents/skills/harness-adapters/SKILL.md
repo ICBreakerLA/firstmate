@@ -1,6 +1,6 @@
 ---
 name: harness-adapters
-description: "Use before spawning/recovering crewmates/secondmates, handling trust dialogs, harness-specific invocations, interrupt/exit/resume, or verifying adapters (claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, gemini, muse, rovo, omp, agy, devin, commandcode, polytoken, cortex)."
+description: "Use before spawning/recovering crewmates/secondmates, handling trust dialogs, harness-specific invocations, interrupt/exit/resume, or verifying adapters (claude, codex, opencode, pi, pi-signed, grok, kimi, cursor, gemini, muse, rovo, omp, agy, devin, commandcode, polytoken, cortex, kiro, hermes)."
 user-invocable: false
 metadata:
   internal: true
@@ -15,7 +15,7 @@ Files under `references/` are resources of this skill, not additional catalogued
 
 ## Verified adapters
 
-The verified harnesses are `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `cursor`, and `omp`, plus `muse`, `gemini`, `rovo`, `agy`, `devin`, `commandcode` (Command Code), `polytoken`, and `cortex` for crewmates and scouts only; never dispatch on an unverified adapter.
+The verified harnesses are `claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`, `kimi`, `cursor`, `omp`, and `agy`, plus `muse`, `gemini`, `rovo`, `devin`, `commandcode` (Command Code), `polytoken`, `cortex`, `kiro`, and `hermes` for crewmates and scouts only; never dispatch on an unverified adapter.
 
 ## Path contract
 
@@ -36,7 +36,7 @@ For recovery and control, use the exact `harness=` in `state/<id>.meta`; never i
 Deliver lifecycle actions only through `../../../bin/fm-control.sh <task-id> interrupt|exit|relaunch`.
 Never type an interrupt key or exit command through `fm-send`, where routing-marked lifecycle text becomes chat.
 Trust handling is complete only when inspection proves the target started processing its instructions; delivery success alone is not proof.
-Muse, Gemini, AGY, Devin, Command Code, Polytoken, and Cortex are verified only for crewmate and scout work, never a secondmate or primary.
+Muse, Gemini, Devin, Command Code, Polytoken, Cortex, Kiro, and Hermes are verified only for crewmate and scout work, never a secondmate or primary.
 
 ## Effort fallback
 
@@ -105,7 +105,9 @@ A new tool remains undispatchable until the `verify` plan, its harness entry, ev
     "devin": "references/harness/devin.md",
     "commandcode": "references/harness/commandcode.md",
     "polytoken": "references/harness/polytoken.md",
-    "cortex": "references/harness/cortex.md"
+    "cortex": "references/harness/cortex.md",
+    "kiro": "references/harness/kiro.md",
+    "hermes": "references/harness/hermes.md"
   }
 }
 ```

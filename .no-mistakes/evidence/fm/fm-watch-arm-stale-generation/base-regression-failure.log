@@ -1,0 +1,8 @@
+not ok - omp watch extension shutdown revival: file:///home/agent/nm/worktrees/9caa4e576c95/01M6VSHEYZBJ1475K90NGVB70E/[eval1]:40
+if (revived.content[0].text.includes("omp session is shutting down")) throw new Error(`the repair tool stayed wedged after shutdown-without-start: ${revived.content[0].text}`);
+                                                                            ^
+
+Error: the repair tool stayed wedged after shutdown-without-start: watcher: not armed - omp session is shutting down
+    at file:///home/agent/nm/worktrees/9caa4e576c95/01M6VSHEYZBJ1475K90NGVB70E/[eval1]:40:77
+
+Node.js v22.22.1: expected exit 0, got 1

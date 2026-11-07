@@ -560,6 +560,18 @@ export default function (pi: ExtensionAPI) {
   let generation = createGeneration();
   activateGeneration(generation);
 
+  // omp emits session_shutdown for ordinary replacement and terminal quit alike.
+  // A shutdown that no later session_start follows in the same process leaves
+  // the bound generation stopped for good, so the repair tool and its command
+  // must be able to revive it. Only an explicit session_start, the repair tool,
+  // or its command binds a fresh generation; a stopped one still never arms
+  // from a timer or a late callback.
+  function reviveStoppedGeneration(): SessionGeneration {
+    if (generation.stopping) generation = createGeneration();
+    activateGeneration(generation);
+    return generation;
+  }
+
   async function sendWake(
     owner: SessionGeneration,
     message: string,
@@ -1108,8 +1120,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on?.("session_start", async () => {
-    if (generation.stopping) generation = createGeneration();
-    activateGeneration(generation);
+    reviveStoppedGeneration();
     markLoaded();
     if (lockOwnership() !== "owned") return;
     activateOwnedWatch(generation);
@@ -1125,7 +1136,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand?.("fm-watch-arm-omp", {
     description: "Arm firstmate watcher supervision through the omp extension instead of foreground bash.",
     handler: async (_args, ctx) => {
-      const result = activateOwnedWatch(generation);
+      const result = activateOwnedWatch(reviveStoppedGeneration());
       ctx?.ui?.notify?.(result.message, result.ok ? "info" : "warning");
     },
   });
@@ -1140,7 +1151,7 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: Type.Object({}),
     execute: async () => {
-      const result = activateOwnedWatch(generation);
+      const result = activateOwnedWatch(reviveStoppedGeneration());
       return {
         content: [{ type: "text", text: result.message }],
         details: result,

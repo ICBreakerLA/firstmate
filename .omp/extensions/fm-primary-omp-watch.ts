@@ -11,9 +11,10 @@
 //     still tracked at before_agent_start / message_start exactly as on Pi.
 //   - omp reports no session_shutdown reason, so EVERY shutdown with a pending
 //     actionable close persists the replacement handoff and the next owning
-//     session_start, in this process or a later one, replays it. Replaying a
-//     wake main has already drained is harmless (the queue is durable and the
-//     drain is idempotent); losing one across /new is not.
+//     session_start, in this process or a later one, or an explicit repair in
+//     the same process, replays it.
+//     Replaying a wake main has already drained is harmless (the queue is
+//     durable and the drain is idempotent); losing one across /new is not.
 //   - Replacement shutdown retires the established predecessor arm before the
 //     successor arms; unlike Pi, it is not retained until a distinct active
 //     successor generation commits its own arm, so omp keeps the plain
@@ -39,12 +40,17 @@
 //
 // Session-generation ownership (stated once here):
 // omp emits session_shutdown for ordinary same-process replacements (/new,
-// /resume, /fork) as well as terminal quit. This extension binds one generation
-// per session activation. Only the active live generation may start, stop,
-// rearm, or clear the arm child. An owning replacement session_start (or fresh
-// factory bind) arms its new generation without a model turn. A replacement
-// handoff carries actionable closes that were still pending delivery; its
-// durable state lives at state/extensions/omp-primary-watch/session-replacement-actionable.json.
+// /resume, /fork) as well as terminal quit. Each session activation binds one
+// generation, and an explicit repair binds a fresh one when a shutdown left the
+// bound generation stopped without a later session_start in the same process.
+// Only the active live generation may start, stop, rearm, or clear the arm
+// child. An owning replacement session_start (or fresh factory bind) arms its
+// new generation without a model turn; so do the fm_watch_arm_omp tool and its
+// /fm-watch-arm-omp fallback when they revive a stopped generation. A stopped
+// generation still never arms from a timer, retry, or late callback. A
+// replacement handoff carries actionable closes that were still pending
+// delivery; its durable state lives at
+// state/extensions/omp-primary-watch/session-replacement-actionable.json.
 // Stale callbacks from a prior generation are no-ops against the active replacement.
 //
 // Delivery versus consumption (stated once here):
@@ -559,6 +565,18 @@ process.once("exit", cleanupOnProcessExit);
 export default function (pi: ExtensionAPI) {
   let generation = createGeneration();
   activateGeneration(generation);
+
+  // omp emits session_shutdown for ordinary replacement and terminal quit alike.
+  // A shutdown that no later session_start follows in the same process leaves
+  // the bound generation stopped with no successor bind, so the repair tool and
+  // its command must be able to revive it. Only an explicit session_start, the
+  // repair tool, or its command binds a fresh generation; a stopped one still
+  // never arms from a timer or a late callback.
+  function reviveStoppedGeneration(): SessionGeneration {
+    if (generation.stopping) generation = createGeneration();
+    activateGeneration(generation);
+    return generation;
+  }
 
   async function sendWake(
     owner: SessionGeneration,
@@ -1108,8 +1126,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on?.("session_start", async () => {
-    if (generation.stopping) generation = createGeneration();
-    activateGeneration(generation);
+    reviveStoppedGeneration();
     markLoaded();
     if (lockOwnership() !== "owned") return;
     activateOwnedWatch(generation);
@@ -1125,7 +1142,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand?.("fm-watch-arm-omp", {
     description: "Arm firstmate watcher supervision through the omp extension instead of foreground bash.",
     handler: async (_args, ctx) => {
-      const result = activateOwnedWatch(generation);
+      const result = activateOwnedWatch(reviveStoppedGeneration());
       ctx?.ui?.notify?.(result.message, result.ok ? "info" : "warning");
     },
   });
@@ -1140,7 +1157,7 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: Type.Object({}),
     execute: async () => {
-      const result = activateOwnedWatch(generation);
+      const result = activateOwnedWatch(reviveStoppedGeneration());
       return {
         content: [{ type: "text", text: result.message }],
         details: result,

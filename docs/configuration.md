@@ -1694,7 +1694,7 @@ The spend-limited worker key lives in `~/.config/firstmate/openrouter-worker-key
 It must be a regular file, not a symlink, and is read on the host only.
 The key is sent to `curl` on stdin so it is never in a host argument list, it never enters the sandbox, and it is never printed, logged, or written into the task record, status, brief, or any test output.
 The sandbox instead holds the fixed placeholder `sk-or-placeholder-firstmate` as `ANTHROPIC_AUTH_TOKEN`, passed to `sbx create`, so the value exists in the VM from its first moment.
-Right after create, the wrapper registers a sandbox-scoped secret with `sbx secret set-custom --sandbox <name> --host openrouter.ai --placeholder sk-or-placeholder-firstmate --command "tr -d '[:space:]' <'<absolute key file path>'"`, and a launch whose secret cannot be stored is removed.
+Once the sandbox exists, the wrapper registers a sandbox-scoped secret with `sbx secret set-custom --sandbox <name> --host openrouter.ai --placeholder sk-or-placeholder-firstmate --command "tr -d '[:space:]' <'<absolute key file path>'"`, and a launch whose secret cannot be stored is removed.
 The command strips the file's trailing whitespace and quotes its path, so a key file that ends in a newline or a path containing a space still yields the exact key.
 The sbx proxy runs that command and substitutes the key for the placeholder on requests to `openrouter.ai`.
 The command text holds only the key file path, so the key value appears in no `sbx` argument, log, status line, or process list.
@@ -1703,7 +1703,7 @@ The key file path must be absolute, because the command runs in the sbx daemon r
 A launch with an `or:` model refuses, before any endpoint, clone, or task record exists, when any of these holds:
 
 - The worker is not a task worker on the claude harness with `config/worker-sandbox` set to `sbx`.
-- The key file is missing, a symlink, or empty, or OpenRouter rejects the key.
+- The key file is missing, a symlink, or empty, its path is not absolute, or OpenRouter rejects the key.
 - An id is `:free`, because free models cannot meet the zero-retention requirement, or an id is not a plain `vendor/model`.
 - The alias has no line in `config/openrouter-models.list`.
 - No id of the chain answers a 1-token request to `/api/v1/chat/completions` that demands a zero-retention endpoint (`provider.zdr` true and `provider.data_collection` `deny`).

@@ -25,8 +25,8 @@
 #   FM_OPENROUTER_API_URL    the host-side API base (default
 #                            https://openrouter.ai/api)
 #   FM_OPENROUTER_PROBE_TIMEOUT   seconds one probe is given (default 30)
-# This tree never changes the global sbx policy and never passes a host secret
-# other than the OpenRouter key.
+# This tree never changes the global sbx policy and never passes the key's
+# value to any sbx argument; the proxy reads it on demand from the key file.
 
 FM_OPENROUTER_PREFIX='or:'
 FM_OPENROUTER_VM_URL=https://openrouter.ai/api

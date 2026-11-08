@@ -1507,7 +1507,8 @@ The file holds one line.
 | `sbx [cpus=N] [memory=Ng] [allow=HOSTS] [nm=VERSION] [verify=app]` | Claude ship and scout workers run in one `sbx` microVM each. |
 
 `cpus` is 1 to 64 and defaults to 4, and `memory` is a whole number of gigabytes and defaults to `4g`.
-`allow` is a comma-separated list of further host names that every sandbox of this home may reach, and it is added to each sandbox's own network policy, never to the global one.
+`allow` is a comma-separated list of further host names that every sandbox of this home may reach, each with an optional `:PORT` suffix that narrows the entry to that one port; a bare host name opens every port of that host.
+It is added to each sandbox's own network policy, never to the global one.
 `nm` pins the no-mistakes version a sandboxed validation ship may use, such as `nm=v1.79.0`, and a host binary of any other version refuses the launch.
 Without `nm`, the host's own no-mistakes version is used, and the copy installed in the VM must report that same version or the launch refuses.
 
@@ -1551,12 +1552,14 @@ Teardown repeats the fetch-back and refuses while the clone holds commits or unc
 
 ### Network and credentials
 
-The global `sbx` policy stays deny-all and Firstmate never changes it.
-A sandbox gets no network access beyond the hosts added to its own policy: GitHub's `github.com` and `api.github.com` when it has a GitHub token or is a no-mistakes ship, plus the hosts in `allow=`.
+The global `sbx` policy stays deny-all and Firstmate never changes it; that global rule is the floor under every sandbox.
+A sandbox gets no network access beyond the entries added to its own policy: GitHub's `github.com:443` and `api.github.com:443`, pinned to the TLS port, when it has a GitHub token or is a no-mistakes ship, plus the hosts in `allow=`.
+The profile allows are pinned to ports the same way: the local model's `localhost:8080` and the OpenRouter profile's `openrouter.ai:443`.
+A blanket `**:PORT` deny entry and HTTP method/path minimization for GitHub were evaluated and are not shipped: their enforcement is not proven on the host, and the port-pinned allows already leave every other port at the global deny-all floor.
 Claude's own sign-in is the one-time account step below, and the host's Claude credentials are never copied into a VM.
 
 An optional GitHub token lives in `config/sbx-github-token` (or `FM_SBX_GH_TOKEN` in the launching environment) and should be fine-grained to the repositories the sandboxed work needs.
-The wrapper stores it as a per-sandbox `sbx` secret, so the VM sees only a placeholder value and the sandbox proxy injects the real token on the allowed GitHub hosts.
+The wrapper stores it as a per-sandbox `sbx` secret, so the VM sees only a placeholder value and the sandbox proxy injects the real token on the sandbox's allowed GitHub host:port pairs.
 The token is never an argument, a mount, or an environment variable of the worker.
 A symlinked token file is never read.
 
@@ -1726,7 +1729,7 @@ The sandbox gets this environment on top of the usual allowlist, built by `fm_op
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1`. |
 
 No `--effort` is passed, and the claude `--model` flag carries the bare id so it matches the environment.
-The network rules and the OpenRouter secret are per sandbox and go away with it: `sbx policy allow network --sandbox <name> openrouter.ai`, `sbx policy deny network --sandbox <name> api.anthropic.com`, and `sbx secret rm anthropic --sandbox <name>`, so the captain's Claude sign-in never reaches the sandbox.
+The network rules and the OpenRouter secret are per sandbox and go away with it: `sbx policy allow network --sandbox <name> openrouter.ai:443`, `sbx policy deny network --sandbox <name> api.anthropic.com`, and `sbx secret rm anthropic --sandbox <name>`, so the captain's Claude sign-in never reaches the sandbox.
 Before the worker starts, the wrapper checks from inside the VM that `https://openrouter.ai/api/v1/key` answers 200 to a request carrying the placeholder, which proves the proxy substitutes the key (`/v1/models` is public and answers a wrong token too), and that `https://api.anthropic.com/v1/models` does not.
 A failed check stops the launch and removes the sandbox.
 The placeholder is not a secret, and a request that reaches another host carrying it is not substituted; OpenRouter refuses a wrong bearer token with a 401.
@@ -1739,6 +1742,7 @@ In a [dispatch profile](#crew-dispatch-profiles-configcrew-dispatchjson) a Claud
 ### Lifecycle
 
 `bin/fm-sbx-run.sh` (reached as `bin/claude-sbx`, so the pane's foreground command classifies as a Claude launch) runs as a child of the pane shell, and its exit, hangup, terminate, and interrupt traps remove the sandbox, stop the relay after a final drain, and bring the clone's commits back.
+Before removal, the trap captures the sandbox's host-side network policy log (`sbx policy log --json`) into `data/<id>/sbx-policy-log.jsonl` as evidence the worker cannot edit from inside the VM; an empty or unavailable log writes nothing and never fails the run.
 A relaunch follows the task's recorded `sandbox=` value, not the current file, so a config edit never moves a live task between the two worlds, and it removes the old sandbox and starts a fresh one on the same clone.
 Teardown follows the same record, removes only a sandbox whose name this tree would have created, and keeps the never-discard-unlanded-work order described above.
 

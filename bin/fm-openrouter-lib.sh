@@ -14,9 +14,10 @@
 # bin/fm-sbx-run.sh applies the environment and the per-sandbox network rules.
 #
 # The key is spend-limited and is read on the host only, from the key file. It
-# is sent to curl on stdin (never in an argument), goes into the sandbox only
-# as the worker's ANTHROPIC_AUTH_TOKEN, and is never printed, logged or
-# recorded.
+# is sent to curl on stdin (never in an argument), never enters the sandbox,
+# and is never printed, logged or recorded. The sandbox holds only
+# FM_OPENROUTER_AUTH_PLACEHOLDER, and a sandbox-scoped sbx custom secret lets
+# the proxy substitute the real key on requests to openrouter.ai.
 #
 # Overrides, for tests only:
 #   FM_OPENROUTER_KEY_FILE   the key file (default
@@ -24,13 +25,18 @@
 #   FM_OPENROUTER_API_URL    the host-side API base (default
 #                            https://openrouter.ai/api)
 #   FM_OPENROUTER_PROBE_TIMEOUT   seconds one probe is given (default 30)
-# This tree never changes the global sbx policy and never passes a host secret
-# other than the OpenRouter key.
+# This tree never changes the global sbx policy and never passes the key's
+# value to any sbx argument; the proxy reads it on demand from the key file.
 
 FM_OPENROUTER_PREFIX='or:'
 FM_OPENROUTER_VM_URL=https://openrouter.ai/api
 # shellcheck disable=SC2034 # Read by the sourcing script (fm-sbx-run.sh).
 FM_OPENROUTER_POLICY_HOST=openrouter.ai
+# The value the worker's ANTHROPIC_AUTH_TOKEN holds inside the sandbox. It is
+# not a secret: the sbx proxy swaps it for the real key only on requests to
+# FM_OPENROUTER_POLICY_HOST, and OpenRouter refuses it like any wrong key.
+# shellcheck disable=SC2034 # Read by the sourcing script (fm-sbx-run.sh).
+FM_OPENROUTER_AUTH_PLACEHOLDER='sk-or-placeholder-firstmate'
 # The Anthropic API stays closed to an OpenRouter sandbox, so the sbx proxy can
 # never attach the captain's sign-in to a request from it.
 # shellcheck disable=SC2034 # Read by the sourcing script (fm-sbx-run.sh).
@@ -200,9 +206,10 @@ fm_openrouter_resolve() {
 
 # fm_openrouter_env <model-id>
 # The environment of an OpenRouter worker, one KEY=VALUE per line, without the
-# key (the wrapper adds ANTHROPIC_AUTH_TOKEN itself). ANTHROPIC_API_KEY is set
-# empty so Claude Code uses the bearer token. Every model tier maps to the one
-# model, and nothing but OpenRouter is contacted by the worker's own runtime.
+# token (the wrapper adds the placeholder as ANTHROPIC_AUTH_TOKEN itself).
+# ANTHROPIC_API_KEY is set empty so Claude Code uses the bearer token. Every
+# model tier maps to the one model, and nothing but OpenRouter is contacted by
+# the worker's own runtime.
 fm_openrouter_env() {
   local m=$1
   printf '%s\n' \

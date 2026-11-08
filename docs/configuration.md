@@ -1692,14 +1692,18 @@ An id with a slash is a direct model id and an id without one is an alias.
 
 The spend-limited worker key lives in `~/.config/firstmate/openrouter-worker-key` (`FM_OPENROUTER_KEY_FILE` overrides it, for tests).
 It must be a regular file, not a symlink, and is read on the host only.
-The key is sent to `curl` on stdin so it is never in a host argument list, and it enters the sandbox only as the worker's `ANTHROPIC_AUTH_TOKEN`.
-It is never printed, logged, or written into the task record, status, brief, or any test output.
-`sbx create` receives it as an `-e` argument, so it is briefly visible in the host process list to the same user.
+The key is sent to `curl` on stdin so it is never in a host argument list, it never enters the sandbox, and it is never printed, logged, or written into the task record, status, brief, or any test output.
+The sandbox instead holds the fixed placeholder `sk-or-placeholder-firstmate` as `ANTHROPIC_AUTH_TOKEN`, passed to `sbx create`, so the value exists in the VM from its first moment.
+Once the sandbox exists, the wrapper registers a sandbox-scoped secret with `sbx secret set-custom --sandbox <name> --host openrouter.ai --placeholder sk-or-placeholder-firstmate --command "tr -d '[:space:]' <'<absolute key file path>'"`, and a launch whose secret cannot be stored is removed.
+The command strips the file's trailing whitespace and quotes its path, so a key file that ends in a newline or a path containing a space still yields the exact key.
+The sbx proxy runs that command and substitutes the key for the placeholder on requests to `openrouter.ai`.
+The command text holds only the key file path, so the key value appears in no `sbx` argument, log, status line, or process list.
+The key file path must be absolute, because the command runs in the sbx daemon rather than in the wrapper's working directory.
 
 A launch with an `or:` model refuses, before any endpoint, clone, or task record exists, when any of these holds:
 
 - The worker is not a task worker on the claude harness with `config/worker-sandbox` set to `sbx`.
-- The key file is missing, a symlink, or empty, or OpenRouter rejects the key.
+- The key file is missing, a symlink, or empty, its path is not absolute, or OpenRouter rejects the key.
 - An id is `:free`, because free models cannot meet the zero-retention requirement, or an id is not a plain `vendor/model`.
 - The alias has no line in `config/openrouter-models.list`.
 - No id of the chain answers a 1-token request to `/api/v1/chat/completions` that demands a zero-retention endpoint (`provider.zdr` true and `provider.data_collection` `deny`).
@@ -1709,12 +1713,12 @@ A 402, 429, 5xx, no zero-retention endpoint, or a timeout skips to the next id; 
 There is no fallback to Claude: an unavailable OpenRouter profile refuses.
 The task record carries `model=or:<resolved id>` and, for an alias, `model_alias=<alias>`, and a relaunch keeps both.
 
-The sandbox gets this environment on top of the usual allowlist, built by `fm_openrouter_env` in `bin/fm-openrouter-lib.sh` plus the token:
+The sandbox gets this environment on top of the usual allowlist, built by `fm_openrouter_env` in `bin/fm-openrouter-lib.sh` with the wrapper's `ANTHROPIC_AUTH_TOKEN` placeholder:
 
 | Variable | Value |
 | --- | --- |
 | `ANTHROPIC_BASE_URL` | `https://openrouter.ai/api`. |
-| `ANTHROPIC_AUTH_TOKEN` | The worker key. |
+| `ANTHROPIC_AUTH_TOKEN` | The placeholder `sk-or-placeholder-firstmate`; the sbx proxy substitutes the real key on requests to `openrouter.ai`. |
 | `ANTHROPIC_API_KEY` | Empty, so Claude Code uses the bearer token. |
 | `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL` | The resolved model id, so every tier, the background model, and subagents use the one model. |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `200000`. |
@@ -1722,8 +1726,10 @@ The sandbox gets this environment on top of the usual allowlist, built by `fm_op
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1`. |
 
 No `--effort` is passed, and the claude `--model` flag carries the bare id so it matches the environment.
-The network rules are per sandbox and go away with it: `sbx policy allow network --sandbox <name> openrouter.ai`, `sbx policy deny network --sandbox <name> api.anthropic.com`, and `sbx secret rm anthropic --sandbox <name>`, so the captain's Claude sign-in never reaches the sandbox.
-Before the worker starts, the wrapper checks from inside the VM that `https://openrouter.ai/api/v1/models` answers and that `https://api.anthropic.com/v1/models` does not, and stops the launch and removes the sandbox when either check fails.
+The network rules and the OpenRouter secret are per sandbox and go away with it: `sbx policy allow network --sandbox <name> openrouter.ai`, `sbx policy deny network --sandbox <name> api.anthropic.com`, and `sbx secret rm anthropic --sandbox <name>`, so the captain's Claude sign-in never reaches the sandbox.
+Before the worker starts, the wrapper checks from inside the VM that `https://openrouter.ai/api/v1/key` answers 200 to a request carrying the placeholder, which proves the proxy substitutes the key (`/v1/models` is public and answers a wrong token too), and that `https://api.anthropic.com/v1/models` does not.
+A failed check stops the launch and removes the sandbox.
+The placeholder is not a secret, and a request that reaches another host carrying it is not substituted; OpenRouter refuses a wrong bearer token with a 401.
 
 The wrapper reads the key's lifetime spend from `/api/v1/key` before the worker starts and again when it exits, and appends `at= model= before= after= cost_usd=` to `data/<id>/openrouter-usage.log`.
 A reading that cannot be made writes nothing, and with parallel workers each line also includes the other workers' spend over the same period.
@@ -1753,7 +1759,7 @@ These steps are the owner's and are not automated.
 
 ### Failures
 
-A missing `sbx` CLI, a stopped daemon, a failed create, a version mismatch, an unreachable local model server, or a failed in-VM setup step is a blocker that names the missing requirement; no spawn silently falls back to running on the host.
+A missing `sbx` CLI, a stopped daemon, a failed create, a version mismatch, a secret that cannot be stored, an unreachable local model server, or a failed in-VM setup step is a blocker that names the missing requirement; no spawn silently falls back to running on the host.
 
 ## Codex permission mode (config/codex-permission-mode)
 

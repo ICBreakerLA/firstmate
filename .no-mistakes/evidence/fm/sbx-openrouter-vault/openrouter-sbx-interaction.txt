@@ -1,0 +1,28 @@
+== recorded sbx argv for the OpenRouter launch ==
+daemon status
+ls -q
+create --name fm-sbx-0123abcd-t1-9999 --pull missing --cpus 4 --memory 4g -e CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false -e CLAUDE_CODE_SEND_FEEDBACK=0 -e FM_TASK_INBOX=/home/lionel/firstmate/state/sbx-openrouter-vault.inbox -e COMPACT_ADVISER_DISABLE=1 -e DISABLE_AUTOUPDATER=1 -e FM_SBX_CHANNEL=/tmp/fm-sbx-run.c2Lu11/or-evidence/home/state/t1.sbx -e ANTHROPIC_BASE_URL=https://openrouter.ai/api -e ANTHROPIC_API_KEY= -e ANTHROPIC_MODEL=qwen/qwen3.8-27b -e ANTHROPIC_DEFAULT_OPUS_MODEL=qwen/qwen3.8-27b -e ANTHROPIC_DEFAULT_SONNET_MODEL=qwen/qwen3.8-27b -e ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen/qwen3.8-27b -e ANTHROPIC_SMALL_FAST_MODEL=qwen/qwen3.8-27b -e CLAUDE_CODE_SUBAGENT_MODEL=qwen/qwen3.8-27b -e CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000 -e CLAUDE_CODE_ATTRIBUTION_HEADER=0 -e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 -e ANTHROPIC_AUTH_TOKEN=sk-or-placeholder-firstmate claude /tmp/fm-sbx-run.c2Lu11/or-evidence/home/state/t1.sbx-clone /tmp/fm-sbx-run.c2Lu11/or-evidence/home/data/t1 /tmp/fm-sbx-run.c2Lu11/or-evidence/home/state/t1.sbx /tmp/fm-sbx-run.c2Lu11/or-evidence/home/state/t1.inbox /tmp/fm-sbx-run.c2Lu11/or-evidence/home/.agents/skills:ro
+exec -u root fm-sbx-0123abcd-t1-9999 rm -f /tmp/fm-sbx-run.c2Lu11/or-evidence/home/state/CLAUDE.md
+exec -u root fm-sbx-0123abcd-t1-9999 sh -c mkdir -p "$1" "$2" && ln -sfn "$3" "$4" && ln -sfn "$5" "$6" sh /tmp/fm-sbx-run.c2Lu11/or-evidence/home/state /tmp/fm-sbx-run.c2Lu11/or-evidence t1.sbx/status /tmp/fm-sbx-run.c2Lu11/or-evidence/home/state/t1.status /tmp/fm-sbx-run.c2Lu11/or-evidence/home/state/t1.sbx-clone /tmp/fm-sbx-run.c2Lu11/or-evidence/wt
+secret rm anthropic --sandbox fm-sbx-0123abcd-t1-9999 -f
+secret set-custom --sandbox fm-sbx-0123abcd-t1-9999 --host openrouter.ai --placeholder sk-or-placeholder-firstmate --command tr -d '[:space:]' </tmp/fm-sbx-run.c2Lu11/or-evidence/or-key
+policy deny network --sandbox fm-sbx-0123abcd-t1-9999 api.anthropic.com
+policy allow network --sandbox fm-sbx-0123abcd-t1-9999 openrouter.ai
+exec fm-sbx-0123abcd-t1-9999 curl -fsS --max-time 10 -H Authorization: Bearer sk-or-placeholder-firstmate https://openrouter.ai/api/v1/key
+exec fm-sbx-0123abcd-t1-9999 curl -fsS --max-time 10 https://api.anthropic.com/v1/models
+run --name fm-sbx-0123abcd-t1-9999 -- claude
+ENV-AT-RUN: 0
+ls -q
+rm --force fm-sbx-0123abcd-t1-9999
+ls -q
+
+== placeholder passed to set-custom ==
+sk-or-placeholder-firstmate
+== custom-secret command passed to sbx (host key path only) ==
+tr -d '[:space:]' </tmp/fm-sbx-run.c2Lu11/or-evidence/or-key
+== value the secret command produces for the fake daemon ==
+sk-or-v1-FAKE-WRAPPER-KEY
+== does any sbx argument contain the key value? ==
+NO
+== key in the environment claude runs under (VM env at run)? ==
+ENV-AT-RUN: 0

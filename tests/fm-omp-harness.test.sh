@@ -29,7 +29,8 @@
 #   6. The turn-end guard extension compels one continuation on exit 2 and
 #      stands down when the payload already carries stop_hook_active.
 #   7. The watch extension arms through fm_watch_arm_omp and delivers an
-#      actionable close as one follow-up.
+#      actionable close as one follow-up; an explicit repair revives a
+#      generation a shutdown left stopped with no later session_start.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -681,6 +682,101 @@ EOF
   pass ".omp watch extension: fm_watch_arm_omp arms once, repeats as a no-op, and delivers an actionable close as one follow-up"
 }
 
+# omp emits session_shutdown for ordinary replacement and terminal quit alike. A
+# shutdown with no later session_start in the same process leaves the bound
+# generation stopped, and before this case the repair tool answered "omp session
+# is shutting down" forever while the session was alive. The explicit tool and
+# command must each revive a fresh generation and arm, the pending replacement
+# handoff must replay into it, and a stopped generation must still never arm on
+# its own.
+test_watch_extension_recovers_from_a_shutdown_without_session_start() {
+  local repo home log out status
+  repo="$TMP_ROOT/watch-revive/repo"; home="$TMP_ROOT/watch-revive/home"; log="$TMP_ROOT/watch-revive/arm.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  # The first cycle closes with one actionable reason; its successor stays up.
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+if [ ! -e "${FM_HOME:?}/state/.first-cycle-fired" ]; then
+  : > "$FM_HOME/state/.first-cycle-fired"
+  printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-1\n' "$$"
+  sleep 1
+  printf 'signal: omp-e2e done\n'
+  exit 0
+fi
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-%s\n' "$$" "$$"
+sleep 30
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
+const home = process.env.FM_HOME;
+writeFileSync(`${home}/state/.lock`, `${process.pid}\n`);
+const handoff = `${home}/state/extensions/omp-primary-watch/session-replacement-actionable.json`;
+const handlers = new Map(); let tool = null; let command = null; const sent = []; const notices = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand(n, o) { if (n === "fm-watch-arm-omp") command = o.handler; },
+  registerTool(t) { tool = t; },
+  sendUserMessage(m, o) { sent.push({ m, o }); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const ctx = { ui: { notify(m, t) { notices.push({ m, t }); } } };
+const waitFor = async (cond, label) => {
+  for (let i = 0; i < 100; i += 1) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(label);
+};
+const armRows = () => existsSync(process.env.FM_ARM_LOG)
+  ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").filter(Boolean)
+  : [];
+
+const first = await tool.execute();
+if (!/^watcher: started omp extension arm child [0-9]+;/.test(first.content[0].text)) throw new Error(`the first explicit arm did not start a watcher: ${first.content[0].text}`);
+await waitFor(() => sent.length === 1, `the first cycle's actionable close was not delivered: ${JSON.stringify(sent)}`);
+if (!sent[0].m.includes("signal: omp-e2e done")) throw new Error(`the first wake lost its reason: ${sent[0].m}`);
+
+// A shutdown with no later session_start leaves the bound generation stopped.
+await handlers.get("session_shutdown")({}, {});
+if (!existsSync(handoff)) throw new Error("an unconsumed wake did not ride the replacement handoff");
+const stoppedRows = armRows().length;
+await new Promise((r) => setTimeout(r, 400));
+if (armRows().length !== stoppedRows) throw new Error(`a stopped generation armed on its own: ${armRows().join(" | ")}`);
+
+const revived = await tool.execute();
+if (revived.content[0].text.includes("omp session is shutting down")) throw new Error(`the repair tool stayed wedged after shutdown-without-start: ${revived.content[0].text}`);
+if (!/^watcher: started omp extension arm child [0-9]+;/.test(revived.content[0].text)) throw new Error(`the revived generation did not arm: ${revived.content[0].text}`);
+await waitFor(() => sent.length === 2, `the revived generation did not replay the pending wake: ${JSON.stringify(sent)}`);
+if (!sent[1].m.includes("signal: omp-e2e done")) throw new Error(`the replayed wake lost its reason: ${sent[1].m}`);
+
+await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: sent[1].m }, {});
+if (existsSync(handoff)) throw new Error("a consumed replay still rode the replacement handoff");
+
+// The command is the other explicit repair path.
+await handlers.get("session_shutdown")({}, {});
+await command("", ctx);
+if (notices.length !== 1 || notices[0].t !== "info" || notices[0].m.includes("omp session is shutting down") || !/^watcher: started omp extension arm child [0-9]+;/.test(notices[0].m)) {
+  throw new Error(`the command did not revive the stopped generation: ${JSON.stringify(notices)}`);
+}
+const expectedRows = stoppedRows + 2;
+await waitFor(() => armRows().length === expectedRows, `expected ${expectedRows} arm launches, saw ${armRows().join(" | ")}`);
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension shutdown revival: $out"
+  [ -z "$out" ] || fail "omp watch extension shutdown revival test printed output: $out"
+  pass ".omp watch extension: an explicit tool or command revives supervision after a shutdown with no session start"
+}
+
 # An opted-in home spawns the supervision host in the arm's place; its streamed
 # status line drives readiness and the handling handoff, and a handed-back
 # wake is delivered with every host line and the away note.
@@ -977,6 +1073,7 @@ test_control_composer_and_model_tables
 test_ownership_proof_is_omp_keyed
 test_turnend_guard_extension_compels_one_continuation
 test_watch_extension_arms_and_delivers
+test_watch_extension_recovers_from_a_shutdown_without_session_start
 test_watch_extension_runs_the_supervision_host
 test_watch_extension_runs_the_supervision_host quiet
 test_watch_extension_keeps_the_arm_without_the_file_or_with_off

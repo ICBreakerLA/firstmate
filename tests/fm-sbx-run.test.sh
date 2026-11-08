@@ -56,6 +56,15 @@ secret)
     printf '%s\\n' "\${10}" >"$W/or-command"
     if [ -f "$W/secret.empty" ]; then : >"$W/or-secret"; else sh -c "\${10}" >"$W/or-secret"; fi
   elif [ "\$6" = --command ]; then sh -c "\$7" >"$W/secret.stdin"; else cat >"$W/secret.stdin"; fi ;;
+policy)
+  case "\$2" in
+  allow|deny) printf '%s\\n' "\$*" >>"$W/policy.log" ;;
+  log)
+    [ ! -f "$W/policy.down" ] || exit 1
+    if [ "\$4" = --sandbox ] && [ -f "$W/policy.nosandbox" ]; then exit 1; fi
+    cat "$W/policy.log" 2>/dev/null
+    ;;
+  esac ;;
 exec)
   case "\$*" in
   *"api.anthropic.com"*) [ -f "$W/vm.anthropic" ] || exit 22 ;;
@@ -176,10 +185,19 @@ test_the_token_enters_only_through_the_sandbox_secret_store() {
   assert_contains "$(log)" "secret set github --sandbox $NAME" "the secret is scoped to this sandbox"
   assert_not_contains "$(log)" "$SECRET" "the token is never in any sbx argument"
   assert_contains "$(log)" "ENV-AT-RUN: 0" "the token is never in the environment claude runs under"
-  assert_contains "$(log)" "policy allow network --sandbox $NAME github.com,api.github.com,example.org" "GitHub and the extra host are allowed for this sandbox only"
+  assert_contains "$(log)" "policy allow network --sandbox $NAME github.com:443,api.github.com:443,example.org" "GitHub's TLS port and the extra host are allowed for this sandbox only"
   assert_not_contains "$create" "$SECRET" "the token is not in the create command"
   assert_not_contains "$(log)" "policy allow network github" "the global policy is never touched"
   pass "a GitHub token is stored as a per-sandbox secret and never appears in argv or the environment"
+}
+
+test_a_port_pinned_allow_entry_is_accepted() {
+  new_world pinpinned
+  printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
+  wrap --kind scout --allow example.org:8443 -- claude >/dev/null 2>&1
+  assert_contains "$(log)" "policy allow network --sandbox $NAME github.com:443,api.github.com:443,example.org:8443" \
+    "a host:PORT entry passes through and opens only that port for that host"
+  pass "an --allow entry pinned to a port is accepted and reaches sbx unchanged"
 }
 
 test_no_token_means_no_secret_and_no_network_rule() {
@@ -210,7 +228,7 @@ test_nm_ship_gets_the_pipeline_environment_and_network() {
   assert_contains "$create" "-e NO_MISTAKES_NO_UPDATE_CHECK=1" "the pipeline does not check for updates"
   assert_contains "$(log)" "cp $FAKE/no-mistakes $NAME:/tmp/fm-no-mistakes" "the host binary is copied into the VM"
   assert_contains "$(log)" "install -m 755 /tmp/fm-no-mistakes /usr/local/bin/no-mistakes" "it is installed as root"
-  assert_contains "$(log)" "policy allow network --sandbox $NAME github.com,api.github.com" "GitHub is allowed for this sandbox"
+  assert_contains "$(log)" "policy allow network --sandbox $NAME github.com:443,api.github.com:443" "GitHub's TLS port is allowed for this sandbox"
   assert_contains "$(log)" "exec -w $CLONE -e NM_HOME=/home/agent/nm $NAME no-mistakes axi sync" "the pipeline is synced to the clone before the sandbox is removed"
   pass "a no-mistakes ship gets the in-VM pipeline, its network, and a final sync"
 }
@@ -275,7 +293,7 @@ test_a_fork_ship_swaps_the_secret_and_points_origin_at_the_fork() {
   assert_not_contains "$(log)" "$FORK_SECRET" "the fork token is never in any sbx argument"
   assert_not_contains "$(log)" "$SECRET" "the home's own token is not used for the fork"
   assert_contains "$(log)" "ENV-AT-RUN: 0" "neither token is in the environment claude runs under"
-  assert_contains "$(log)" "policy allow network --sandbox $NAME github.com,api.github.com" "GitHub is allowed for this sandbox only"
+  assert_contains "$(log)" "policy allow network --sandbox $NAME github.com:443,api.github.com:443" "GitHub's TLS port is allowed for this sandbox only"
   assert_equals "https://github.com/ICBreakerLA/firstmate" "$(git -C "$CLONE" remote get-url origin)" "the pipeline pushes to the fork"
   "$BRIDGE" check "$WT" "$CLONE" >/dev/null 2>&1 || true
   assert_equals "https://github.com/ICBreakerLA/firstmate" "$(git -C "$CLONE" remote get-url origin)" "a host read of the clone keeps the fork origin"
@@ -356,7 +374,7 @@ test_nm_ship_gets_the_pinned_host_lint_tools() {
   assert_contains "$(log)" "install -m 755 /tmp/fm-shellcheck /usr/local/bin/shellcheck" "it is installed on the VM's PATH"
   assert_contains "$(log)" "cp $FAKE/actionlint $NAME:/tmp/fm-actionlint" "the host actionlint is copied in"
   assert_contains "$(log)" "install -m 755 /tmp/fm-actionlint /usr/local/bin/actionlint" "it is installed on the VM's PATH"
-  assert_not_contains "$(log)" "policy allow network --sandbox $NAME github.com,api.github.com,objects" "no network rule is added for the tools"
+  assert_not_contains "$(log)" "policy allow network --sandbox $NAME github.com:443,api.github.com:443,objects" "no network rule is added for the tools"
   assert_not_contains "$out" "the host shellcheck" "nothing is reported about ShellCheck when it is in place"
   assert_not_contains "$out" "the host actionlint" "nothing is reported about actionlint when it is in place"
   : >"$LOG"
@@ -498,6 +516,12 @@ test_refusals_happen_before_any_sandbox_exists() {
   expect_code 2 "$rc" "a malformed memory must refuse"
   out=$(wrap --kind scout --allow 'a b;rm' -- claude 2>&1); rc=$?
   expect_code 2 "$rc" "a hostile allow list must refuse"
+  out=$(wrap --kind scout --allow 'example.org:' -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "an empty port must refuse"
+  out=$(wrap --kind scout --allow ':8443' -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "an empty host must refuse"
+  out=$(wrap --kind scout --allow 'a:b:c' -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "a double-colon entry must refuse"
   out=$(wrap --kind scout 2>&1); rc=$?
   expect_code 2 "$rc" "a missing claude command must refuse"
   out=$(wrap --kind other -- claude 2>&1); rc=$?
@@ -832,7 +856,7 @@ test_openrouter_gets_its_environment_scoped_rules_and_checks() {
   cmp -s "$W/or-key.expect" "$W/or-secret" || fail "the secret's command reads the exact key on the host, with no trailing whitespace"
   assert_not_contains "$(log)" "$OR_KEY" "the key is never in any sbx argument"
   assert_contains "$(log)" "ENV-AT-RUN: 0" "the key is never in the environment claude runs under"
-  assert_contains "$(log)" "policy allow network --sandbox $NAME openrouter.ai" "OpenRouter is allowed for this sandbox only"
+  assert_contains "$(log)" "policy allow network --sandbox $NAME openrouter.ai:443" "OpenRouter's TLS port is allowed for this sandbox only"
   assert_not_contains "$(log)" "policy allow network openrouter.ai" "no global allow"
   assert_contains "$(log)" "policy deny network --sandbox $NAME api.anthropic.com" "the Anthropic API is denied for this sandbox only"
   assert_not_contains "$(log)" "policy deny network api.anthropic.com" "no global deny"
@@ -962,10 +986,39 @@ test_openrouter_logs_the_tasks_cost_without_the_key() {
   pass "the task's OpenRouter cost is logged without the key, and an unreadable usage writes nothing"
 }
 
+test_the_policy_log_is_captured_host_side_on_exit() {
+  new_world pollog
+  printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
+  wrap --kind scout --allow example.org -- claude >/dev/null 2>&1
+  assert_grep "policy allow network --sandbox $NAME github.com:443,api.github.com:443,example.org" \
+    "$DATA/t1/sbx-policy-log.jsonl" "the sandbox's host-side network log is captured into the task's data"
+  new_world pollog-combined
+  printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
+  : >"$W/policy.nosandbox"
+  wrap --kind scout --allow example.org -- claude >/dev/null 2>&1
+  assert_grep "policy allow network --sandbox $NAME github.com:443,api.github.com:443,example.org" \
+    "$DATA/t1/sbx-policy-log.jsonl" "a host that only prints the combined log is filtered by sandbox name"
+  pass "the sandbox's host-side network policy log is captured to data/<id>/sbx-policy-log.jsonl on exit"
+}
+
+test_an_unavailable_policy_log_writes_nothing() {
+  local out rc
+  new_world polnone
+  printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
+  : >"$W/policy.down"
+  out=$(wrap --kind scout -- claude 2>&1); rc=$?
+  expect_code 0 "$rc" "a log sbx cannot print must not stop the run: $out"
+  assert_contains "$(log)" "run --name $NAME" "the worker ran normally"
+  assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed"
+  assert_absent "$DATA/t1/sbx-policy-log.jsonl" "an unavailable log writes no file"
+  pass "an unavailable policy log writes nothing and never fails the run"
+}
+
 test_creates_with_minimal_mounts_and_cleans_up
 test_environment_is_an_explicit_allowlist
 test_the_commit_identity_reaches_the_sandbox_environment
 test_the_token_enters_only_through_the_sandbox_secret_store
+test_a_port_pinned_allow_entry_is_accepted
 test_no_token_means_no_secret_and_no_network_rule
 test_a_symlinked_token_file_is_ignored
 test_nm_ship_gets_the_pipeline_environment_and_network
@@ -1009,5 +1062,7 @@ test_openrouter_secret_failure_removes_the_sandbox
 test_openrouter_unsubstituted_key_stops_the_launch
 test_openrouter_secret_reads_a_key_file_with_spaces
 test_openrouter_logs_the_tasks_cost_without_the_key
+test_the_policy_log_is_captured_host_side_on_exit
+test_an_unavailable_policy_log_writes_nothing
 
 echo "# all fm-sbx-run tests passed"

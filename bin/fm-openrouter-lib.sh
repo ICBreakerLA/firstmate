@@ -30,8 +30,16 @@
 
 FM_OPENROUTER_PREFIX='or:'
 FM_OPENROUTER_VM_URL=https://openrouter.ai/api
+# The host the proxy secret matches is the bare host name: the proxy swaps the
+# placeholder on requests to it, and a port suffix would name the host sbx's
+# policy rules take, not the proxy's.
 # shellcheck disable=SC2034 # Read by the sourcing script (fm-sbx-run.sh).
 FM_OPENROUTER_POLICY_HOST=openrouter.ai
+# Pinned to the TLS port: the profile needs only HTTPS from OpenRouter, so
+# the per-sandbox allow opens just that port and sbx's global deny-all stays
+# the floor for every other port.
+# shellcheck disable=SC2034 # Read by the sourcing script (fm-sbx-run.sh).
+FM_OPENROUTER_ALLOW_HOST=openrouter.ai:443
 # The value the worker's ANTHROPIC_AUTH_TOKEN holds inside the sandbox. It is
 # not a secret: the sbx proxy swaps it for the real key only on requests to
 # FM_OPENROUTER_POLICY_HOST, and OpenRouter refuses it like any wrong key.

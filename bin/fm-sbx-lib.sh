@@ -5,9 +5,10 @@
 #
 # Usage: . bin/fm-sbx-lib.sh   (no FM_* setup required)
 #
-# This file owns the config/worker-sandbox value grammar, the sandbox name
-# derivation, the availability and daemon preflight, and the idempotent
-# sandbox removal.
+# This file owns the config/worker-sandbox value grammar (including the shared
+# allow-list validator that bin/fm-sbx-run.sh's --allow argument uses), the
+# sandbox name derivation, the availability and daemon preflight, the
+# idempotent sandbox removal, and the host-side policy-log capture.
 # The operator-facing schema is docs/configuration.md "Worker sandbox".
 # bin/fm-sbx-run.sh owns the in-pane lifecycle, bin/fm-sbx-bridge.sh the
 # host-side clone and fetch-back bridge, and bin/fm-sbx-relay.sh the
@@ -18,8 +19,13 @@
 #   sbx [cpus=N] [memory=Ng] [allow=HOSTS] [nm=VERSION] [verify=app]
 #                            run Claude workers in an sbx microVM
 # cpus defaults to 4 (1-64) and memory to 4g (a whole number of gigabytes).
-# allow= is a comma-separated list of further host names every sandbox of this
-# home may reach, added per sandbox and never to the global sbx policy.
+# allow= is a comma-separated list of further hosts every sandbox of this home
+# may reach, added per sandbox and never to the global sbx policy.
+# Each entry is a host name, optionally suffixed with one colon and a numeric
+# port. A host:PORT entry opens only that port for that host; a bare host
+# opens every port sbx would open for it, so a fleet rule that a worker needs
+# only one port from should name host:PORT, and sbx's global deny-all stays
+# the floor for everything else.
 # nm=VERSION (for example v1.79.0) pins the no-mistakes version a sandboxed
 # validation ship may use, and a host binary of any other version refuses the
 # launch; without it the host's own version is used and only has to match the
@@ -39,6 +45,34 @@ FM_SBX_MEMORY=4g
 FM_SBX_ALLOW=
 FM_SBX_NM_PIN=
 FM_SBX_VERIFY=
+# The GitHub network rule a sandbox gets when it holds a GitHub token (or the
+# pipeline environment) is pinned to the TLS port, so the sandbox reaches
+# GitHub only where the pipeline works and the global deny-all stays the floor
+# for every other port.
+FM_SBX_GITHUB_ALLOW='github.com:443,api.github.com:443'
+
+# fm_sbx_valid_allow_list <list>
+# Returns 0 when <list> is a comma-separated allow list: every entry is a host
+# name (letters, digits, dot, dash, star), optionally suffixed with one colon
+# and a numeric port (host:PORT).
+# An empty list, an empty entry, an empty host, a host carrying a second
+# colon, and an empty or non-numeric port all return 1.
+fm_sbx_valid_allow_list() {
+  local list=${1:-} entry host port parts
+  case "$list" in '' | ,* | *, | *,,*) return 1 ;; esac
+  local IFS=,
+  read -ra parts <<<"$list"
+  for entry in "${parts[@]}"; do
+    case "$entry" in
+    *[!A-Za-z0-9.:*-]*) return 1 ;;
+    *:*)
+      host=${entry%:*} port=${entry##*:}
+      case "$host" in '' | *:* | *[!A-Za-z0-9.*-]*) return 1 ;; esac
+      case "$port" in '' | *[!0-9]*) return 1 ;; esac
+      ;;
+    esac
+  done
+}
 
 # fm_sbx_load_config <file>
 # Parse the file into FM_SBX_MODE, FM_SBX_CPUS, FM_SBX_MEMORY, FM_SBX_ALLOW,
@@ -79,12 +113,10 @@ fm_sbx_load_config() {
     cpus=[1-9] | cpus=[1-5][0-9] | cpus=6[0-4]) FM_SBX_CPUS=${tok#cpus=} ;;
     memory=[1-9]g | memory=[1-9][0-9]g | memory=[1-9][0-9][0-9]g) FM_SBX_MEMORY=${tok#memory=} ;;
     allow=?*)
-      case "${tok#allow=}" in
-      *[!A-Za-z0-9.,*-]* | ,* | *, | *,,*)
-        echo "error: config/worker-sandbox allow= takes comma-separated host names (letters, digits, dot, dash, star), got '${tok#allow=}'" >&2
+      fm_sbx_valid_allow_list "${tok#allow=}" || {
+        echo "error: config/worker-sandbox allow= takes comma-separated host names, each with an optional :PORT suffix, got '${tok#allow=}'" >&2
         return 1
-        ;;
-      esac
+      }
       FM_SBX_ALLOW=${tok#allow=}
       ;;
     nm=v[0-9]*.[0-9]*.[0-9]*)
@@ -384,3 +416,20 @@ fm_sbx_channel_dir() { printf '%s/%s.sbx\n' "$1" "$2"; }
 fm_sbx_clone_dir() { printf '%s/%s.sbx-clone\n' "$1" "$2"; }
 fm_sbx_relay_dir() { printf '%s/%s.sbx-relay\n' "$1" "$2"; }
 fm_sbx_verify_dir() { printf '%s/%s.sbx-verify\n' "$1" "$2"; }
+
+# fm_sbx_policy_log <name>
+# Print the host-side network policy log of one fleet sandbox as lines.
+# sbx keeps this log on the host, where the VM running inside the sandbox
+# cannot edit it, so it is evidence the worker cannot tamper with.
+# The per-sandbox form is preferred; a host whose sbx only prints a combined
+# log is filtered by name. Nonzero and no output when no log is available;
+# an empty log is not a failure, and callers write nothing for it.
+fm_sbx_policy_log() {
+  local name=$1 out
+  out=$(sbx policy log --json --sandbox "$name" 2>/dev/null) && [ -n "$out" ] && {
+    printf '%s\n' "$out"
+    return 0
+  }
+  out=$(sbx policy log --json 2>/dev/null) && [ -n "$out" ] || return 1
+  printf '%s\n' "$out" | grep -F -- "$name"
+}

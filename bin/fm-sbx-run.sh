@@ -60,15 +60,16 @@
 #                   The spend-limited key is read on the host from its key file
 #                   and never enters the VM. The VM gets a fixed placeholder as
 #                   ANTHROPIC_AUTH_TOKEN, and a sandbox-scoped custom secret
-#                   whose command is `cat <absolute key file path>` lets the sbx
-#                   proxy substitute the real key on requests to openrouter.ai;
-#                   a launch whose secret cannot be stored is removed. The
-#                   sandbox also loses its inherited anthropic secret, gets a
-#                   sandbox-scoped deny for api.anthropic.com and one
-#                   sandbox-scoped allow for openrouter.ai, and the launch
-#                   stops if the VM cannot reach OpenRouter with the placeholder
-#                   or can reach the Anthropic API. The key's spend before and
-#                   after the task is appended to data/<id>/openrouter-usage.log.
+#                   whose command is `tr -d '[:space:]' <quoted absolute key
+#                   file path>` lets the sbx proxy substitute the real key on
+#                   requests to openrouter.ai; a launch whose secret cannot be
+#                   stored is removed. The sandbox also loses its inherited
+#                   anthropic secret, gets a sandbox-scoped deny for
+#                   api.anthropic.com and one sandbox-scoped allow for
+#                   openrouter.ai, and the launch stops if the VM cannot
+#                   authenticate to OpenRouter with the placeholder or can
+#                   reach the Anthropic API. The key's spend before and after
+#                   the task is appended to data/<id>/openrouter-usage.log.
 #                   There is no concurrency lock.
 #   CLAUDE_ARGS     the claude command line, exactly as the launch built it.
 #
@@ -432,7 +433,7 @@ if [ -n "$OPENROUTER" ]; then
   # proxy needs this sandbox-scoped secret registered before the worker runs.
   # The command text names only the host key file, never the key's value.
   sbx secret set-custom --sandbox "$NAME" --host "$FM_OPENROUTER_POLICY_HOST" \
-    --placeholder "$FM_OPENROUTER_AUTH_PLACEHOLDER" --command "cat $OR_KEY_FILE" >/dev/null 2>&1 ||
+    --placeholder "$FM_OPENROUTER_AUTH_PLACEHOLDER" --command "tr -d '[:space:]' <$(printf '%q' "$OR_KEY_FILE")" >/dev/null 2>&1 ||
     die "could not store the OpenRouter secret for $NAME; no worker was started"
   sbx policy deny network --sandbox "$NAME" "$FM_OPENROUTER_ANTHROPIC_HOST" >/dev/null 2>&1 ||
     die "could not add the per-sandbox deny rule ($FM_OPENROUTER_ANTHROPIC_HOST) for $NAME"
@@ -440,8 +441,8 @@ if [ -n "$OPENROUTER" ]; then
     die "could not add the per-sandbox network rule ($FM_OPENROUTER_POLICY_HOST) for $NAME"
   # An authenticated request proves the proxy substitutes the real key for the
   # placeholder, not merely that the host is reachable.
-  sbx exec "$NAME" curl -fsS --max-time 10 -H "Authorization: Bearer $FM_OPENROUTER_AUTH_PLACEHOLDER" "$FM_OPENROUTER_VM_URL/v1/models" >/dev/null 2>&1 ||
-    die "$NAME cannot reach OpenRouter at $FM_OPENROUTER_VM_URL with the placeholder; no worker was started"
+  sbx exec "$NAME" curl -fsS --max-time 10 -H "Authorization: Bearer $FM_OPENROUTER_AUTH_PLACEHOLDER" "$FM_OPENROUTER_VM_URL/v1/key" >/dev/null 2>&1 ||
+    die "$NAME cannot authenticate to OpenRouter at $FM_OPENROUTER_VM_URL with the placeholder; no worker was started"
   ! sbx exec "$NAME" curl -fsS --max-time 10 "https://$FM_OPENROUTER_ANTHROPIC_HOST/v1/models" >/dev/null 2>&1 ||
     die "$NAME can still reach $FM_OPENROUTER_ANTHROPIC_HOST with a credential; no worker was started"
 fi

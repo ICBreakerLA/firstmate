@@ -52,7 +52,7 @@ secret)
     [ ! -f "$W/secret.fail" ] || exit 1
     printf '%s\\n' "\$8" >"$W/or-placeholder"
     printf '%s\\n' "\${10}" >"$W/or-command"
-    sh -c "\${10}" >"$W/or-secret"
+    if [ -f "$W/secret.empty" ]; then : >"$W/or-secret"; else sh -c "\${10}" >"$W/or-secret"; fi
   elif [ "\$6" = --command ]; then sh -c "\$7" >"$W/secret.stdin"; else cat >"$W/secret.stdin"; fi ;;
 exec)
   case "\$*" in
@@ -60,7 +60,10 @@ exec)
   *"openrouter.ai/api"*)
     [ ! -f "$W/vm.unreachable" ] || exit 7
     ph=\$(cat "$W/or-placeholder" 2>/dev/null || true)
-    [ -z "\$ph" ] || case "\$*" in *"\$ph"*) ;; *) exit 22 ;; esac ;;
+    [ -z "\$ph" ] || case "\$*" in *"\$ph"*) ;; *) exit 22 ;; esac
+    case "\$*" in
+    *"/v1/key"*) [ -s "$W/or-secret" ] || exit 22 ;;
+    esac ;;
   *"host.docker.internal"*) [ ! -f "$W/vm.unreachable" ] || exit 7 ;;
   *"no-mistakes --version"*) cat "$W/vm.nmver" 2>/dev/null; exit 0 ;;
   *"no-mistakes init"*) [ ! -f "$W/init.fail" ] || exit 1 ;;
@@ -822,8 +825,9 @@ test_openrouter_gets_its_environment_scoped_rules_and_checks() {
   assert_contains "$create" "-e CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000" "auto-compact is 200000"
   assert_contains "$create" "-e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" "nonessential traffic is off"
   assert_contains "$create" "-e CLAUDE_CODE_ATTRIBUTION_HEADER=0" "the attribution header is off"
-  assert_contains "$(log)" "secret set-custom --sandbox $NAME --host openrouter.ai --placeholder sk-or-placeholder-firstmate --command cat $W/or-key" "the proxy gets a sandbox-scoped secret whose command names only the host key file"
-  assert_equals "$OR_KEY" "$(cat "$W/or-secret")" "the secret's command reads the key on the host"
+  assert_contains "$(log)" "secret set-custom --sandbox $NAME --host openrouter.ai --placeholder sk-or-placeholder-firstmate --command tr -d" "the proxy gets a sandbox-scoped secret whose command names only the host key file"
+  printf '%s' "$OR_KEY" >"$W/or-key.expect"
+  cmp -s "$W/or-key.expect" "$W/or-secret" || fail "the secret's command reads the exact key on the host, with no trailing whitespace"
   assert_not_contains "$(log)" "$OR_KEY" "the key is never in any sbx argument"
   assert_contains "$(log)" "ENV-AT-RUN: 0" "the key is never in the environment claude runs under"
   assert_contains "$(log)" "policy allow network --sandbox $NAME openrouter.ai" "OpenRouter is allowed for this sandbox only"
@@ -832,7 +836,7 @@ test_openrouter_gets_its_environment_scoped_rules_and_checks() {
   assert_not_contains "$(log)" "policy deny network api.anthropic.com" "no global deny"
   assert_contains "$(log)" "secret rm anthropic --sandbox $NAME -f" "the inherited sign-in is removed for this sandbox only"
   assert_not_contains "$(log)" "secret set anthropic" "no Anthropic secret is stored in its place"
-  assert_contains "$(log)" "exec $NAME curl -fsS --max-time 10 -H Authorization: Bearer sk-or-placeholder-firstmate https://openrouter.ai/api/v1/models" "OpenRouter is checked from the VM with the placeholder"
+  assert_contains "$(log)" "exec $NAME curl -fsS --max-time 10 -H Authorization: Bearer sk-or-placeholder-firstmate https://openrouter.ai/api/v1/key" "OpenRouter authentication is checked from the VM with the placeholder"
   assert_contains "$(log)" "exec $NAME curl -fsS --max-time 10 https://api.anthropic.com/v1/models" "the lack of Anthropic access is checked"
   assert_not_contains "$(log)" "LOCK-" "there is no concurrency lock"
   [ "$(grep -n '^create ' "$LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n 'secret set-custom' "$LOG" | head -1 | cut -d: -f1)" ] ||
@@ -896,7 +900,7 @@ test_openrouter_unreachable_from_the_vm_removes_the_sandbox() {
   : >"$W/vm.unreachable"
   out=$(or_wrap --kind scout --openrouter qwen/qwen3.8-27b -- claude 2>&1); rc=$?
   expect_code 2 "$rc" "an unreachable OpenRouter must stop the launch"
-  assert_contains "$out" "cannot reach OpenRouter" "the refusal says why"
+  assert_contains "$out" "cannot authenticate to OpenRouter" "the refusal says why"
   ! grep -q '^run ' "$LOG" || fail "no worker may be started"
   assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed"
   [ ! -s "$LIVE" ] || fail "no sandbox may remain: $(cat "$LIVE")"
@@ -915,6 +919,33 @@ test_openrouter_secret_failure_removes_the_sandbox() {
   assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed"
   [ ! -s "$LIVE" ] || fail "no sandbox may remain: $(cat "$LIVE")"
   pass "a failed OpenRouter secret stops the launch and removes the sandbox"
+}
+
+test_openrouter_unsubstituted_key_stops_the_launch() {
+  local out rc
+  or_world or-nosub
+  : >"$W/secret.empty"
+  out=$(or_wrap --kind scout --openrouter qwen/qwen3.8-27b -- claude 2>&1); rc=$?
+  expect_code 2 "$rc" "a secret that does not substitute must stop the launch: $out"
+  assert_contains "$out" "cannot authenticate to OpenRouter" "the refusal names the authentication check"
+  assert_not_contains "$out" "$OR_KEY" "the key is not printed"
+  ! grep -q '^run ' "$LOG" || fail "no worker may be started"
+  assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed"
+  [ ! -s "$LIVE" ] || fail "no sandbox may remain: $(cat "$LIVE")"
+  pass "a proxy that does not substitute the key stops the launch and removes the sandbox"
+}
+
+test_openrouter_secret_reads_a_key_file_with_spaces() {
+  local dir
+  or_world or-path
+  dir="$W/key dir"
+  mkdir -p "$dir"
+  printf '%s\n' "$OR_KEY" >"$dir/or key"
+  FM_OPENROUTER_KEY_FILE="$dir/or key" wrap --kind scout --openrouter qwen/qwen3.8-27b -- claude >/dev/null 2>&1
+  printf '%s' "$OR_KEY" >"$W/or-key.expect"
+  cmp -s "$W/or-key.expect" "$W/or-secret" || fail "a key path containing a space is quoted and the key is stripped"
+  assert_not_contains "$(log)" "$OR_KEY" "the key is never in any sbx argument"
+  pass "a key file path containing a space still yields the exact key"
 }
 
 test_openrouter_logs_the_tasks_cost_without_the_key() {
@@ -973,6 +1004,8 @@ test_openrouter_refuses_before_any_sandbox_exists
 test_openrouter_reachable_anthropic_stops_the_launch
 test_openrouter_unreachable_from_the_vm_removes_the_sandbox
 test_openrouter_secret_failure_removes_the_sandbox
+test_openrouter_unsubstituted_key_stops_the_launch
+test_openrouter_secret_reads_a_key_file_with_spaces
 test_openrouter_logs_the_tasks_cost_without_the_key
 
 echo "# all fm-sbx-run tests passed"

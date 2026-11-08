@@ -8,6 +8,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=bin/fm-openrouter-lib.sh
+. "$ROOT/bin/fm-openrouter-lib.sh"
 
 RUNSH="$ROOT/bin/claude-sbx"
 BRIDGE="$ROOT/bin/fm-sbx-bridge.sh"
@@ -836,7 +838,7 @@ test_openrouter_gets_its_environment_scoped_rules_and_checks() {
   assert_not_contains "$(log)" "policy deny network api.anthropic.com" "no global deny"
   assert_contains "$(log)" "secret rm anthropic --sandbox $NAME -f" "the inherited sign-in is removed for this sandbox only"
   assert_not_contains "$(log)" "secret set anthropic" "no Anthropic secret is stored in its place"
-  assert_contains "$(log)" "exec $NAME curl -fsS --max-time 10 -H Authorization: Bearer sk-or-placeholder-firstmate https://openrouter.ai/api/v1/key" "OpenRouter authentication is checked from the VM with the placeholder"
+  assert_contains "$(log)" "exec $NAME curl -fsS --max-time 10 -H Authorization: Bearer $FM_OPENROUTER_AUTH_PLACEHOLDER https://openrouter.ai/api/v1/key" "OpenRouter authentication is checked from the VM with the placeholder"
   assert_contains "$(log)" "exec $NAME curl -fsS --max-time 10 https://api.anthropic.com/v1/models" "the lack of Anthropic access is checked"
   assert_not_contains "$(log)" "LOCK-" "there is no concurrency lock"
   [ "$(grep -n '^create ' "$LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n 'secret set-custom' "$LOG" | head -1 | cut -d: -f1)" ] ||

@@ -58,13 +58,17 @@
 #                   worker talks to OpenRouter's Anthropic-compatible API with
 #                   the OpenRouter model id MODEL instead of the Anthropic API.
 #                   The spend-limited key is read on the host from its key file
-#                   and enters the VM only as ANTHROPIC_AUTH_TOKEN; the sandbox
-#                   loses its inherited anthropic secret, gets a
+#                   and never enters the VM. The VM gets a fixed placeholder as
+#                   ANTHROPIC_AUTH_TOKEN, and a sandbox-scoped custom secret
+#                   whose command is `cat <absolute key file path>` lets the sbx
+#                   proxy substitute the real key on requests to openrouter.ai;
+#                   a launch whose secret cannot be stored is removed. The
+#                   sandbox also loses its inherited anthropic secret, gets a
 #                   sandbox-scoped deny for api.anthropic.com and one
 #                   sandbox-scoped allow for openrouter.ai, and the launch
-#                   stops if the VM cannot reach OpenRouter or can reach the
-#                   Anthropic API. The key's spend before and after the task is
-#                   appended to data/<id>/openrouter-usage.log.
+#                   stops if the VM cannot reach OpenRouter with the placeholder
+#                   or can reach the Anthropic API. The key's spend before and
+#                   after the task is appended to data/<id>/openrouter-usage.log.
 #                   There is no concurrency lock.
 #   CLAUDE_ARGS     the claude command line, exactly as the launch built it.
 #
@@ -81,9 +85,10 @@
 # bring the clone's commits back to the worktree.
 #
 # Credentials: the host's credentials are never mounted or copied.
-# The only secret is a GitHub token read on the host, from FM_SBX_GH_TOKEN or
-# else the file config/sbx-github-token, which is stored as a per-sandbox sbx secret that the sbx proxy injects on allowed
-# GitHub hosts; the token never enters the VM.
+# The secrets are read on the host and stored as per-sandbox sbx secrets that the
+# proxy injects on the allowed host; none ever enters the VM. A GitHub token
+# comes from FM_SBX_GH_TOKEN or else the file config/sbx-github-token, and an
+# OpenRouter worker key from its key file (--openrouter above).
 # A ship whose repository has a remote naming the Firstmate fork
 # (fm_sbx_fork_url) gets the fork-only token from the host file
 # fm_sbx_fork_token_file in its place, and its clone's origin is pointed at the
@@ -115,7 +120,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ID='' CONFIG='' STATE='' DATA='' ROOT='' WT='' CLONE='' NAME=''
 CPUS=4 MEMORY=4g BUSY_GEN='' KIND=ship NM=0 NM_PIN='' ALLOW='' NPM_CACHE=''
-RELAY_PID='' CLEANED=0 VERIFY='' VERIFY_PID='' LOCAL_LLM=0 OPENROUTER='' OR_KEY='' OR_USAGE_BEFORE=''
+RELAY_PID='' CLEANED=0 VERIFY='' VERIFY_PID='' LOCAL_LLM=0 OPENROUTER='' OR_KEY_FILE='' OR_USAGE_BEFORE=''
 BROKER="$SCRIPT_DIR/fm-sbx-verify-broker.sh"
 CLAUDE_USER_HOME=/home/agent
 
@@ -173,7 +178,11 @@ fm_sbx_preflight || exit 1
 if [ -n "$OPENROUTER" ]; then
   [ "$LOCAL_LLM" = 0 ] || die "--openrouter cannot be combined with --local-llm"
   fm_openrouter_valid_id "$OPENROUTER" || die "--openrouter takes an OpenRouter model id (vendor/model)"
-  OR_KEY=$(fm_openrouter_key) || exit 1
+  fm_openrouter_key >/dev/null || exit 1
+  OR_KEY_FILE=$(fm_openrouter_key_file)
+  # The secret's command runs in the sbx daemon, far from this working
+  # directory, so the file it reads is named absolutely or not at all.
+  case "$OR_KEY_FILE" in /*) ;; *) die "--openrouter needs an absolute key file path (FM_OPENROUTER_KEY_FILE is '$OR_KEY_FILE')" ;; esac
 fi
 
 CHANNEL=$(fm_sbx_channel_dir "$STATE" "$ID")
@@ -279,7 +288,7 @@ if [ "$LOCAL_LLM" = 1 ]; then
 fi
 if [ -n "$OPENROUTER" ]; then
   while IFS= read -r kv; do add_env "${kv%%=*}" "${kv#*=}"; done < <(fm_openrouter_env "$OPENROUTER")
-  add_env ANTHROPIC_AUTH_TOKEN "$OR_KEY"
+  add_env ANTHROPIC_AUTH_TOKEN "$FM_OPENROUTER_AUTH_PLACEHOLDER"
 fi
 if [ "$NM" = 1 ]; then
   add_env NM_HOME "$CLAUDE_USER_HOME/nm"
@@ -419,12 +428,20 @@ if [ "$LOCAL_LLM" = 1 ]; then
 fi
 if [ -n "$OPENROUTER" ]; then
   sbx secret rm anthropic --sandbox "$NAME" -f </dev/null >/dev/null 2>&1 || true
+  # The VM's ANTHROPIC_AUTH_TOKEN is the placeholder from create onward; the
+  # proxy needs this sandbox-scoped secret registered before the worker runs.
+  # The command text names only the host key file, never the key's value.
+  sbx secret set-custom --sandbox "$NAME" --host "$FM_OPENROUTER_POLICY_HOST" \
+    --placeholder "$FM_OPENROUTER_AUTH_PLACEHOLDER" --command "cat $OR_KEY_FILE" >/dev/null 2>&1 ||
+    die "could not store the OpenRouter secret for $NAME; no worker was started"
   sbx policy deny network --sandbox "$NAME" "$FM_OPENROUTER_ANTHROPIC_HOST" >/dev/null 2>&1 ||
     die "could not add the per-sandbox deny rule ($FM_OPENROUTER_ANTHROPIC_HOST) for $NAME"
   sbx policy allow network --sandbox "$NAME" "$FM_OPENROUTER_POLICY_HOST" >/dev/null 2>&1 ||
     die "could not add the per-sandbox network rule ($FM_OPENROUTER_POLICY_HOST) for $NAME"
-  sbx exec "$NAME" curl -fsS --max-time 10 "$FM_OPENROUTER_VM_URL/v1/models" >/dev/null 2>&1 ||
-    die "$NAME cannot reach OpenRouter at $FM_OPENROUTER_VM_URL; no worker was started"
+  # An authenticated request proves the proxy substitutes the real key for the
+  # placeholder, not merely that the host is reachable.
+  sbx exec "$NAME" curl -fsS --max-time 10 -H "Authorization: Bearer $FM_OPENROUTER_AUTH_PLACEHOLDER" "$FM_OPENROUTER_VM_URL/v1/models" >/dev/null 2>&1 ||
+    die "$NAME cannot reach OpenRouter at $FM_OPENROUTER_VM_URL with the placeholder; no worker was started"
   ! sbx exec "$NAME" curl -fsS --max-time 10 "https://$FM_OPENROUTER_ANTHROPIC_HOST/v1/models" >/dev/null 2>&1 ||
     die "$NAME can still reach $FM_OPENROUTER_ANTHROPIC_HOST with a credential; no worker was started"
 fi

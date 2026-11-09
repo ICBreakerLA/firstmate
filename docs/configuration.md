@@ -1660,7 +1660,7 @@ The sandbox gets this environment on top of the usual allowlist, built by `fm_lo
 | `ANTHROPIC_BASE_URL` | `http://host.docker.internal:8080`, the host's loopback as an `sbx` microVM sees it. |
 | `ANTHROPIC_AUTH_TOKEN` | A placeholder the server ignores. |
 | `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL` | `qwen3.8-27b-gsq-rco`, so every tier, the background model, and subagents use the one local model. |
-| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `110000`, under the server's 131,072-token context, for this sandbox only. |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `130000`, under the server's 131,072-token context, for this sandbox only. |
 | `CLAUDE_CODE_ATTRIBUTION_HEADER` | `0`, so the start of every request stays byte-identical and the server's prompt cache can reuse it. |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1`. |
 

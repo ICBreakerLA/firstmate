@@ -734,7 +734,7 @@ test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock() {
   assert_contains "$create" "-e ANTHROPIC_AUTH_TOKEN=local-llm-no-credential" "the token is a placeholder"
   assert_contains "$create" "-e ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen3.8-27b-gsq-rco" "the background tier maps to the local model"
   assert_contains "$create" "-e CLAUDE_CODE_SUBAGENT_MODEL=qwen3.8-27b-gsq-rco" "subagents map to the local model"
-  assert_contains "$create" "-e CLAUDE_CODE_AUTO_COMPACT_WINDOW=110000" "auto-compact is set for this sandbox only"
+  assert_contains "$create" "-e CLAUDE_CODE_AUTO_COMPACT_WINDOW=130000" "auto-compact is set for this sandbox only"
   assert_contains "$(log)" "policy allow network --sandbox $NAME localhost:8080" "the server port is allowed for this sandbox only"
   assert_not_contains "$(log)" "policy allow network localhost" "no global policy change"
   assert_contains "$(log)" "secret rm anthropic --sandbox $NAME -f" "the sandbox's inherited Claude sign-in is removed for this sandbox only"

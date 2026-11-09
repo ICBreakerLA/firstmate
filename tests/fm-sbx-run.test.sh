@@ -128,6 +128,7 @@ test_creates_with_minimal_mounts_and_cleans_up() {
   assert_contains "$create" " $DATA/t1 " "the task's own data directory is mounted"
   assert_contains "$create" " $STATE/t1.sbx " "the channel is mounted"
   assert_contains "$create" " $STATE/t1.inbox " "the steering inbox is mounted"
+  assert_not_contains "$create" "sbx-policy-log" "no policy log capture is mounted into the sandbox"
   assert_contains "$create" "$STATE/operational-inbox/1-abcd.msg:ro" "the brief record is mounted read-only"
   assert_not_contains "$create" "2-ef01.msg" "no sibling operational record is mounted"
   assert_contains "$create" "$HOMEDIR/.agents/skills:ro" "the shared skills are mounted read-only"
@@ -991,14 +992,16 @@ test_the_policy_log_is_captured_host_side_on_exit() {
   printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
   wrap --kind scout --allow example.org -- claude >/dev/null 2>&1
   assert_grep "policy allow network --sandbox $NAME github.com:443,api.github.com:443,example.org" \
-    "$DATA/t1/sbx-policy-log.jsonl" "the sandbox's host-side network log is captured into the task's data"
+    "$STATE/t1.sbx-policy-log.jsonl" "the sandbox's host-side network log is captured under the state directory"
+  assert_absent "$DATA/t1/sbx-policy-log.jsonl" "nothing is captured into the mounted task data directory"
   new_world pollog-combined
   printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
   : >"$W/policy.nosandbox"
   wrap --kind scout --allow example.org -- claude >/dev/null 2>&1
   assert_grep "policy allow network --sandbox $NAME github.com:443,api.github.com:443,example.org" \
-    "$DATA/t1/sbx-policy-log.jsonl" "a host that only prints the combined log is filtered by sandbox name"
-  pass "the sandbox's host-side network policy log is captured to data/<id>/sbx-policy-log.jsonl on exit"
+    "$STATE/t1.sbx-policy-log.jsonl" "a host that only prints the combined log is filtered by sandbox name"
+  assert_absent "$DATA/t1/sbx-policy-log.jsonl" "the combined-log capture stays out of the mounted task data directory too"
+  pass "the sandbox's host-side network policy log is captured to state/<id>.sbx-policy-log.jsonl, outside every sandbox mount, on exit"
 }
 
 test_an_unavailable_policy_log_writes_nothing() {
@@ -1010,7 +1013,7 @@ test_an_unavailable_policy_log_writes_nothing() {
   expect_code 0 "$rc" "a log sbx cannot print must not stop the run: $out"
   assert_contains "$(log)" "run --name $NAME" "the worker ran normally"
   assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed"
-  assert_absent "$DATA/t1/sbx-policy-log.jsonl" "an unavailable log writes no file"
+  assert_absent "$STATE/t1.sbx-policy-log.jsonl" "an unavailable log writes no file"
   pass "an unavailable policy log writes nothing and never fails the run"
 }
 

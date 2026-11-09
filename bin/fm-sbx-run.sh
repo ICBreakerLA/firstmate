@@ -90,9 +90,9 @@
 # HUP, TERM and INT traps always remove the sandbox, stop the relay with a
 # final drain, stop the verification broker with a forced emulator shutdown,
 # bring the clone's commits back to the worktree, and append the sandbox's
-# host-side network policy log (sbx policy log, kept where the VM cannot edit
-# it) to data/<id>/sbx-policy-log.jsonl as evidence of its network activity;
-# an empty or unavailable log writes nothing.
+# host-side network policy log (sbx policy log) to
+# state/<id>.sbx-policy-log.jsonl, outside every sandbox mount, as evidence
+# of its network activity; an empty or unavailable log writes nothing.
 #
 # Credentials: the host's credentials are never mounted or copied.
 # The secrets are read on the host and stored as per-sandbox sbx secrets that the
@@ -242,12 +242,13 @@ cleanup() {
   if [ "$NM" = 1 ] && [ "$KIND" = ship ] && fm_nm_sandbox_bind "$WT" "$NAME" "$CLONE"; then
     fm_nm_run_bounded "$WT" 120 axi sync >/dev/null 2>&1 || true
   fi
-  # sbx keeps each sandbox's network policy log on the host, where the VM
-  # cannot edit it; it is captured while the sandbox is still recorded, and
-  # an empty or unavailable log writes nothing and never fails the run.
+  # sbx keeps each sandbox's network policy log on the host; it is captured
+  # while the sandbox is still recorded, under state/, which no sandbox mount
+  # reaches, and an empty or unavailable log writes nothing and never fails
+  # the run.
   policy_log=$(fm_sbx_policy_log "$NAME" 2>/dev/null || true)
   if [ -n "$policy_log" ]; then
-    printf '%s\n' "$policy_log" >>"$DATA/$ID/sbx-policy-log.jsonl" 2>/dev/null || true
+    printf '%s\n' "$policy_log" >>"$STATE/$ID.sbx-policy-log.jsonl" 2>/dev/null || true
   fi
   fm_sbx_rm "$NAME" || echo "notice: sandbox $NAME could not be removed; run: sbx rm --force $NAME" >&2
   if [ -n "$RELAY_PID" ]; then

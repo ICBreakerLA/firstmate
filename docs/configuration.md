@@ -1742,7 +1742,7 @@ In a [dispatch profile](#crew-dispatch-profiles-configcrew-dispatchjson) a Claud
 ### Lifecycle
 
 `bin/fm-sbx-run.sh` (reached as `bin/claude-sbx`, so the pane's foreground command classifies as a Claude launch) runs as a child of the pane shell, and its exit, hangup, terminate, and interrupt traps remove the sandbox, stop the relay after a final drain, and bring the clone's commits back.
-Before removal, the trap captures the sandbox's host-side network policy log (`sbx policy log --json`) into `data/<id>/sbx-policy-log.jsonl` as evidence the worker cannot edit from inside the VM; an empty or unavailable log writes nothing and never fails the run.
+Before removal, the trap captures the sandbox's host-side network policy log (`sbx policy log --json`) into `state/<id>.sbx-policy-log.jsonl`, which no sandbox mount reaches, so the worker cannot edit the record of its own network activity from inside the VM; an empty or unavailable log writes nothing and never fails the run.
 A relaunch follows the task's recorded `sandbox=` value, not the current file, so a config edit never moves a live task between the two worlds, and it removes the old sandbox and starts a fresh one on the same clone.
 Teardown follows the same record, removes only a sandbox whose name this tree would have created, and keeps the never-discard-unlanded-work order described above.
 

@@ -67,7 +67,7 @@ test_env_maps_every_tier_and_carries_no_host_secret() {
   done
   assert_contains "$env" "ANTHROPIC_BASE_URL=http://host.docker.internal:8080" "the base URL is the host alias"
   assert_contains "$env" "ANTHROPIC_AUTH_TOKEN=local-llm-no-credential" "the token is a placeholder"
-  assert_contains "$env" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=88000" "auto-compact sits under the 96,256 context"
+  assert_contains "$env" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=110000" "auto-compact sits under the 131,072 context"
   assert_contains "$env" "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" "nonessential traffic is off"
   assert_not_contains "$env" "host-key" "a host API key is never in the environment"
   assert_not_contains "$env" "host-oauth" "a host login token is never in the environment"

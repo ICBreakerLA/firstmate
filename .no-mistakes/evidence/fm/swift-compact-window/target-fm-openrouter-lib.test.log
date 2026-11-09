@@ -1,0 +1,13 @@
+ok - only an or: model id selects the profile
+ok - a missing, empty or symlinked key file refuses before any request
+ok - :free ids are refused, direct or through a chain, before any request
+ok - an alias resolves to its first answering id
+ok - the probe asks for zdr and data_collection deny and the key never reaches an argument
+ok - 402, 429, 5xx, no endpoint and a timeout each skip to the next id
+ok - a chain where nothing answers refuses with each id's status
+ok - a direct id is probed alone and refuses when it fails
+ok - a rejected key refuses at once and never prints the key
+ok - an unknown alias, an empty model and an odd id refuse before any request
+ok - the environment maps every tier to the model and carries no key or host secret
+ok - usage is read from /v1/key without exposing the key
+# all fm-openrouter-lib tests passed

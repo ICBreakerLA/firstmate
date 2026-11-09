@@ -1,0 +1,17 @@
+ok - only the local model id selects the profile
+ok - a server that is not answering refuses with a clear message
+ok - a server that lacks the model refuses
+ok - a server listing the model passes
+not ok - auto-compact sits under the 131,072 context (missing: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW=110000')
+--- output ---
+ANTHROPIC_BASE_URL=http://host.docker.internal:8080
+ANTHROPIC_AUTH_TOKEN=local-llm-no-credential
+ANTHROPIC_MODEL=qwen3.8-27b-gsq-rco
+ANTHROPIC_DEFAULT_OPUS_MODEL=qwen3.8-27b-gsq-rco
+ANTHROPIC_DEFAULT_SONNET_MODEL=qwen3.8-27b-gsq-rco
+ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen3.8-27b-gsq-rco
+ANTHROPIC_SMALL_FAST_MODEL=qwen3.8-27b-gsq-rco
+CLAUDE_CODE_SUBAGENT_MODEL=qwen3.8-27b-gsq-rco
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=88000
+CLAUDE_CODE_ATTRIBUTION_HEADER=0
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1

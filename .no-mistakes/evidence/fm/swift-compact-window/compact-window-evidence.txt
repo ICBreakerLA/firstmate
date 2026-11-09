@@ -1,0 +1,23 @@
+=== compact-window regression evidence (base 88000 -> target 110000) ===
+
+--- A. product interface executed: . bin/fm-local-llm-lib.sh; fm_local_llm_env
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=110000
+headroom check: 110000 < 131072 -> slack 21072 tokens for reply + compaction call (PASS)
+
+--- B. base commit bb6722de with the updated tests (expected FAIL, exit=1 both suites)
+not ok - auto-compact is set for this sandbox only (missing: '-e CLAUDE_CODE_AUTO_COMPACT_WINDOW=110000')
+not ok - auto-compact sits under the 131,072 context (missing: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW=110000')
+create line the base code emits: CLAUDE_CODE_AUTO_COMPACT_WINDOW=88000
+
+--- C. target commit 63f0d701 (PASS, exit=0 both suites)
+ok - the local profile gets its environment, a sandbox-scoped rule and the spawn's claim for the worker's life
+# all fm-sbx-run tests passed
+ok - the environment maps every tier to the local model and carries no host secret
+# all fm-local-llm-lib tests passed
+(the target suite's fixture log is self-cleaning on pass; the passing assertion itself is
+ '-e CLAUDE_CODE_AUTO_COMPACT_WINDOW=110000' in tests/fm-sbx-run.test.sh, proven by
+ section A's live env output and the base-vs-target failure pair above)
+
+--- D. control: OpenRouter profile window unchanged
+# all fm-openrouter-lib tests passed
+ok - the OpenRouter profile gets its placeholder, sandbox-scoped secret and rules before the worker starts

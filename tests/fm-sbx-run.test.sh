@@ -1017,6 +1017,20 @@ test_an_unavailable_policy_log_writes_nothing() {
   pass "an unavailable policy log writes nothing and never fails the run"
 }
 
+test_a_capture_target_that_refuses_writes_never_fails_the_run() {
+  local out rc
+  new_world polwritefail
+  printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
+  # The capture path is occupied by a directory, so the append must fail.
+  mkdir -p "$STATE/t1.sbx-policy-log.jsonl"
+  out=$(wrap --kind scout -- claude 2>&1); rc=$?
+  expect_code 0 "$rc" "an unwritable capture target must not stop the run: $out"
+  assert_contains "$(log)" "run --name $NAME" "the worker ran normally"
+  assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed after the failed capture"
+  expect_code 0 "$(find "$STATE/t1.sbx-policy-log.jsonl" -mindepth 1 | wc -l)" "the failed capture wrote nothing into the target"
+  pass "a capture target that refuses the write never fails the run and still removes the sandbox"
+}
+
 test_creates_with_minimal_mounts_and_cleans_up
 test_environment_is_an_explicit_allowlist
 test_the_commit_identity_reaches_the_sandbox_environment
@@ -1067,5 +1081,6 @@ test_openrouter_secret_reads_a_key_file_with_spaces
 test_openrouter_logs_the_tasks_cost_without_the_key
 test_the_policy_log_is_captured_host_side_on_exit
 test_an_unavailable_policy_log_writes_nothing
+test_a_capture_target_that_refuses_writes_never_fails_the_run
 
 echo "# all fm-sbx-run tests passed"

@@ -67,7 +67,7 @@ test_sbx_defaults_and_options() {
 
 test_malformed_values_are_refused() {
   local bad err
-  for bad in 'docker\n' 'sbx cpus=0\n' 'sbx cpus=65\n' 'sbx memory=4\n' 'sbx memory=0g\n' 'sbx gpus=1\n' 'off cpus=2\n' 'sbx allow=\n' 'sbx allow=a b;c\n' 'sbx allow=a,,b\n' 'sbx allow=host/path\n' 'sbx allow=example.org:\n' 'sbx allow=:8080\n' 'sbx allow=example.org:80x0\n' 'sbx nm=latest\n' 'sbx nm=v1.2\n' 'sbx nm=v1.2.3;x\n' 'sbx verify=\n' 'sbx verify=other\n' 'sbx verify=app,x\n'; do
+  for bad in 'docker\n' 'sbx cpus=0\n' 'sbx cpus=65\n' 'sbx memory=4\n' 'sbx memory=0g\n' 'sbx gpus=1\n' 'off cpus=2\n' 'sbx allow=\n' 'sbx allow=a b;c\n' 'sbx allow=a,,b\n' 'sbx allow=host/path\n' 'sbx allow=example.org:\n' 'sbx allow=:8080\n' 'sbx allow=example.org:80x0\n' 'sbx allow=github.com:443:443\n' 'sbx nm=latest\n' 'sbx nm=v1.2\n' 'sbx nm=v1.2.3;x\n' 'sbx verify=\n' 'sbx verify=other\n' 'sbx verify=app,x\n'; do
     err=$(load "$bad" 2>&1) && fail "'$bad' should be refused"
     assert_contains "$err" "config/worker-sandbox" "the refusal names the file for '$bad'"
   done

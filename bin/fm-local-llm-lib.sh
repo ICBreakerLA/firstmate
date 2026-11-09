@@ -42,9 +42,9 @@ FM_LOCAL_LLM_POLICY_HOST=localhost:8080
 # never attach the captain's sign-in to a request from it.
 # shellcheck disable=SC2034 # Read by the sourcing script (fm-sbx-run.sh).
 FM_LOCAL_LLM_ANTHROPIC_HOST=api.anthropic.com
-# The server context is 96,256 tokens; compacting at 88,000 leaves room for a
-# reply and the compaction call itself.
-FM_LOCAL_LLM_COMPACT_WINDOW=88000
+# The server context is 131,072 tokens; compacting at 110,000 leaves room for
+# a reply and the compaction call itself.
+FM_LOCAL_LLM_COMPACT_WINDOW=110000
 # What a dispatch-chosen local model falls back to when it is unavailable.
 FM_LOCAL_LLM_FALLBACK_MODEL=claude-haiku-4-5
 FM_LOCAL_LLM_FALLBACK_EFFORT=low

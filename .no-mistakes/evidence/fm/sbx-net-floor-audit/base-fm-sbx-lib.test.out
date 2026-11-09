@@ -1,0 +1,3 @@
+ok - absent and off both resolve to off
+error: config/worker-sandbox allow= takes comma-separated host names (letters, digits, dot, dash, star), got 'example.org:8080,github.com:443'
+not ok - allow= with :PORT entries should be accepted

@@ -1,0 +1,17 @@
+ok - the sandbox gets only the clone, task directories and read-only brief, and is removed on exit
+ok - only allowlisted variables reach the sandbox
+ok - the commit identity the clone carries also reaches the sandbox environment
+not ok - GitHub's TLS port and the extra host are allowed for this sandbox only (missing: 'policy allow network --sandbox fm-sbx-0123abcd-t1-9999 github.com:443,api.github.com:443,example.org')
+--- output ---
+daemon status
+ls -q
+create --name fm-sbx-0123abcd-t1-9999 --pull missing --cpus 4 --memory 4g -e CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false -e CLAUDE_CODE_SEND_FEEDBACK=0 -e FM_TASK_INBOX=/home/lionel/firstmate/state/sbx-net-floor-audit.inbox -e COMPACT_ADVISER_DISABLE=1 -e DISABLE_AUTOUPDATER=1 -e FM_SBX_CHANNEL=/tmp/fm-sbx-run.YWjMoO/token/home/state/t1.sbx claude /tmp/fm-sbx-run.YWjMoO/token/home/state/t1.sbx-clone /tmp/fm-sbx-run.YWjMoO/token/home/data/t1 /tmp/fm-sbx-run.YWjMoO/token/home/state/t1.sbx /tmp/fm-sbx-run.YWjMoO/token/home/state/t1.inbox /tmp/fm-sbx-run.YWjMoO/token/home/.agents/skills:ro
+exec -u root fm-sbx-0123abcd-t1-9999 rm -f /tmp/fm-sbx-run.YWjMoO/token/home/state/CLAUDE.md
+exec -u root fm-sbx-0123abcd-t1-9999 sh -c mkdir -p "$1" "$2" && ln -sfn "$3" "$4" && ln -sfn "$5" "$6" sh /tmp/fm-sbx-run.YWjMoO/token/home/state /tmp/fm-sbx-run.YWjMoO/token t1.sbx/status /tmp/fm-sbx-run.YWjMoO/token/home/state/t1.status /tmp/fm-sbx-run.YWjMoO/token/home/state/t1.sbx-clone /tmp/fm-sbx-run.YWjMoO/token/wt
+secret set github --sandbox fm-sbx-0123abcd-t1-9999
+policy allow network --sandbox fm-sbx-0123abcd-t1-9999 github.com,api.github.com,example.org
+run --name fm-sbx-0123abcd-t1-9999 -- claude
+ENV-AT-RUN: 0
+ls -q
+rm --force fm-sbx-0123abcd-t1-9999
+ls -q

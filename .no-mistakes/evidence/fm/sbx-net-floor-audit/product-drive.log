@@ -1,0 +1,35 @@
+/tmp/fm-hdr.sh: line 119: syntax error: unexpected end of file from `{' command on line 115
+== wrapper exit: 0
+
+== sbx argv recorded by the real wrapper (end-to-end):
+daemon status
+ls -q
+create --name fm-sbx-0123abcd-t1-9999 --pull missing --cpus 4 --memory 4g -e CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false -e CLAUDE_CODE_SEND_FEEDBACK=0 -e FM_TASK_INBOX=/home/lionel/firstmate/state/sbx-net-floor-audit.inbox -e COMPACT_ADVISER_DISABLE=1 -e DISABLE_AUTOUPDATER=1 -e FM_SBX_CHANNEL=/tmp/fm-sbx-run.IFzRkc/evidence-drive/home/state/t1.sbx claude /tmp/fm-sbx-run.IFzRkc/evidence-drive/home/state/t1.sbx-clone /tmp/fm-sbx-run.IFzRkc/evidence-drive/home/data/t1 /tmp/fm-sbx-run.IFzRkc/evidence-drive/home/state/t1.sbx /tmp/fm-sbx-run.IFzRkc/evidence-drive/home/state/t1.inbox /tmp/fm-sbx-run.IFzRkc/evidence-drive/home/.agents/skills:ro
+exec -u root fm-sbx-0123abcd-t1-9999 rm -f /tmp/fm-sbx-run.IFzRkc/evidence-drive/home/state/CLAUDE.md
+exec -u root fm-sbx-0123abcd-t1-9999 sh -c mkdir -p "$1" "$2" && ln -sfn "$3" "$4" && ln -sfn "$5" "$6" sh /tmp/fm-sbx-run.IFzRkc/evidence-drive/home/state /tmp/fm-sbx-run.IFzRkc/evidence-drive t1.sbx/status /tmp/fm-sbx-run.IFzRkc/evidence-drive/home/state/t1.status /tmp/fm-sbx-run.IFzRkc/evidence-drive/home/state/t1.sbx-clone /tmp/fm-sbx-run.IFzRkc/evidence-drive/wt
+secret set github --sandbox fm-sbx-0123abcd-t1-9999
+policy allow network --sandbox fm-sbx-0123abcd-t1-9999 github.com:443,api.github.com:443,registry.npmjs.org:443
+run --name fm-sbx-0123abcd-t1-9999 -- claude --model fake/worker
+ENV-AT-RUN: 0
+policy log --json --sandbox fm-sbx-0123abcd-t1-9999
+ls -q
+rm --force fm-sbx-0123abcd-t1-9999
+ls -q
+
+== sandbox create mounts (note: no policy-log path is mounted):
+/tmp/fm-sbx-run.IFzRkc/evidence-drive/home/state/t1.sbx-clone
+/tmp/fm-sbx-run.IFzRkc/evidence-drive/home/data/t1
+/tmp/fm-sbx-run.IFzRkc/evidence-drive/home/state/t1.sbx
+/tmp/fm-sbx-run.IFzRkc/evidence-drive/home/state/t1.inbox
+/tmp/fm-sbx-run.IFzRkc/evidence-drive/home/.agents/skills:ro
+
+== host-side audit trail captured at state/t1.sbx-policy-log.jsonl:
+policy allow network --sandbox fm-sbx-0123abcd-t1-9999 github.com:443,api.github.com:443,registry.npmjs.org:443
+
+== task data dir (mounted rw into the VM) — must hold NO policy log:
+total 8
+drwxr-xr-x 2 agent agent 4096 Nov  9 00:51 .
+drwxr-xr-x 3 agent agent 4096 Nov  9 00:51 ..
+== cleanup order in argv (capture before rm):
+10:policy log --json --sandbox fm-sbx-0123abcd-t1-9999
+12:rm --force fm-sbx-0123abcd-t1-9999

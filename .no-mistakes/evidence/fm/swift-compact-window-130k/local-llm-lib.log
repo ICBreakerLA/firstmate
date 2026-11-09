@@ -1,0 +1,18 @@
+ok - only the local model id selects the profile
+ok - a server that is not answering refuses with a clear message
+ok - a server that lacks the model refuses
+ok - a server listing the model passes
+ok - the environment maps every tier to the local model and carries no host secret
+ok - a claim holds the slot for its task and refuses a second
+ok - the claiming task takes over the claim and its exit releases it
+ok - a wrapper without its own held claim is refused
+ok - the spawn releases an untaken claim by killing its holder
+ok - a background job started without the descriptor does not keep the claim alive
+ok - every check holding keeps the local model silently
+ok - the checks run in order and each failure is named in one notice line
+ok - a sandbox-less home falls back without running the start command
+ok - a down server is started once and the local model is used
+ok - a start that times out or fails falls back
+ok - ComfyUI holding the GPU blocks both the start and an already-running server
+ok - the GPU probe reads powershell.exe, with no powershell.exe as no conflict and every other probe failure fail-closed as a conflict
+# all fm-local-llm-lib tests passed

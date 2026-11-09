@@ -1,0 +1,8 @@
+### Updated local-llm test run against base source c28b9be4
+not ok - auto-compact sits under the 131,072 context (missing: 'CLAUDE_CODE_AUTO_COMPACT_WINDOW=130000')
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=110000
+exit=1
+
+### Updated sbx-run test run against base source c28b9be4
+not ok - auto-compact is set for this sandbox only (missing: '-e CLAUDE_CODE_AUTO_COMPACT_WINDOW=130000')
+exit=1

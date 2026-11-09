@@ -418,18 +418,15 @@ fm_sbx_relay_dir() { printf '%s/%s.sbx-relay\n' "$1" "$2"; }
 fm_sbx_verify_dir() { printf '%s/%s.sbx-verify\n' "$1" "$2"; }
 
 # fm_sbx_policy_log <name>
-# Print the host-side network policy log of one fleet sandbox as lines.
+# Print the host-side network policy log of one fleet sandbox, as the JSON
+# document sbx prints for it: on `sbx policy log` the sandbox name is a
+# positional argument and the subcommand has no --sandbox flag.
 # sbx keeps this log on the host, where the VM running inside the sandbox
 # cannot edit it, so it is evidence the worker cannot tamper with.
-# The per-sandbox form is preferred; a host whose sbx only prints a combined
-# log is filtered by name. Nonzero and no output when no log is available;
-# an empty log is not a failure, and callers write nothing for it.
+# Nonzero and no output when no log is available; an empty log is not a
+# failure, and callers write nothing for it.
 fm_sbx_policy_log() {
   local name=$1 out
-  out=$(sbx policy log --json --sandbox "$name" 2>/dev/null) && [ -n "$out" ] && {
-    printf '%s\n' "$out"
-    return 0
-  }
-  out=$(sbx policy log --json 2>/dev/null) && [ -n "$out" ] || return 1
-  printf '%s\n' "$out" | grep -F -- "$name"
+  out=$(sbx policy log --json "$name" 2>/dev/null) && [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
 }

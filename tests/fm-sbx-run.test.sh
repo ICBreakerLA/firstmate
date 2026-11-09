@@ -61,8 +61,27 @@ policy)
   allow|deny) printf '%s\\n' "\$*" >>"$W/policy.log" ;;
   log)
     [ ! -f "$W/policy.down" ] || exit 1
-    if [ "\$4" = --sandbox ] && [ -f "$W/policy.nosandbox" ]; then exit 1; fi
-    cat "$W/policy.log" 2>/dev/null
+    # sbx takes the sandbox name positionally on this subcommand; there is
+    # no --sandbox flag there and passing one is a hard flag error.
+    for a in "\$@"; do
+      if [ "\$a" = --sandbox ]; then echo "error: unknown flag: --sandbox" >&2; exit 1; fi
+    done
+    awk -v name="\$4" '
+      \$4 == "--sandbox" && \$5 == name {
+        n = split(\$6, hosts, ",")
+        for (i = 1; i <= n; i++) {
+          if (\$2 == "allow") { al[na++] = hosts[i] }
+          else { bl[nb++] = hosts[i] }
+        }
+      }
+      END {
+        printf "{\\n  \\"sandbox\\": \\"%s\\",\\n  \\"allowed_hosts\\": [\\n", name
+        for (i = 0; i < na; i++) printf "    { \\"vm_name\\": \\"%s\\", \\"host\\": \\"%s\\" }%s\\n", name, al[i], (i < na - 1 ? "," : "")
+        printf "  ],\\n  \\"blocked_hosts\\": [\\n"
+        for (i = 0; i < nb; i++) printf "    { \\"vm_name\\": \\"%s\\", \\"host\\": \\"%s\\" }%s\\n", name, bl[i], (i < nb - 1 ? "," : "")
+        printf "  ]\\n}\\n"
+      }
+    ' "$W/policy.log" 2>/dev/null
     ;;
   esac ;;
 exec)
@@ -991,17 +1010,21 @@ test_the_policy_log_is_captured_host_side_on_exit() {
   new_world pollog
   printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
   wrap --kind scout --allow example.org -- claude >/dev/null 2>&1
-  assert_grep "policy allow network --sandbox $NAME github.com:443,api.github.com:443,example.org" \
-    "$STATE/t1.sbx-policy-log.jsonl" "the sandbox's host-side network log is captured under the state directory"
-  assert_absent "$DATA/t1/sbx-policy-log.jsonl" "nothing is captured into the mounted task data directory"
-  new_world pollog-combined
-  printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
-  : >"$W/policy.nosandbox"
-  wrap --kind scout --allow example.org -- claude >/dev/null 2>&1
-  assert_grep "policy allow network --sandbox $NAME github.com:443,api.github.com:443,example.org" \
-    "$STATE/t1.sbx-policy-log.jsonl" "a host that only prints the combined log is filtered by sandbox name"
-  assert_absent "$DATA/t1/sbx-policy-log.jsonl" "the combined-log capture stays out of the mounted task data directory too"
-  pass "the sandbox's host-side network policy log is captured to state/<id>.sbx-policy-log.jsonl, outside every sandbox mount, on exit"
+  # The captured file must be the whole multi-line JSON document sbx prints
+  # for this sandbox: it must parse as JSON, carry every pinned allow, and
+  # carry every entry under this sandbox's name.
+  jq -e --arg n "$NAME" '
+    .sandbox == $n
+    and all((.allowed_hosts + .blocked_hosts)[]; .vm_name == $n)
+    and (([.allowed_hosts[].host] |
+          (index("github.com:443") != null) and
+          (index("api.github.com:443") != null) and
+          (index("example.org") != null)))
+    and (.allowed_hosts | length) == 3
+  ' "$STATE/t1.sbx-policy-log.json" >/dev/null \
+    || fail "the captured policy log is the whole JSON document sbx prints for this sandbox: $(cat "$STATE/t1.sbx-policy-log.json" 2>/dev/null)"
+  assert_absent "$DATA/t1/sbx-policy-log.json" "nothing is captured into the mounted task data directory"
+  pass "the sandbox's host-side network policy log is captured on exit as the JSON document sbx prints for it, at state/<id>.sbx-policy-log.json, outside every sandbox mount"
 }
 
 test_an_unavailable_policy_log_writes_nothing() {
@@ -1013,7 +1036,7 @@ test_an_unavailable_policy_log_writes_nothing() {
   expect_code 0 "$rc" "a log sbx cannot print must not stop the run: $out"
   assert_contains "$(log)" "run --name $NAME" "the worker ran normally"
   assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed"
-  assert_absent "$STATE/t1.sbx-policy-log.jsonl" "an unavailable log writes no file"
+  assert_absent "$STATE/t1.sbx-policy-log.json" "an unavailable log writes no file"
   pass "an unavailable policy log writes nothing and never fails the run"
 }
 
@@ -1022,12 +1045,12 @@ test_a_capture_target_that_refuses_writes_never_fails_the_run() {
   new_world polwritefail
   printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
   # The capture path is occupied by a directory, so the append must fail.
-  mkdir -p "$STATE/t1.sbx-policy-log.jsonl"
+  mkdir -p "$STATE/t1.sbx-policy-log.json"
   out=$(wrap --kind scout -- claude 2>&1); rc=$?
   expect_code 0 "$rc" "an unwritable capture target must not stop the run: $out"
   assert_contains "$(log)" "run --name $NAME" "the worker ran normally"
   assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed after the failed capture"
-  expect_code 0 "$(find "$STATE/t1.sbx-policy-log.jsonl" -mindepth 1 | wc -l)" "the failed capture wrote nothing into the target"
+  expect_code 0 "$(find "$STATE/t1.sbx-policy-log.json" -mindepth 1 | wc -l)" "the failed capture wrote nothing into the target"
   pass "a capture target that refuses the write never fails the run and still removes the sandbox"
 }
 

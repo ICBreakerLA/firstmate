@@ -131,6 +131,9 @@ wrap() {
 
 log() { cat "$LOG"; }
 
+# policy_captures: the policy-log capture files this world's task t1 left in state/.
+policy_captures() { find "$STATE" -maxdepth 1 -name 't1.sbx-policy-log.*.json' | sort; }
+
 test_creates_with_minimal_mounts_and_cleans_up() {
   local out rc create
   new_world mounts
@@ -1007,24 +1010,30 @@ test_openrouter_logs_the_tasks_cost_without_the_key() {
 }
 
 test_the_policy_log_is_captured_host_side_on_exit() {
+  local captures
   new_world pollog
   printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
   wrap --kind scout --allow example.org -- claude >/dev/null 2>&1
-  # The captured file must be the whole multi-line JSON document sbx prints
-  # for this sandbox: it must parse as JSON, carry every pinned allow, and
-  # carry every entry under this sandbox's name.
-  jq -e --arg n "$NAME" '
-    .sandbox == $n
-    and all((.allowed_hosts + .blocked_hosts)[]; .vm_name == $n)
-    and (([.allowed_hosts[].host] |
+  captures=$(policy_captures)
+  expect_code 1 "$(printf '%s\n' "$captures" | sed '/^$/d' | wc -l)" "one launch leaves exactly one timestamped capture file: $captures"
+  # The captured file must be the whole JSON document sbx prints for this
+  # sandbox: exactly one JSON document, every pinned allow, and every entry
+  # under this sandbox's name.
+  jq -es --arg n "$NAME" '
+    length == 1
+    and (.[0].sandbox == $n)
+    and all((.[0].allowed_hosts + .[0].blocked_hosts)[]; .vm_name == $n)
+    and (([.[0].allowed_hosts[].host] |
           (index("github.com:443") != null) and
           (index("api.github.com:443") != null) and
           (index("example.org") != null)))
-    and (.allowed_hosts | length) == 3
-  ' "$STATE/t1.sbx-policy-log.json" >/dev/null \
-    || fail "the captured policy log is the whole JSON document sbx prints for this sandbox: $(cat "$STATE/t1.sbx-policy-log.json" 2>/dev/null)"
+    and (.[0].allowed_hosts | length) == 3
+  ' "$captures" >/dev/null \
+    || fail "the captured policy log is the whole JSON document sbx prints for this sandbox: $(cat "$captures" 2>/dev/null)"
+  printf '%s\n' "$captures" | grep -Eq '^'"$STATE"'/t1\.sbx-policy-log\.[0-9]{8}T[0-9]{6}Z\.json$' \
+    || fail "the capture file is named state/<id>.sbx-policy-log.<UTC-stamp>.json: $captures"
   assert_absent "$DATA/t1/sbx-policy-log.json" "nothing is captured into the mounted task data directory"
-  pass "the sandbox's host-side network policy log is captured on exit as the JSON document sbx prints for it, at state/<id>.sbx-policy-log.json, outside every sandbox mount"
+  pass "the sandbox's host-side network policy log is captured on exit as the whole JSON document sbx prints for it, at a fresh state/<id>.sbx-policy-log.<UTC-stamp>.json, outside every sandbox mount"
 }
 
 test_an_unavailable_policy_log_writes_nothing() {
@@ -1036,7 +1045,7 @@ test_an_unavailable_policy_log_writes_nothing() {
   expect_code 0 "$rc" "a log sbx cannot print must not stop the run: $out"
   assert_contains "$(log)" "run --name $NAME" "the worker ran normally"
   assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed"
-  assert_absent "$STATE/t1.sbx-policy-log.json" "an unavailable log writes no file"
+  expect_code 0 "$(policy_captures | wc -l)" "an unavailable log writes no capture file"
   pass "an unavailable policy log writes nothing and never fails the run"
 }
 
@@ -1044,14 +1053,50 @@ test_a_capture_target_that_refuses_writes_never_fails_the_run() {
   local out rc
   new_world polwritefail
   printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
-  # The capture path is occupied by a directory, so the append must fail.
-  mkdir -p "$STATE/t1.sbx-policy-log.json"
+  # The launch writes its per-task directories, then state/ is closed for
+  # writing, so the fresh capture file is the write that must fail.
+  mkdir -p "$STATE/t1.sbx" "$STATE/t1.sbx-relay" "$STATE/t1.inbox/handled"
+  chmod 555 "$STATE"
   out=$(wrap --kind scout -- claude 2>&1); rc=$?
+  chmod 755 "$STATE"
   expect_code 0 "$rc" "an unwritable capture target must not stop the run: $out"
   assert_contains "$(log)" "run --name $NAME" "the worker ran normally"
   assert_contains "$(log)" "rm --force $NAME" "the sandbox is removed after the failed capture"
-  expect_code 0 "$(find "$STATE/t1.sbx-policy-log.json" -mindepth 1 | wc -l)" "the failed capture wrote nothing into the target"
+  expect_code 0 "$(policy_captures | wc -l)" "the refused capture left no capture file"
   pass "a capture target that refuses the write never fails the run and still removes the sandbox"
+}
+
+test_two_launches_of_the_same_task_leave_two_distinct_parseable_json_files() {
+  local out rc names f docs
+  new_world polrelaunch
+  printf '%s\n' "$SECRET" >"$CONFIG/sbx-github-token"
+  out=$(wrap --kind scout --allow example.org -- claude 2>&1); rc=$?
+  expect_code 0 "$rc" "the first launch ran: $out"
+  # The relaunch creates a new sandbox, whose policy log starts empty.
+  : >"$W/policy.log"
+  out=$(wrap --kind scout --allow example.org -- claude 2>&1); rc=$?
+  expect_code 0 "$rc" "the relaunch ran: $out"
+  expect_code 2 "$(policy_captures | wc -l)" "the relaunch of the same task left two capture files: $(policy_captures)"
+  names=$(policy_captures | sed 's|.*/||' | sort -u)
+  expect_code 2 "$(printf '%s\n' "$names" | wc -l)" "the two capture files have distinct names: $names"
+  printf '%s\n' "$names" | grep -Eqx 't1\.sbx-policy-log\.[0-9]{8}T[0-9]{6}Z(\.[0-9]+)?\.json' \
+    || fail "capture files carry the launch's UTC stamp: $names"
+  docs=0
+  while IFS= read -r f; do
+    jq -es --arg n "$NAME" '
+      length == 1
+      and (.[0].sandbox == $n)
+      and all((.[0].allowed_hosts + .[0].blocked_hosts)[]; .vm_name == $n)
+      and (([.[0].allowed_hosts[].host] |
+            (index("github.com:443") != null) and
+            (index("api.github.com:443") != null) and
+            (index("example.org") != null)))
+      and (.[0].allowed_hosts | length) == 3
+    ' "$f" >/dev/null && docs=$((docs + 1))
+  done < <(policy_captures)
+  expect_code 2 "$docs" "each capture file is exactly one complete parseable JSON document of its launch's rules"
+  assert_absent "$DATA/t1/sbx-policy-log.json" "nothing is captured into the mounted task data directory"
+  pass "two launches of the same task leave two distinct parseable JSON files, each its launch's whole policy log"
 }
 
 test_creates_with_minimal_mounts_and_cleans_up
@@ -1105,5 +1150,6 @@ test_openrouter_logs_the_tasks_cost_without_the_key
 test_the_policy_log_is_captured_host_side_on_exit
 test_an_unavailable_policy_log_writes_nothing
 test_a_capture_target_that_refuses_writes_never_fails_the_run
+test_two_launches_of_the_same_task_leave_two_distinct_parseable_json_files
 
 echo "# all fm-sbx-run tests passed"

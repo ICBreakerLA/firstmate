@@ -89,11 +89,11 @@
 # It runs as a child of the pane shell, never exec'd over it, so that its EXIT,
 # HUP, TERM and INT traps always remove the sandbox, stop the relay with a
 # final drain, stop the verification broker with a forced emulator shutdown,
-# bring the clone's commits back to the worktree, and append the sandbox's
+# bring the clone's commits back to the worktree, and write the sandbox's
 # host-side network policy log (the JSON document `sbx policy log --json
-# NAME` prints for the sandbox) to state/<id>.sbx-policy-log.json, outside
-# every sandbox mount, as evidence of its network activity; an empty or
-# unavailable log writes nothing.
+# NAME` prints for the sandbox) to a fresh state/<id>.sbx-policy-log.<UTC-
+# stamp>.json on every exit, outside every sandbox mount, as evidence of
+# its network activity; an empty or unavailable log writes nothing.
 #
 # Credentials: the host's credentials are never mounted or copied.
 # The secrets are read on the host and stored as per-sandbox sbx secrets that the
@@ -234,7 +234,7 @@ or_usage_log() {
 # The sandbox goes first so nothing writes the channel while it is drained.
 # shellcheck disable=SC2329 # reached through the EXIT/HUP/TERM/INT traps
 cleanup() {
-  local policy_log
+  local policy_log policy_stamp policy_file policy_seq
   [ "$CLEANED" = 0 ] || return 0
   CLEANED=1
   trap - EXIT HUP TERM INT
@@ -245,11 +245,20 @@ cleanup() {
   fi
   # sbx keeps each sandbox's network policy log on the host; the JSON
   # document it prints for the sandbox is captured while the sandbox is
-  # still recorded, under state/, which no sandbox mount reaches, and an
+  # still recorded, under state/, which no sandbox mount reaches, as one
+  # fresh timestamped file per launch so a relaunch of the same task
+  # never appends to an earlier capture and never overwrites one, and an
   # empty or unavailable log writes nothing and never fails the run.
   policy_log=$(fm_sbx_policy_log "$NAME" 2>/dev/null || true)
   if [ -n "$policy_log" ]; then
-    printf '%s\n' "$policy_log" >>"$STATE/$ID.sbx-policy-log.json" 2>/dev/null || true
+    policy_stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    policy_file="$STATE/$ID.sbx-policy-log.$policy_stamp.json"
+    policy_seq=2
+    while [ -e "$policy_file" ]; do
+      policy_file="$STATE/$ID.sbx-policy-log.$policy_stamp.$policy_seq.json"
+      policy_seq=$((policy_seq + 1))
+    done
+    printf '%s\n' "$policy_log" >"$policy_file" 2>/dev/null || true
   fi
   fm_sbx_rm "$NAME" || echo "notice: sandbox $NAME could not be removed; run: sbx rm --force $NAME" >&2
   if [ -n "$RELAY_PID" ]; then

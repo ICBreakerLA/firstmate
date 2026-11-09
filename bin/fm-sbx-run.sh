@@ -22,8 +22,9 @@
 #   --kind scout    no fetch-back; a scout's deliverable is its report.
 #   --nm            a no-mistakes ship: the host's no-mistakes binary is copied
 #                   into the VM, along with the host's gh (the image's is too old
-#                   for the pipeline's CI step), and github.com and
-#                   api.github.com are allowed for this one sandbox.
+#                   for the pipeline's CI step), and github.com:443 and
+#                   api.github.com:443, pinned to the TLS port, are allowed for
+#                   this one sandbox.
 #                   The copy must report the host's version (and --nm-pin's
 #                   when given), and before the worker starts the clone's origin
 #                   HEAD is set to the real default branch and `no-mistakes
@@ -32,7 +33,9 @@
 #                   each only at the version bin/fm-lint.sh and
 #                   bin/fm-lint-workflows.sh pin, because the sandbox cannot
 #                   download them (fm_sbx_lint_tools in bin/fm-sbx-lib.sh).
-#   --allow HOSTS   further per-sandbox allowed hosts (comma separated).
+#   --allow HOSTS   further per-sandbox allowed hosts (comma separated; each
+#                   entry is a host name, optionally host:PORT, which opens
+#                   only that port for that host).
 #   --npm-cache DIR a read-only npm seed cache (bin/fm-sbx-npm-seed.sh).
 #   --verify app
 #                   the host verification broker (bin/fm-sbx-verify-broker.sh,
@@ -66,10 +69,11 @@
 #                   stored is removed. The sandbox also loses its inherited
 #                   anthropic secret, gets a sandbox-scoped deny for
 #                   api.anthropic.com and one sandbox-scoped allow for
-#                   openrouter.ai, and the launch stops if the VM cannot
-#                   authenticate to OpenRouter with the placeholder or can
-#                   reach the Anthropic API. The key's spend before and after
-#                   the task is appended to data/<id>/openrouter-usage.log.
+#                   openrouter.ai:443, pinned to the TLS port, and the launch
+#                   stops if the VM cannot authenticate to OpenRouter with the
+#                   placeholder or can reach the Anthropic API. The key's
+#                   spend before and after the task is appended to
+#                   data/<id>/openrouter-usage.log.
 #                   There is no concurrency lock.
 #   CLAUDE_ARGS     the claude command line, exactly as the launch built it.
 #
@@ -77,13 +81,19 @@
 # the sandbox with the minimal mount set and an explicit environment
 # allowlist, remove the instruction file sbx plants, link the brief's status
 # path and worktree path into the VM, copy the user-level skills, apply the
-# optional per-sandbox GitHub secret and network rules, start the host relay
-# (bin/fm-sbx-relay.sh) and, when asked, the verification broker, and run claude
-# in the sandbox.
+# optional per-sandbox GitHub secret and the port-pinned per-sandbox network
+# rules (every host the fleet opens is pinned to the port a worker uses, so
+# sbx's global deny-all stays the port floor for everything else), start the
+# host relay (bin/fm-sbx-relay.sh) and, when asked, the verification broker,
+# and run claude in the sandbox.
 # It runs as a child of the pane shell, never exec'd over it, so that its EXIT,
 # HUP, TERM and INT traps always remove the sandbox, stop the relay with a
-# final drain, stop the verification broker with a forced emulator shutdown, and
-# bring the clone's commits back to the worktree.
+# final drain, stop the verification broker with a forced emulator shutdown,
+# bring the clone's commits back to the worktree, and write the sandbox's
+# host-side network policy log (the JSON document `sbx policy log --json
+# NAME` prints for the sandbox) to a fresh state/<id>.sbx-policy-log.<UTC-
+# stamp>.json on every exit, outside every sandbox mount, as evidence of
+# its network activity; an empty or unavailable log writes nothing.
 #
 # Credentials: the host's credentials are never mounted or copied.
 # The secrets are read on the host and stored as per-sandbox sbx secrets that the
@@ -168,7 +178,7 @@ fm_sbx_is_fleet_name "$NAME" || die "sandbox name '$NAME' is not a fleet sandbox
 case "$CPUS" in '' | *[!0-9]*) die "--cpus must be a number" ;; esac
 case "$MEMORY" in [1-9]*g) ;; *) die "--memory must look like 4g" ;; esac
 case "$VERIFY" in '' | app) ;; *) die "--verify only accepts app" ;; esac
-case "$ALLOW" in *[!A-Za-z0-9.,*-]*) die "--allow takes comma-separated host names only" ;; esac
+[ -n "$ALLOW" ] && { fm_sbx_valid_allow_list "$ALLOW" || die "--allow takes comma-separated host names, each with an optional :PORT suffix"; }
 for d in "$STATE" "$DATA" "$ROOT" "$WT" "$CLONE"; do
   case "$d" in /*) ;; *) die "paths must be absolute: $d" ;; esac
 done
@@ -224,6 +234,7 @@ or_usage_log() {
 # The sandbox goes first so nothing writes the channel while it is drained.
 # shellcheck disable=SC2329 # reached through the EXIT/HUP/TERM/INT traps
 cleanup() {
+  local policy_log policy_stamp policy_file policy_seq
   [ "$CLEANED" = 0 ] || return 0
   CLEANED=1
   trap - EXIT HUP TERM INT
@@ -231,6 +242,23 @@ cleanup() {
   # sync lands them on the clone's branch, and removing the sandbox ends them.
   if [ "$NM" = 1 ] && [ "$KIND" = ship ] && fm_nm_sandbox_bind "$WT" "$NAME" "$CLONE"; then
     fm_nm_run_bounded "$WT" 120 axi sync >/dev/null 2>&1 || true
+  fi
+  # sbx keeps each sandbox's network policy log on the host; the JSON
+  # document it prints for the sandbox is captured while the sandbox is
+  # still recorded, under state/, which no sandbox mount reaches, as one
+  # fresh timestamped file per launch so a relaunch of the same task
+  # never appends to an earlier capture and never overwrites one, and an
+  # empty or unavailable log writes nothing and never fails the run.
+  policy_log=$(fm_sbx_policy_log "$NAME" 2>/dev/null || true)
+  if [ -n "$policy_log" ]; then
+    policy_stamp=$(date -u +%Y%m%dT%H%M%SZ)
+    policy_file="$STATE/$ID.sbx-policy-log.$policy_stamp.json"
+    policy_seq=2
+    while [ -e "$policy_file" ]; do
+      policy_file="$STATE/$ID.sbx-policy-log.$policy_stamp.$policy_seq.json"
+      policy_seq=$((policy_seq + 1))
+    done
+    printf '%s\n' "$policy_log" >"$policy_file" 2>/dev/null || true
   fi
   fm_sbx_rm "$NAME" || echo "notice: sandbox $NAME could not be removed; run: sbx rm --force $NAME" >&2
   if [ -n "$RELAY_PID" ]; then
@@ -376,7 +404,7 @@ if [ "$NM" = 1 ]; then
       echo "notice: the host gh does not run inside $NAME, so the pipeline's CI step uses the image's older gh" >&2
     fi
   fi
-  ALLOW="github.com,api.github.com${ALLOW:+,$ALLOW}"
+  ALLOW="$FM_SBX_GITHUB_ALLOW${ALLOW:+,$ALLOW}"
 fi
 [ "$NM" != 1 ] || [ "$KIND" != ship ] || fm_sbx_lint_tools "$NAME" "$ROOT"
 # A ship of the Firstmate fork delivers to the fork, so its sandbox starts with
@@ -404,11 +432,11 @@ if [ -z "$GH_TOKEN_VALUE" ] && [ "$FORK_SECRET" = 0 ] && [ -f "$CONFIG/sbx-githu
   GH_TOKEN_VALUE=$(tr -d '[:space:]' <"$CONFIG/sbx-github-token" 2>/dev/null || true)
 fi
 if [ "$FORK_SECRET" = 1 ]; then
-  case ",$ALLOW," in *,github.com,*) ;; *) ALLOW="github.com,api.github.com${ALLOW:+,$ALLOW}" ;; esac
+  case ",$ALLOW," in *,$FM_SBX_GITHUB_ALLOW,*) ;; *) ALLOW="$FM_SBX_GITHUB_ALLOW${ALLOW:+,$ALLOW}" ;; esac
 elif [ -n "$GH_TOKEN_VALUE" ]; then
   printf '%s' "$GH_TOKEN_VALUE" | sbx secret set github --sandbox "$NAME" >/dev/null 2>&1 ||
     die "could not store the per-sandbox GitHub secret for $NAME"
-  case ",$ALLOW," in *,github.com,*) ;; *) ALLOW="github.com,api.github.com${ALLOW:+,$ALLOW}" ;; esac
+  case ",$ALLOW," in *,$FM_SBX_GITHUB_ALLOW,*) ;; *) ALLOW="$FM_SBX_GITHUB_ALLOW${ALLOW:+,$ALLOW}" ;; esac
 elif [ "$NM" = 1 ]; then
   echo "notice: no GitHub token (FM_SBX_GH_TOKEN or config/sbx-github-token) is set, so the in-sandbox pipeline cannot push or open the pull request" >&2
 fi
@@ -437,8 +465,8 @@ if [ -n "$OPENROUTER" ]; then
     die "could not store the OpenRouter secret for $NAME; no worker was started"
   sbx policy deny network --sandbox "$NAME" "$FM_OPENROUTER_ANTHROPIC_HOST" >/dev/null 2>&1 ||
     die "could not add the per-sandbox deny rule ($FM_OPENROUTER_ANTHROPIC_HOST) for $NAME"
-  sbx policy allow network --sandbox "$NAME" "$FM_OPENROUTER_POLICY_HOST" >/dev/null 2>&1 ||
-    die "could not add the per-sandbox network rule ($FM_OPENROUTER_POLICY_HOST) for $NAME"
+  sbx policy allow network --sandbox "$NAME" "$FM_OPENROUTER_ALLOW_HOST" >/dev/null 2>&1 ||
+    die "could not add the per-sandbox network rule ($FM_OPENROUTER_ALLOW_HOST) for $NAME"
   # An authenticated request proves the proxy substitutes the real key for the
   # placeholder, not merely that the host is reachable.
   sbx exec "$NAME" curl -fsS --max-time 10 -H "Authorization: Bearer $FM_OPENROUTER_AUTH_PLACEHOLDER" "$FM_OPENROUTER_VM_URL/v1/key" >/dev/null 2>&1 ||

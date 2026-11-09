@@ -54,6 +54,8 @@ test_sbx_defaults_and_options() {
   assert_equals "" "$FM_SBX_ALLOW" "no extra hosts by default"
   load 'sbx allow=registry.npmjs.org,*.example.org cpus=2\n' || fail "allow= should be accepted"
   assert_equals "registry.npmjs.org,*.example.org 2" "$FM_SBX_ALLOW $FM_SBX_CPUS" "allow hosts are parsed"
+  load 'sbx allow=example.org:8080,github.com:443\n' || fail "allow= with :PORT entries should be accepted"
+  assert_equals "example.org:8080,github.com:443" "$FM_SBX_ALLOW" "a port-pinned allow entry is parsed as written"
   assert_equals "" "$FM_SBX_NM_PIN" "no version pin by default"
   load 'sbx nm=v1.79.0\n' || fail "nm= should be accepted"
   assert_equals "v1.79.0" "$FM_SBX_NM_PIN" "the no-mistakes pin is parsed"
@@ -65,7 +67,7 @@ test_sbx_defaults_and_options() {
 
 test_malformed_values_are_refused() {
   local bad err
-  for bad in 'docker\n' 'sbx cpus=0\n' 'sbx cpus=65\n' 'sbx memory=4\n' 'sbx memory=0g\n' 'sbx gpus=1\n' 'off cpus=2\n' 'sbx allow=\n' 'sbx allow=a b;c\n' 'sbx allow=a,,b\n' 'sbx allow=host/path\n' 'sbx nm=latest\n' 'sbx nm=v1.2\n' 'sbx nm=v1.2.3;x\n' 'sbx verify=\n' 'sbx verify=other\n' 'sbx verify=app,x\n'; do
+  for bad in 'docker\n' 'sbx cpus=0\n' 'sbx cpus=65\n' 'sbx memory=4\n' 'sbx memory=0g\n' 'sbx gpus=1\n' 'off cpus=2\n' 'sbx allow=\n' 'sbx allow=a b;c\n' 'sbx allow=a,,b\n' 'sbx allow=host/path\n' 'sbx allow=example.org:\n' 'sbx allow=:8080\n' 'sbx allow=example.org:80x0\n' 'sbx allow=github.com:443:443\n' 'sbx nm=latest\n' 'sbx nm=v1.2\n' 'sbx nm=v1.2.3;x\n' 'sbx verify=\n' 'sbx verify=other\n' 'sbx verify=app,x\n'; do
     err=$(load "$bad" 2>&1) && fail "'$bad' should be refused"
     assert_contains "$err" "config/worker-sandbox" "the refusal names the file for '$bad'"
   done

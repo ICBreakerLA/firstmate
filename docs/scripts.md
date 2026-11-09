@@ -124,10 +124,10 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-ci-rerun-failed.sh`  | Re-run only the failed jobs of a PR's latest failed CI run, refusing a live, green, or moved-head run, and print what it re-ran |
 | `fm-host-lint.sh`        | Lint a sandboxed worker's clone on the host in parallel partitions and print the evidence plus the answer text for a parked lint gate, never answering it; also the worker's pipeline-fix patch export |
 | `fm-nm-run-lib.sh`       | Single owner of shared no-mistakes run-attribution primitives and rules             |
-| `fm-sbx-lib.sh`          | Single owner of the `config/worker-sandbox` grammar, sandbox names, the sbx preflight, and idempotent sandbox removal |
-| `fm-local-llm-lib.sh`    | Single owner of the local-model worker profile: model selection, the server health check, the fail-closed server-mid-request probe the watcher's local-model deferral reads, the one-local-worker claim and its handoff, the dispatch-chosen availability fallback and optional server start, and the sandbox environment |
-| `fm-openrouter-lib.sh`   | Single owner of the OpenRouter worker profile: the `or:` model selector, the key file, the alias chain and zero-retention probe, the sandbox environment, and the key's usage reading |
-| `fm-sbx-run.sh`          | Run a Claude worker in its own sbx microVM (also reached as `claude-sbx`), with traps that remove the sandbox and bring its commits back |
+| `fm-sbx-lib.sh`          | Single owner of the `config/worker-sandbox` grammar and its allow-list validator, sandbox names, the sbx preflight, idempotent sandbox removal, and the host-side policy-log capture |
+| `fm-local-llm-lib.sh`    | Single owner of the local-model worker profile: model selection, the server health check, the fail-closed server-mid-request probe the watcher's local-model deferral reads, the one-local-worker claim and its handoff, the dispatch-chosen availability fallback and optional server start, and the sandbox environment and its port-pinned allow host |
+| `fm-openrouter-lib.sh`   | Single owner of the OpenRouter worker profile: the `or:` model selector, the key file, the alias chain and zero-retention probe, the sandbox environment and its port-pinned allow host, and the key's usage reading |
+| `fm-sbx-run.sh`          | Run a Claude worker in its own sbx microVM (also reached as `claude-sbx`), with traps that remove the sandbox, capture its host-side network policy log as a fresh timestamped file per launch, and bring its commits back |
 | `fm-sbx-bridge.sh`       | Create a sandboxed task's standalone clone and bring its branches back with a fast-forward-only fetch, treating the clone as untrusted |
 | `fm-sbx-relay.sh`        | Mirror a sandboxed worker's channel into the task's real status and busy-state records |
 | `fm-sbx-npm-seed.sh`     | Seed the read-only npm cache that sandboxed workers install from offline |

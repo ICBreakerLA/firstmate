@@ -1359,6 +1359,27 @@ test_paused_until_that_passed_is_rechecked_before_the_cadence() {
   pass "a declared wait whose until time has passed is rechecked at once, then held to the cadence"
 }
 
+# Every accepted cadence must sit at or below age_of's missing-marker sentinel
+# (999999) - the age a window with no prior re-surface compares against - so a
+# window's first episode recheck can never be silenced: an over-sentinel value
+# normalizes onto the documented 14400 default.
+test_paused_cadence_past_sentinel_uses_default() {
+  local dir state throttle
+  dir=$(paused_until_fixture until-sentinel-cadence "$(( $(date +%s) - 30 ))" 60); state="$dir/state"
+  throttle="$state/.paused-resurfaced-$(printf '%s' 'test:fm-until' | tr '.:/' '___')"
+  until_watch "$dir" 1209600
+  wait_for_exit "$UNTIL_PID" 100 \
+    || { reap "$UNTIL_PID"; fail "an over-sentinel pause-resurface cadence silenced the passed declared time: $(cat "$dir/watch.out")"; }
+  grep -F 'declared clearing time has passed' "$dir/watch.out" >/dev/null \
+    || fail "the normalized cadence recheck gave the wrong reason: $(cat "$dir/watch.out")"
+  case "$(cat "$throttle" 2>/dev/null)" in
+    *:due) ;;
+    *) fail "the normalized cadence did not record the due re-surface throttle: $(cat "$throttle" 2>/dev/null)" ;;
+  esac
+  reap "$UNTIL_PID"
+  pass "an over-sentinel pause-resurface cadence normalizes onto the default and rechecks the passed declared time"
+}
+
 # --- a live worker paused on its own background job --------------------------
 # A worker declared `paused:` on its own background job and the job then ended
 # without a new status line, so only the passage of time can tell the watcher
@@ -1497,4 +1518,5 @@ fm_test_run \
   test_paused_until_wrong_year_is_bounded_by_the_cadence \
   test_paused_until_that_passed_is_rechecked_before_the_cadence \
   test_paused_bg_job_without_until_stays_silent_after_the_job_ends \
-  test_paused_bg_job_until_timeout_rechecks_after_the_job_ends
+  test_paused_bg_job_until_timeout_rechecks_after_the_job_ends \
+  test_paused_cadence_past_sentinel_uses_default

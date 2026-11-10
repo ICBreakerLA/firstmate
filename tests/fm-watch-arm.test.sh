@@ -1392,22 +1392,26 @@ test_take_over_confirms_a_watcher_stopped_inside_its_event_wait() {
   pass "watch-arm: --take-over of a watcher inside its herdr event wait confirms the stop and resurfaces nothing"
 }
 
-# Pause just after handover releases its snapshot locks, then fail the old
-# watcher's secondmate tick write so it exits through cleanup before TERM lands.
+# Pause just after handover releases its snapshot locks, then plant invalid
+# open-decision reminder settings in the old watcher's face so it takes the
+# poll loop's one sanctioned exit (settings refusal) through cleanup before
+# TERM lands. Transient tick write failures no longer stop a watcher, so the
+# self-fatal exit this leg pins rides on the surviving refusal path.
 # The ledger and recovery wake are public output contracts, not source probes.
 test_take_over_preserves_downtime_from_watcher_self_exit() {
   local dir home state fakebin owner watcher armout acknowledged real_rm real_touch status i
   dir=$(make_case take-over-self-exit)
   home="$dir/home"
-  mkdir -p "$home"
+  mkdir -p "$home" "$home/config"
   state="$dir/state"
   fakebin="$dir/fakebin"
   armout="$dir/arm.out"
   real_touch=$(command -v touch)
-  printf '#!/usr/bin/env bash\nif [ "$*" = "%s/.secondmate-liveness-tick" ] && [ -e "%s/fail-tick" ]; then exit 1; fi\nexec "%s" "$@"\n' \
-    "$state" "$dir" "$real_touch" > "$fakebin/touch"
+  printf '#!/usr/bin/env bash\nif [ "$*" = "%s/.secondmate-liveness-tick" ] && [ -e "%s/fail-tick" ]; then : > "%s/config/open-decision-reminders"; exit 1; fi\nexec "%s" "$@"\n' \
+    "$state" "$dir" "$home" "$real_touch" > "$fakebin/touch"
   chmod +x "$fakebin/touch"
-  FM_SECONDMATE_LIVENESS_SECS=1 start_rearm_arm "$home" "$state" "$fakebin" "$dir/owner.out" "$$"
+  FM_SECONDMATE_LIVENESS_SECS=1 FM_OPEN_DECISION_OVERDUE_SECS=0 \
+    start_rearm_arm "$home" "$state" "$fakebin" "$dir/owner.out" "$$"
   owner=$ARM_PID
   watcher=$(cat "$state/.watch.lock/pid")
   append_wake "$state" signal take-over "signal: fixture handled by main"

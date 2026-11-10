@@ -212,41 +212,101 @@ test_watcher_loop() {
   pass "the actual watcher wakes and exits on an overdue key without any recorded pane"
 }
 
+# settle_wakes <dir>: replay the case's durable queue through the real drain and
+# post the acknowledgement it names, the same handling boundary a firstmate
+# applies between supervision cycles, so the next cycle sees a settled handoff
+# and exercises its scan instead of exiting on the downtime re-arm wake.
+settle_wakes() {
+  local dir=$1 seq gen
+  FM_ROOT_OVERRIDE="$TMP_ROOT" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" \
+    "$ROOT/bin/fm-wake-drain.sh" > /dev/null 2> "$dir/drain.err" || true
+  seq=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--ack-through \([0-9][0-9]*\).*$/\1/p' "$dir/drain.err")
+  gen=$(sed -n 's/^WAKE_ACK_REQUIRED:.*--recovery-generation \([A-Za-z0-9._-][A-Za-z0-9._-]*\).*$/\1/p' "$dir/drain.err")
+  [ -n "$seq" ] && [ -n "$gen" ] || return 0
+  FM_ROOT_OVERRIDE="$TMP_ROOT" FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" \
+    "$ROOT/bin/fm-wake-drain.sh" --ack-through "$seq" --recovery-generation "$gen" \
+    > /dev/null 2>&1 || true
+}
+
+# The watcher exits 0 on its first emitted wake; that is a completed cycle,
+# not supervision ending - in production the arm starts the next cycle. So this
+# test runs whole cycles to completion, with a drain+ack between them the way
+# supervision handles every cycle: surviving means each cycle exits 0 on its
+# wake and keeps surfacing new status while a failing ledger alarms on a
+# bounded cadence, never one line per poll. The quiet middle cycle counts the
+# guard's alarm markers - touched once per raise - so the drain cost between
+# cycles can never drift an expectation against a wall clock.
 test_watcher_loop_survives_ledger_failure() {
-  local dir="$TMP_ROOT/watcher-ledger-failure" pid i=0 rc alarm
+  local dir="$TMP_ROOT/watcher-ledger-failure" rc alarm marker touches last m i pid
   mkdir -p "$dir/state" "$dir/config"
   fm_test_track_watcher_state "$dir/state"
   touch "$dir/config/open-decision-reminders" "$dir/state/home-summary.json"
   ln -s "$TMP_ROOT/not-a-ledger" "$dir/state/.open-decision-reminders"
+  marker="$dir/state/.tick-alarm-open-decision"
   printf 'needs-decision [at=1000] [key=api]: choose\n' > "$dir/state/worker.status"
+  rc=0
   FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
-    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_OPEN_DECISION_OVERDUE_SECS=100 \
-    FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
-    bash "$ROOT/bin/fm-watch.sh" > "$dir/out" 2> "$dir/err" &
+    FM_POLL=1 FM_WATCH_TICK_ALARM_SECS=3 \
+    FM_OPEN_DECISION_OVERDUE_SECS=100 FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/cycle1.out" 2> "$dir/cycle1.err" || rc=$?
+  [ "$rc" -eq 0 ] \
+    || fail "the poll loop died on a failing reminder ledger (rc=$rc): $(cat "$dir/cycle1.err")"
+  [ "$(grep -c -F 'watcher: open-decision reminder check failed' "$dir/cycle1.err")" -eq 1 ] \
+    || fail "one ledger failure episode did not alarm exactly once: $(cat "$dir/cycle1.err")"
+  grep -F "signal: $dir/state/worker.status" "$dir/cycle1.out" >/dev/null \
+    || fail "the cycle beside a ledger failure did not surface the seeded status: $(cat "$dir/cycle1.out" "$dir/cycle1.err")"
+  settle_wakes "$dir"
+  # A quiet cycle has no new status to wake on, so the failing reminder tick
+  # repeats every poll: the watcher must survive a full cadence of failures
+  # and raise once per elapsed cadence. Counting marker touches bounds the
+  # cycle by alarms, not time, so startup and drain cost cannot skew it.
+  touches=0
+  last=$(stat_mtime "$marker")
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_POLL=1 FM_WATCH_TICK_ALARM_SECS=3 \
+    FM_OPEN_DECISION_OVERDUE_SECS=100 FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/cycle2.out" 2> "$dir/cycle2.err" &
   pid=$!
   i=0
-  while [ "$i" -lt 30 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
-  kill -0 "$pid" 2>/dev/null || fail "watcher stopped on a failing reminder ledger: $(cat "$dir/err")"
-  sleep 2
-  kill -0 "$pid" 2>/dev/null || fail "watcher stopped on repeated ledger write failures: $(cat "$dir/err")"
-  printf 'blocked [at=900000000] [key=live]: help\n' >> "$dir/state/worker.status"
-  i=0
-  while [ "$i" -lt 100 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-    fail "a watcher surviving its ledger failure never surfaced the appended status: $(cat "$dir/out" "$dir/err")"
+  while [ "$touches" -lt 3 ] && [ "$i" -lt 150 ] && kill -0 "$pid" 2>/dev/null; do
+    sleep 0.1
+    i=$((i + 1))
+    m=$(stat_mtime "$marker" 2>/dev/null || true)
+    if [ "$m" != "$last" ]; then
+      touches=$((touches + 1))
+      last=$m
+    fi
+  done
+  if ! kill -0 "$pid" 2>/dev/null; then
+    fail "the poll loop died on a repeated reminder ledger failure: $(cat "$dir/cycle2.err")"
   fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [ "$touches" -eq 3 ] \
+    || fail "a failing ledger at a 3s cadence survived 15s without raising three bounded alarms (got $touches)"
+  alarm=$(grep -c -F 'watcher: open-decision reminder check failed' "$dir/cycle2.err" || true)
+  [ "$alarm" -eq "$touches" ] \
+    || fail "the quiet cycle printed $alarm alarm lines for $touches bounded raises: $(cat "$dir/cycle2.err")"
+  settle_wakes "$dir"
+  # Stretching the cadence past the gap between cycles keeps the alarm raised
+  # at the killed cycle suppressed, and supervision keeps surfacing new status.
+  printf 'blocked [at=900000000] [key=live]: help\n' > "$dir/state/mate.status"
   rc=0
-  wait "$pid" || rc=$?
-  [ "$rc" -eq 0 ] || fail "watcher exited $rc on a failing reminder ledger: $(cat "$dir/err")"
-  grep -F 'watcher: open-decision reminder check failed' "$dir/err" >/dev/null \
-    || fail "a failing reminder ledger produced no alarm: $(cat "$dir/err")"
-  alarm=$(grep -c -F 'watcher: open-decision reminder check failed' "$dir/err")
-  [ "$alarm" -eq 1 ] || fail "the ledger alarm repeated on every failed poll: $alarm lines"
-  [ "$(wc -l < "$dir/state/.wake-queue" | tr -d ' ')" = 1 ] \
-    || fail "the surviving cycle queued more than the appended status wake: $(cat "$dir/state/.wake-queue")"
-  pass "a failing reminder ledger alarms once, and live supervision keeps surfacing new status"
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_POLL=1 FM_WATCH_TICK_ALARM_SECS=300 \
+    FM_OPEN_DECISION_OVERDUE_SECS=100 FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/cycle3.out" 2> "$dir/cycle3.err" || rc=$?
+  [ "$rc" -eq 0 ] \
+    || fail "a suppressed-cadence cycle beside the ledger failure died (rc=$rc): $(cat "$dir/cycle3.err")"
+  grep -F "signal: $dir/state/mate.status" "$dir/cycle3.out" >/dev/null \
+    || fail "supervision stopped surfacing new status after repeated ledger failures: $(cat "$dir/cycle3.out" "$dir/cycle3.err")"
+  ! grep -Fq 'watcher: open-decision reminder check failed' "$dir/cycle3.err" \
+    || fail "the ledger alarm re-raised inside its cadence: $(cat "$dir/cycle3.err")"
+  alarm=$(cat "$dir/cycle1.err" "$dir/cycle2.err" "$dir/cycle3.err" \
+    | grep -c -F 'watcher: open-decision reminder check failed' || true)
+  [ "$alarm" -eq 4 ] \
+    || fail "the ledger alarm over three failing cycles was $alarm lines, expected 4: one per elapsed cadence, never one per poll"
+  pass "a failing reminder ledger alarms once per elapsed cadence while surviving cycles keep surfacing new status"
 }
 
 test_watcher_loop_invalid_settings_refusal() {

@@ -1443,7 +1443,16 @@ housekeeping() {  # <state>
   # exactly the declaration that needs it. The crew's own latest status line is the
   # authority, and the loop head above already drops the marker the moment that line
   # stops declaring the wait.
-  pause_secs=${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}
+  # Normalize an unusable FM_PAUSE_RESURFACE_SECS onto the library-owned
+  # default; a missing FM_PAUSE_RESURFACE_SECS_DEFAULT (owner:
+  # bin/fm-classify-lib.sh) skips this housekeeping pass with a named report
+  # instead of aborting the daemon on `set -u`.
+  pause_secs=${FM_PAUSE_RESURFACE_SECS:-${FM_PAUSE_RESURFACE_SECS_DEFAULT-}}
+  case "$pause_secs" in ''|*[!0-9]*|0) pause_secs=${FM_PAUSE_RESURFACE_SECS_DEFAULT-} ;; esac
+  [ -n "$pause_secs" ] || {
+    echo 'supervise-daemon: pause-resurface cadence unavailable: bin/fm-classify-lib.sh must define FM_PAUSE_RESURFACE_SECS_DEFAULT' >&2
+    return 1
+  }
   for marker in "$state"/.subsuper-paused-*; do
     [ -e "$marker" ] || continue
     key="${marker##*.subsuper-paused-}"
@@ -2201,7 +2210,10 @@ fm_super_main() {
     sleep 1
     if [ "$(_file_age "$STATE/.subsuper-last-housekeep")" -ge "${FM_HOUSEKEEPING_TICK:-$HOUSEKEEPING_TICK_DEFAULT}" ]; then
       _now > "$STATE/.subsuper-last-housekeep"
-      housekeeping "$STATE"
+      # A housekeeping pass must never take the daemon down: a pass that
+      # cannot complete (see the pause-resurface guard in housekeeping)
+      # reports and is skipped, and the next tick runs it again.
+      housekeeping "$STATE" || true
     fi
   done
 }

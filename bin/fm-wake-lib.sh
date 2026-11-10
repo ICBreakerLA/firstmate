@@ -2840,16 +2840,6 @@ fm_wake_commit_secondmate_stall_receipts_through() { # <cutoff> [<rows-file>]
   ' "$FM_WAKE_QUEUE" 2>/dev/null)
 }
 
-fm_wake_restore_queue() {
-  local drained=$1 restore
-  restore="$STATE/.wake-queue.restore.$(fm_current_pid)"
-  if [ -e "$FM_WAKE_QUEUE" ]; then
-    cat "$drained" "$FM_WAKE_QUEUE" > "$restore" && mv "$restore" "$FM_WAKE_QUEUE"
-  else
-    mv "$drained" "$FM_WAKE_QUEUE"
-  fi
-}
-
 # fm_wake_queue_prune_task <state> <task-id> [target]
 # Prune pending durable wakes for <task-id> and its recorded <target> from
 # the wake queue. Removes stale wakes for <target>, signal wakes for the task's
@@ -3297,10 +3287,6 @@ fm_wake_unread_events() {  # <validated-status-path> <unused-tail-byte-cap> <min
   [ -n "$FM_WAKE_UNREAD_LINES" ] || return 1
   FM_WAKE_EVENT_LINE=$(printf '%s\n' "$FM_WAKE_UNREAD_LINES" | tail -1)
   FM_WAKE_EVENT_LINE=$(printf '%s' "$FM_WAKE_EVENT_LINE" | LC_ALL=C tr '\t\r' '  ')
-}
-
-fm_wake_latest_event() {  # <validated-status-path> <tail-byte-cap>
-  fm_wake_unread_events "$1" "$2" 0
 }
 
 # Print supplemental drain-time context only after the caller has committed the

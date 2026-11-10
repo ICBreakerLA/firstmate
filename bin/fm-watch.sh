@@ -378,6 +378,13 @@ HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
   ''|*[!0-9]*|0) HOME_SUMMARY_INTERVAL=300 ;;
 esac
+# Poll-loop ticks that survive a transient failure (watch_tick_guard below)
+# alarm on this cadence: each failure episode alarms once, and a tick that
+# keeps failing re-alarms at most every TICK_ALARM_SECS, never once per poll.
+TICK_ALARM_SECS=${FM_WATCH_TICK_ALARM_SECS:-900}
+case "$TICK_ALARM_SECS" in
+  ''|*[!0-9]*|0) TICK_ALARM_SECS=900 ;;
+esac
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
@@ -483,7 +490,19 @@ case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WI
 # longer than the wedge threshold, but finite so a forgotten wait cannot rot
 # invisibly - except an item held for the captain while the away-posture record
 # exists, which is never rechecked (away_record_present below).
-PAUSE_RESURFACE_SECS=${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}
+# The case below normalizes an unusable FM_PAUSE_RESURFACE_SECS onto the
+# library-owned default, and a missing FM_PAUSE_RESURFACE_SECS_DEFAULT - the
+# constant owned by bin/fm-classify-lib.sh - is a named startup refusal, so
+# this expansion can never abort the watcher on `set -u`.
+PAUSE_RESURFACE_SECS=${FM_PAUSE_RESURFACE_SECS:-${FM_PAUSE_RESURFACE_SECS_DEFAULT-}}
+case "$PAUSE_RESURFACE_SECS" in
+  ''|*[!0-9]*|0)
+    [ -n "${FM_PAUSE_RESURFACE_SECS_DEFAULT-}" ] || {
+      echo 'watcher: pause-resurface cadence unavailable: bin/fm-classify-lib.sh must define FM_PAUSE_RESURFACE_SECS_DEFAULT' >&2
+      exit 1
+    }
+    PAUSE_RESURFACE_SECS=$FM_PAUSE_RESURFACE_SECS_DEFAULT ;;
+esac
 # A declared wait that names WHEN it clears (`paused: ... until <UTC ISO 8601>`,
 # status_paused_until in fm-classify-lib.sh) is condition-aware: it is not
 # rechecked before that time, and it is rechecked once as soon as that time
@@ -2830,8 +2849,11 @@ task_captain_call_open() {  # <task>
 # FM_OPEN_DECISION_OVERDUE_SECS defaults to 1800; repeats start at that delay,
 # double after each repeat, and cap at FM_OPEN_DECISION_BACKOFF_MAX_SECS (14400).
 # Both settings must be canonical positive integers of at most nine digits,
-# and the cap must be at least the threshold. Invalid enabled settings fail
-# the tick rather than creating an unbounded reminder loop.
+# and the cap must be at least the threshold. Invalid enabled settings return
+# 2, the poll loop's watcher-stopping refusal, rather than creating an
+# unbounded reminder loop; a failed ledger, append, mktemp/mv, read, marker
+# write, or symlinked record returns 1, which the poll loop alarms on a
+# bounded cadence and survives.
 open_decision_reminder_tick() {  # [now-epoch], for deterministic clock callers
   local now=${1:-} threshold=${FM_OPEN_DECISION_OVERDUE_SECS:-1800}
   local cap=${FM_OPEN_DECISION_BACKOFF_MAX_SECS:-14400} value
@@ -2841,10 +2863,10 @@ open_decision_reminder_tick() {  # [now-epoch], for deterministic clock callers
   OPEN_DECISION_REMINDER=
   [ -e "$CONFIG/open-decision-reminders" ] || return 0
   for value in "$threshold" "$cap"; do
-    case "$value" in ''|0*|*[!0-9]*) echo 'watcher: invalid open-decision reminder settings' >&2; return 1 ;; esac
-    [ "${#value}" -le 9 ] || return 1
+    case "$value" in ''|0*|*[!0-9]*) echo 'watcher: invalid open-decision reminder settings' >&2; return 2 ;; esac
+    [ "${#value}" -le 9 ] || return 2
   done
-  [ "$cap" -ge "$threshold" ] || { echo 'watcher: open-decision backoff cap is below threshold' >&2; return 1; }
+  [ "$cap" -ge "$threshold" ] || { echo 'watcher: open-decision backoff cap is below threshold' >&2; return 2; }
   [ -n "$now" ] || fm_epoch_seconds_to now
   ledger="$STATE/.open-decision-reminders"
   if [ -e "$ledger" ] || [ -L "$ledger" ]; then
@@ -3112,6 +3134,34 @@ age_of() {  # seconds since file mtime; "due immediately" if missing
   fm_epoch_seconds_to now
   [ "$m" -le "$now" ] || { echo 999999; return; }
   echo $(( now - m ))
+}
+
+# Poll-loop tick guard: run one tick and keep supervision alive through its
+# transient failures. An ordinary I/O failure (return 1: a failed ledger,
+# marker, receipt, append, mktemp/mv, read, or symlinked record) logs one
+# alarm per failure episode, re-alarming at most every TICK_ALARM_SECS while
+# the tick keeps failing - never once per poll - and the cycle continues;
+# the tick's own stderr detail and the triage log carry the specifics. A
+# settings refusal (return 2) is re-raised unwrapped so the poll loop exits
+# on it. Success clears the alarm marker so the next failure episode alarms
+# immediately.
+watch_tick_guard() {  # <tick-name> <alarm-message> <tick-function> [tick-args...]
+  local name=$1 msg=$2 fn=$3 marker rc
+  shift 3
+  marker="$STATE/.tick-alarm-$name"
+  "$fn" "$@"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    rm -f "$marker" 2>/dev/null || true
+    return 0
+  fi
+  [ "$rc" -ne 2 ] || return 2
+  if [ "$(age_of "$marker")" -ge "$TICK_ALARM_SECS" ]; then
+    echo "watcher: $msg" >&2
+    triage_log "poll tick alarm: $msg" || true
+    touch "$marker" 2>/dev/null || true
+  fi
+  return 0
 }
 
 # Layer 2 + 3 signal scan: status files and turn-end markers.
@@ -4065,10 +4115,12 @@ while :; do
   # No conversation scraping; unresolved records are never silently expired.
   fm_pending_reply_tick "$STATE" || true
 
-  open_decision_reminder_tick || {
-    echo 'watcher: open-decision reminder check failed' >&2
-    exit 1
-  }
+  # A tick that fails on ordinary transient I/O must not take supervision
+  # down: watch_tick_guard alarms on a bounded cadence and the cycle
+  # continues. The only watcher-stopping refusal here is
+  # open_decision_reminder_tick's invalid-settings return (2), the stop
+  # docs/configuration.md "Open-decision reminders" sanctions.
+  watch_tick_guard open-decision 'open-decision reminder check failed' open_decision_reminder_tick || exit 1
   [ -z "$OPEN_DECISION_REMINDER" ] || wake "$OPEN_DECISION_REMINDER"
 
   # Endpoint liveness runs before queue observation: a positively dead or
@@ -4076,18 +4128,12 @@ while :; do
   # is also what unsticks that mate's foreign wake queue. The tick's single
   # wake exits the cycle like every other wake, so its marker is stamped before
   # any relaunch and the restarted watcher will not re-probe early.
-  secondmate_liveness_tick || {
-    echo "watcher: secondmate liveness check failed" >&2
-    exit 1
-  }
+  watch_tick_guard secondmate-liveness 'secondmate liveness check failed' secondmate_liveness_tick || true
 
   # A live secondmate endpoint does not prove that its own wake loop is alive.
   # Observe the foreign queue before the rest of this cycle so an aged row wakes
   # the parent without consuming or rewriting the receiving home's record.
-  secondmate_wake_stall_tick || {
-    echo "watcher: secondmate wake-loop observation failed" >&2
-    exit 1
-  }
+  watch_tick_guard secondmate-wake-stall 'secondmate wake-loop observation failed' secondmate_wake_stall_tick || true
 
   # Process-to-event liveness repair. This never discovers a result by polling:
   # each registered source has its own child blocking on that source, and this

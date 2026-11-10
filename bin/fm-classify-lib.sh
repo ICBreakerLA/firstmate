@@ -900,9 +900,9 @@ _fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb
 # The scan_open_decisions wrapper below enumerates a whole directory rather than
 # a single caller-chosen path, so a status file that is itself a symlink (e.g.
 # escaping the state directory) is rejected outright with a plain [ -L ] check
-# before any read - a cheap builtin, unlike fm_wake_latest_event's O_NOFOLLOW
-# subprocess read, which exists for that function's much narrower payload-driven
-# path resolution rather than this directory-local glob.
+# before any read - a cheap builtin, unlike an O_NOFOLLOW subprocess read,
+# which suits a much narrower payload-driven path resolution than this
+# directory-local glob.
 status_open_decisions() {  # <status-file> [<kind>]
   local f=$1 kind=${2:-} line resolve held open='' verb
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0

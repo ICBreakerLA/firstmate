@@ -317,7 +317,7 @@ test_watcher_loop_survives_ledger_failure() {
 # in-memory epoch bounds the cadence. A failing ledger must keep alarming
 # once per elapsed cadence - never once per poll - and the cycle must survive.
 test_watcher_loop_bounded_alarm_when_marker_unwritable() {
-  local dir="$TMP_ROOT/watcher-marker-unwritable" rc alarm pid i=0
+  local dir="$TMP_ROOT/watcher-marker-unwritable" rc alarm pid i=0 start elapsed
   if [ "$(id -u)" -eq 0 ]; then
     pass "un-writable alarm marker cadence skipped (root ignores file modes)"
     return 0
@@ -338,25 +338,35 @@ test_watcher_loop_bounded_alarm_when_marker_unwritable() {
   [ "$rc" -eq 0 ] \
     || fail "the poll loop died on a ledger failure beside an un-writable alarm marker (rc=$rc): $(cat "$dir/cycle1.err")"
   settle_wakes "$dir"
-  # Quiet cycle: the failing reminder tick repeats every poll for 14 seconds
-  # at a 3s cadence. The bounded cadence raises at most once per elapsed
-  # cadence (~4 raises); an unbounded one raises every poll (10+ lines).
+  # Quiet cycle: the failing reminder tick repeats every poll and its marker
+  # touch is dead, so the alarm lines on stderr are the only observable
+  # cadence progress. Count them and stop at the third raise, so startup and
+  # scheduling cost bound the cycle by alarms, not by a wall clock. Three
+  # epoch-bound raises take two full cadences (>=6s); a cadence collapsed to
+  # per-poll spam raises all three within a few polls.
+  start=$SECONDS
   FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
     FM_POLL=1 FM_WATCH_TICK_ALARM_SECS=3 \
     FM_OPEN_DECISION_OVERDUE_SECS=100 FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
     bash "$ROOT/bin/fm-watch.sh" > "$dir/cycle2.out" 2> "$dir/cycle2.err" &
   pid=$!
-  while [ "$i" -lt 140 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  alarm=0
+  while [ "$alarm" -lt 3 ] && [ "$i" -lt 150 ] && kill -0 "$pid" 2>/dev/null; do
+    sleep 0.1
+    i=$((i + 1))
+    alarm=$(grep -c -F 'watcher: open-decision reminder check failed' "$dir/cycle2.err" || true)
+  done
+  elapsed=$((SECONDS - start))
   if ! kill -0 "$pid" 2>/dev/null; then
     fail "the poll loop died on a repeated ledger failure beside an un-writable alarm marker: $(cat "$dir/cycle2.err")"
   fi
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   alarm=$(grep -c -F 'watcher: open-decision reminder check failed' "$dir/cycle2.err" || true)
-  [ "$alarm" -ge 1 ] \
-    || fail "a failing ledger with an un-writable alarm marker never raised its alarm: $(cat "$dir/cycle2.err")"
-  [ "$alarm" -le 5 ] \
-    || fail "an un-writable alarm marker collapsed the cadence to per-poll spam ($alarm lines in 14s at a 3s cadence): $(cat "$dir/cycle2.err")"
+  [ "$alarm" -eq 3 ] \
+    || fail "a failing ledger with an un-writable alarm marker did not raise three epoch-bound alarms within ${elapsed}s (got $alarm): $(cat "$dir/cycle2.err")"
+  [ "$elapsed" -ge 6 ] \
+    || fail "an un-writable alarm marker collapsed the cadence to per-poll spam (three raises within ${elapsed}s, under two 3s cadences): $(cat "$dir/cycle2.err")"
   pass "an un-writable alarm marker keeps the alarm cadence bounded and the poll cycle surviving"
 }
 

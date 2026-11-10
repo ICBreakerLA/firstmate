@@ -1448,7 +1448,8 @@ housekeeping() {  # <state>
   # bin/fm-classify-lib.sh) skips this housekeeping pass with a named report
   # instead of aborting the daemon on `set -u`.
   pause_secs=${FM_PAUSE_RESURFACE_SECS:-${FM_PAUSE_RESURFACE_SECS_DEFAULT-}}
-  case "$pause_secs" in ''|*[!0-9]*|0) pause_secs=${FM_PAUSE_RESURFACE_SECS_DEFAULT-} ;; esac
+  case "$pause_secs" in ''|0*|*[!0-9]*) pause_secs= ;; esac
+  [ -n "$pause_secs" ] && [ "${#pause_secs}" -le 9 ] || pause_secs=${FM_PAUSE_RESURFACE_SECS_DEFAULT-}
   [ -n "$pause_secs" ] || {
     echo 'supervise-daemon: pause-resurface cadence unavailable: bin/fm-classify-lib.sh must define FM_PAUSE_RESURFACE_SECS_DEFAULT' >&2
     return 1

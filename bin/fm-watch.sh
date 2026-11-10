@@ -382,9 +382,8 @@ esac
 # alarm on this cadence: each failure episode alarms once, and a tick that
 # keeps failing re-alarms at most every TICK_ALARM_SECS, never once per poll.
 TICK_ALARM_SECS=${FM_WATCH_TICK_ALARM_SECS:-900}
-case "$TICK_ALARM_SECS" in
-  ''|*[!0-9]*|0) TICK_ALARM_SECS=900 ;;
-esac
+case "$TICK_ALARM_SECS" in ''|0*|*[!0-9]*) TICK_ALARM_SECS= ;; esac
+[ -n "$TICK_ALARM_SECS" ] && [ "${#TICK_ALARM_SECS}" -le 9 ] || TICK_ALARM_SECS=900
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
@@ -490,19 +489,22 @@ case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WI
 # longer than the wedge threshold, but finite so a forgotten wait cannot rot
 # invisibly - except an item held for the captain while the away-posture record
 # exists, which is never rechecked (away_record_present below).
-# The case below normalizes an unusable FM_PAUSE_RESURFACE_SECS onto the
-# library-owned default, and a missing FM_PAUSE_RESURFACE_SECS_DEFAULT - the
-# constant owned by bin/fm-classify-lib.sh - is a named startup refusal, so
-# this expansion can never abort the watcher on `set -u`.
+# The normalization below accepts only a canonical positive decimal of at
+# most nine digits - what bash's integer comparisons can read correctly
+# (_wedge_cap_int above owns the hazard) - and normalizes anything else,
+# including leading zeros, onto the library-owned default; a missing
+# FM_PAUSE_RESURFACE_SECS_DEFAULT - the constant owned by
+# bin/fm-classify-lib.sh - is a named startup refusal, so this expansion
+# can never abort the watcher on `set -u`.
 PAUSE_RESURFACE_SECS=${FM_PAUSE_RESURFACE_SECS:-${FM_PAUSE_RESURFACE_SECS_DEFAULT-}}
-case "$PAUSE_RESURFACE_SECS" in
-  ''|*[!0-9]*|0)
-    [ -n "${FM_PAUSE_RESURFACE_SECS_DEFAULT-}" ] || {
-      echo 'watcher: pause-resurface cadence unavailable: bin/fm-classify-lib.sh must define FM_PAUSE_RESURFACE_SECS_DEFAULT' >&2
-      exit 1
-    }
-    PAUSE_RESURFACE_SECS=$FM_PAUSE_RESURFACE_SECS_DEFAULT ;;
-esac
+case "$PAUSE_RESURFACE_SECS" in ''|0*|*[!0-9]*) PAUSE_RESURFACE_SECS= ;; esac
+[ -n "$PAUSE_RESURFACE_SECS" ] && [ "${#PAUSE_RESURFACE_SECS}" -le 9 ] || {
+  [ -n "${FM_PAUSE_RESURFACE_SECS_DEFAULT-}" ] || {
+    echo 'watcher: pause-resurface cadence unavailable: bin/fm-classify-lib.sh must define FM_PAUSE_RESURFACE_SECS_DEFAULT' >&2
+    exit 1
+  }
+  PAUSE_RESURFACE_SECS=$FM_PAUSE_RESURFACE_SECS_DEFAULT
+}
 # A declared wait that names WHEN it clears (`paused: ... until <UTC ISO 8601>`,
 # status_paused_until in fm-classify-lib.sh) is condition-aware: it is not
 # rechecked before that time, and it is rechecked once as soon as that time
@@ -3144,22 +3146,36 @@ age_of() {  # seconds since file mtime; "due immediately" if missing
 # the tick's own stderr detail and the triage log carry the specifics. A
 # settings refusal (return 2) is re-raised unwrapped so the poll loop exits
 # on it. Success clears the alarm marker so the next failure episode alarms
-# immediately.
+# immediately. The cadence bound is the last alarm's epoch, kept in two
+# representations: the marker's mtime (which survives a watcher restart) and
+# a per-tick shell variable (which survives a marker the state directory
+# cannot write - disk full, read-only remount); the guard bounds on the more
+# recent of the two, so a failed marker touch never collapses the cadence
+# to one alarm per poll. The variable names are built from the fixed tick
+# names the poll loop passes here (the eval read/write idiom of
+# bin/fm-remote-home-provision.sh); no external input reaches them.
 watch_tick_guard() {  # <tick-name> <alarm-message> <tick-function> [tick-args...]
-  local name=$1 msg=$2 fn=$3 marker rc
+  local name=$1 msg=$2 fn=$3 marker rc var age now last
   shift 3
   marker="$STATE/.tick-alarm-$name"
+  var=TICK_ALARM_EPOCH_${name//-/_}
   "$fn" "$@"
   rc=$?
   if [ "$rc" -eq 0 ]; then
     rm -f "$marker" 2>/dev/null || true
+    eval "$var="
     return 0
   fi
   [ "$rc" -ne 2 ] || return 2
-  if [ "$(age_of "$marker")" -ge "$TICK_ALARM_SECS" ]; then
+  fm_epoch_seconds_to now
+  age=$(age_of "$marker")
+  eval "last=\${$var-}"
+  [ -z "$last" ] || [ $(( now - last )) -ge "$age" ] || age=$(( now - last ))
+  if [ "$age" -ge "$TICK_ALARM_SECS" ]; then
     echo "watcher: $msg" >&2
     triage_log "poll tick alarm: $msg" || true
     touch "$marker" 2>/dev/null || true
+    eval "$var=\$now"
   fi
   return 0
 }
@@ -4115,11 +4131,13 @@ while :; do
   # No conversation scraping; unresolved records are never silently expired.
   fm_pending_reply_tick "$STATE" || true
 
-  # A tick that fails on ordinary transient I/O must not take supervision
-  # down: watch_tick_guard alarms on a bounded cadence and the cycle
-  # continues. The only watcher-stopping refusal here is
-  # open_decision_reminder_tick's invalid-settings return (2), the stop
-  # docs/configuration.md "Open-decision reminders" sanctions.
+  # The three guarded ticks - open-decision reminder, secondmate liveness,
+  # secondmate wake-stall - must not take supervision down on ordinary
+  # transient I/O: watch_tick_guard alarms on a bounded cadence and the
+  # cycle continues. Among these guarded ticks the only watcher-stopping
+  # refusal is open_decision_reminder_tick's invalid-settings return (2),
+  # the stop docs/configuration.md "Open-decision reminders" sanctions;
+  # every other poll-loop phase keeps its existing failure contract.
   watch_tick_guard open-decision 'open-decision reminder check failed' open_decision_reminder_tick || exit 1
   [ -z "$OPEN_DECISION_REMINDER" ] || wake "$OPEN_DECISION_REMINDER"
 

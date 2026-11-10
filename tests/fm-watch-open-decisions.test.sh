@@ -309,6 +309,90 @@ test_watcher_loop_survives_ledger_failure() {
   pass "a failing reminder ledger alarms once per elapsed cadence while surviving cycles keep surfacing new status"
 }
 
+# The cadence bound is the last alarm's epoch, kept both as the alarm marker's
+# mtime and as a per-tick epoch in the watcher's own shell. Make the marker
+# un-writable (its path is a directory: touch and rm -f both fail), so the
+# file-mtime representation is dead for this process and only the in-memory
+# epoch bounds the cadence. A failing ledger must keep alarming once per
+# elapsed cadence - never once per poll - and the cycle must survive.
+test_watcher_loop_bounded_alarm_when_marker_unwritable() {
+  local dir="$TMP_ROOT/watcher-marker-unwritable" rc alarm pid i=0
+  mkdir -p "$dir/state" "$dir/config"
+  fm_test_track_watcher_state "$dir/state"
+  touch "$dir/config/open-decision-reminders" "$dir/state/home-summary.json"
+  ln -s "$TMP_ROOT/not-a-ledger" "$dir/state/.open-decision-reminders"
+  mkdir "$dir/state/.tick-alarm-open-decision"
+  printf 'needs-decision [at=1000] [key=api]: choose\n' > "$dir/state/worker.status"
+  rc=0
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_POLL=1 FM_WATCH_TICK_ALARM_SECS=3 \
+    FM_OPEN_DECISION_OVERDUE_SECS=100 FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/cycle1.out" 2> "$dir/cycle1.err" || rc=$?
+  [ "$rc" -eq 0 ] \
+    || fail "the poll loop died on a ledger failure beside an un-writable alarm marker (rc=$rc): $(cat "$dir/cycle1.err")"
+  settle_wakes "$dir"
+  # Quiet cycle: the failing reminder tick repeats every poll for 14 seconds
+  # at a 3s cadence. The bounded cadence raises at most once per elapsed
+  # cadence (~4 raises); an unbounded one raises every poll (10+ lines).
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_POLL=1 FM_WATCH_TICK_ALARM_SECS=3 \
+    FM_OPEN_DECISION_OVERDUE_SECS=100 FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/cycle2.out" 2> "$dir/cycle2.err" &
+  pid=$!
+  while [ "$i" -lt 140 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  if ! kill -0 "$pid" 2>/dev/null; then
+    fail "the poll loop died on a repeated ledger failure beside an un-writable alarm marker: $(cat "$dir/cycle2.err")"
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  alarm=$(grep -c -F 'watcher: open-decision reminder check failed' "$dir/cycle2.err" || true)
+  [ "$alarm" -ge 1 ] \
+    || fail "a failing ledger with an un-writable alarm marker never raised its alarm: $(cat "$dir/cycle2.err")"
+  [ "$alarm" -le 5 ] \
+    || fail "an un-writable alarm marker collapsed the cadence to per-poll spam ($alarm lines in 14s at a 3s cadence): $(cat "$dir/cycle2.err")"
+  pass "an un-writable alarm marker keeps the alarm cadence bounded and the poll cycle surviving"
+}
+
+# The documented cadence contract is "invalid or zero values use 900". A
+# leading-zero value must normalize onto 900, never reach a bash integer
+# comparison: bash reads 0900 as octal, and such a comparison errors and is
+# read as false, so an accepted 0900 would silently alarm NEVER - the tick
+# would fail every poll with no alarm at all. With a failing ledger the
+# first poll of the episode must raise exactly one alarm (the marker is
+# fresh afterwards, so the 900s cadence suppresses every later poll).
+test_watcher_loop_leading_zero_cadence_uses_default() {
+  local dir="$TMP_ROOT/watcher-leading-zero-cadence" rc alarm pid i=0
+  mkdir -p "$dir/state" "$dir/config"
+  fm_test_track_watcher_state "$dir/state"
+  touch "$dir/config/open-decision-reminders" "$dir/state/home-summary.json"
+  ln -s "$TMP_ROOT/not-a-ledger" "$dir/state/.open-decision-reminders"
+  printf 'needs-decision [at=1000] [key=api]: choose\n' > "$dir/state/worker.status"
+  rc=0
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_POLL=1 FM_WATCH_TICK_ALARM_SECS=0900 \
+    FM_OPEN_DECISION_OVERDUE_SECS=100 FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/cycle1.out" 2> "$dir/cycle1.err" || rc=$?
+  [ "$rc" -eq 0 ] \
+    || fail "the poll loop died on a ledger failure with a leading-zero alarm cadence (rc=$rc): $(cat "$dir/cycle1.err")"
+  settle_wakes "$dir"
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_POLL=1 FM_WATCH_TICK_ALARM_SECS=0900 \
+    FM_OPEN_DECISION_OVERDUE_SECS=100 FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/cycle2.out" 2> "$dir/cycle2.err" &
+  pid=$!
+  while [ "$i" -lt 120 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  if ! kill -0 "$pid" 2>/dev/null; then
+    fail "the poll loop died on a repeated ledger failure with a leading-zero alarm cadence: $(cat "$dir/cycle2.err")"
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  alarm=$(cat "$dir/cycle1.err" "$dir/cycle2.err" \
+    | grep -c -F 'watcher: open-decision reminder check failed' || true)
+  [ "$alarm" -eq 1 ] \
+    || fail "a leading-zero alarm cadence did not normalize onto the documented 900s default ($alarm alarm lines, expected exactly the first episode raise): $(cat "$dir/cycle1.err" "$dir/cycle2.err")"
+  pass "a leading-zero alarm cadence normalizes onto the documented 900s default and raises its episode alarm"
+}
+
 test_watcher_loop_invalid_settings_refusal() {
   local dir="$TMP_ROOT/watcher-invalid-settings" pid i=0 rc
   mkdir -p "$dir/state" "$dir/config"
@@ -338,4 +422,5 @@ fm_test_run test_disabled test_oldest_and_backoff test_numeric_keys_are_distinct
   test_numeric_tasks_are_distinct test_resolution_and_reopen \
   test_wait_exemptions test_unknown_times_and_keyless test_timed_fold_is_incremental \
   test_invalid_settings test_timed_cursor_retirement test_watcher_loop \
-  test_watcher_loop_survives_ledger_failure test_watcher_loop_invalid_settings_refusal
+  test_watcher_loop_survives_ledger_failure test_watcher_loop_invalid_settings_refusal \
+  test_watcher_loop_bounded_alarm_when_marker_unwritable test_watcher_loop_leading_zero_cadence_uses_default

@@ -1,0 +1,12 @@
+=== HEAD wake-queue selective (changed liveness tests) ===
+ok - watch liveness: a failed auto-relaunch wakes once with its cause and is ledgered
+wait_for_exit: owned pid 88007 exceeded 120 polls; sending TERM
+  88007   80230 S    bash /home/agent/nm/worktrees/a14fc4898c5c/01M730PMKC8G9P6TKJ1BGBGZT0/bin/fm-watch.sh
+wait_for_exit: owned pid 117805 exceeded 120 polls; sending TERM
+ 117805   80230 S    bash /home/agent/nm/worktrees/a14fc4898c5c/01M730PMKC8G9P6TKJ1BGBGZT0/bin/fm-watch.sh
+ok - watch liveness: an unwritable or unreadable relaunch ledger refuses to kill or spawn while the cycle survives with one bounded alarm
+ok - watch liveness: a per-mate error keeps scanning, recovers later mates, and still wakes
+ok - watch liveness: an outcome that could not be queued surfaces as an error, not a wake, and the cycle survives it
+ok - watch liveness: a mate mid-episode under the shared liveness lock is skipped entirely
+ok - watch liveness: an unreachable remote secondmate is probed, preserved, and never failed over
+RC=0

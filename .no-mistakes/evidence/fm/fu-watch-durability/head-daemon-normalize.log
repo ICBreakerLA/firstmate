@@ -1,0 +1,5 @@
+=== HEAD daemon cadence normalization driver ===
+ok - control-cadence-below-age: cadence=6000 marker-age=6500s -> 1 escalation line(s), as expected
+ok - leading-zero-normalizes: cadence=014400 marker-age=6500s -> 0 escalation line(s), as expected
+ok - zero-normalizes: cadence=0 marker-age=6500s -> 0 escalation line(s), as expected
+RC=0

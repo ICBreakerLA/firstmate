@@ -1,0 +1,4 @@
+=== HEAD daemon selective (pause-cadence housekeeping tests) ===
+ok - enriched stale wedges bypass status absorption except under a declared wait, without disturbing busy workers
+ok - an enriched wedge under a declared wait uses the pause cadence and restores wedge detection on resume
+RC=0

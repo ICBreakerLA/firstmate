@@ -1,0 +1,5 @@
+=== HEAD triage-pause selective (new sentinel test) ===
+1..1
+ok - an over-sentinel pause-resurface cadence normalizes onto the default and rechecks the passed declared time
+FM_TEST_COMPLETE
+RC=0

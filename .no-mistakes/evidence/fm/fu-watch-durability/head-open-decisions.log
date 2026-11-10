@@ -1,0 +1,22 @@
+=== HEAD open-decisions full suite ===
+1..16
+ok - absent flag emits nothing and does not fold status
+ok - oldest key surfaces once, and independent per-key backoff doubles up to its cap
+ok - keys 1 and 01 receive separate reminders and retain independent bounded backoff
+ok - tasks 1 and 01 receive separate reminders and retain independent bounded backoff
+ok - resolution stops reminders immediately and a later episode starts fresh
+ok - paused waits, verified transfers, and backlog captain holds are exempt
+ok - only explicitly keyed records with valid source timestamps are aged
+ok - quiet polls reuse the timed fold and only new status bytes are folded
+watcher: invalid open-decision reminder settings
+watcher: open-decision backoff cap is below threshold
+ok - invalid settings refuse the tick without queueing reminders
+ok - task retirement removes the timed cursor and ends reminders
+ok - the actual watcher wakes and exits on an overdue key without any recorded pane
+ok - a failing reminder ledger alarms once per elapsed cadence while surviving cycles keep surfacing new status
+ok - invalid reminder settings keep their watcher-stopping refusal at the poll loop
+ok - an un-writable alarm marker keeps the alarm cadence bounded and the poll cycle surviving
+ok - a leading-zero alarm cadence normalizes onto the documented 900s default and raises its episode alarm
+ok - an over-sentinel alarm cadence normalizes onto the documented 900s default and raises its episode alarm
+FM_TEST_COMPLETE
+RC=0

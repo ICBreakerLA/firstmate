@@ -1,0 +1,5 @@
+=== BASE daemon cadence normalization driver (regression baseline) ===
+ok - control-cadence-below-age: cadence=6000 marker-age=6500s -> 1 escalation line(s), as expected
+ok - leading-zero-normalizes: cadence=014400 marker-age=6500s -> 0 escalation line(s), as expected
+not ok - zero-normalizes: cadence=0 marker-age=6500s -> 1 escalation line(s), expected 0: paused 6500s (awaiting external, recheck whether the wait still holds): sess:fm-norm-zero-normalizes
+RC=0

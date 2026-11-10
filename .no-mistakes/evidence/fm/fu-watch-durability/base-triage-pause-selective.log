@@ -1,0 +1,6 @@
+=== BASE triage-pause selective (regression baseline) ===
+1..1
+wait_for_exit: owned pid 81391 exceeded 100 polls; sending TERM
+  81391   80236 S    bash /tmp/fm-base.c07YNO/bin/fm-watch.sh
+not ok - an over-sentinel pause-resurface cadence silenced the passed declared time: 
+RC=1

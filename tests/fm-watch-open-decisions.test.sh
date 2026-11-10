@@ -311,17 +311,24 @@ test_watcher_loop_survives_ledger_failure() {
 
 # The cadence bound is the last alarm's epoch, kept both as the alarm marker's
 # mtime and as a per-tick epoch in the watcher's own shell. Make the marker
-# un-writable (its path is a directory: touch and rm -f both fail), so the
-# file-mtime representation is dead for this process and only the in-memory
-# epoch bounds the cadence. A failing ledger must keep alarming once per
-# elapsed cadence - never once per poll - and the cycle must survive.
+# genuinely un-writable: a symlink into a mode-500 directory, so touch fails
+# with EACCES and stat reads a missing target as age_of's 999999 sentinel -
+# the file-mtime representation is dead for this process and only the
+# in-memory epoch bounds the cadence. A failing ledger must keep alarming
+# once per elapsed cadence - never once per poll - and the cycle must survive.
 test_watcher_loop_bounded_alarm_when_marker_unwritable() {
   local dir="$TMP_ROOT/watcher-marker-unwritable" rc alarm pid i=0
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "un-writable alarm marker cadence skipped (root ignores file modes)"
+    return 0
+  fi
   mkdir -p "$dir/state" "$dir/config"
   fm_test_track_watcher_state "$dir/state"
   touch "$dir/config/open-decision-reminders" "$dir/state/home-summary.json"
   ln -s "$TMP_ROOT/not-a-ledger" "$dir/state/.open-decision-reminders"
-  mkdir "$dir/state/.tick-alarm-open-decision"
+  mkdir "$dir/state/.tick-alarm-locked"
+  chmod 500 "$dir/state/.tick-alarm-locked"
+  ln -s "$dir/state/.tick-alarm-locked/marker" "$dir/state/.tick-alarm-open-decision"
   printf 'needs-decision [at=1000] [key=api]: choose\n' > "$dir/state/worker.status"
   rc=0
   FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
@@ -393,6 +400,46 @@ test_watcher_loop_leading_zero_cadence_uses_default() {
   pass "a leading-zero alarm cadence normalizes onto the documented 900s default and raises its episode alarm"
 }
 
+# age_of reports 999999 for a missing alarm marker, the age a failure
+# episode's first poll compares against. A cadence above that sentinel would
+# pass `age >= TICK_ALARM_SECS` never: the episode would alarm zero times,
+# silently and forever. 1000000 exceeds the sentinel, so it must normalize
+# onto 900 like any invalid value, and the first failing poll of the episode
+# must raise exactly one alarm (the 900s cadence then suppresses every
+# later poll).
+test_watcher_loop_cadence_past_sentinel_uses_default() {
+  local dir="$TMP_ROOT/watcher-cadence-past-sentinel" rc alarm pid i=0
+  mkdir -p "$dir/state" "$dir/config"
+  fm_test_track_watcher_state "$dir/state"
+  touch "$dir/config/open-decision-reminders" "$dir/state/home-summary.json"
+  ln -s "$TMP_ROOT/not-a-ledger" "$dir/state/.open-decision-reminders"
+  printf 'needs-decision [at=1000] [key=api]: choose\n' > "$dir/state/worker.status"
+  rc=0
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_POLL=1 FM_WATCH_TICK_ALARM_SECS=1000000 \
+    FM_OPEN_DECISION_OVERDUE_SECS=100 FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/cycle1.out" 2> "$dir/cycle1.err" || rc=$?
+  [ "$rc" -eq 0 ] \
+    || fail "the poll loop died on a ledger failure with an over-sentinel alarm cadence (rc=$rc): $(cat "$dir/cycle1.err")"
+  settle_wakes "$dir"
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_POLL=1 FM_WATCH_TICK_ALARM_SECS=1000000 \
+    FM_OPEN_DECISION_OVERDUE_SECS=100 FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/cycle2.out" 2> "$dir/cycle2.err" &
+  pid=$!
+  while [ "$i" -lt 120 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  if ! kill -0 "$pid" 2>/dev/null; then
+    fail "the poll loop died on a repeated ledger failure with an over-sentinel alarm cadence: $(cat "$dir/cycle2.err")"
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  alarm=$(cat "$dir/cycle1.err" "$dir/cycle2.err" \
+    | grep -c -F 'watcher: open-decision reminder check failed' || true)
+  [ "$alarm" -eq 1 ] \
+    || fail "an over-sentinel alarm cadence did not normalize onto the documented 900s default ($alarm alarm lines, expected exactly the first episode raise): $(cat "$dir/cycle1.err" "$dir/cycle2.err")"
+  pass "an over-sentinel alarm cadence normalizes onto the documented 900s default and raises its episode alarm"
+}
+
 test_watcher_loop_invalid_settings_refusal() {
   local dir="$TMP_ROOT/watcher-invalid-settings" pid i=0 rc
   mkdir -p "$dir/state" "$dir/config"
@@ -423,4 +470,5 @@ fm_test_run test_disabled test_oldest_and_backoff test_numeric_keys_are_distinct
   test_wait_exemptions test_unknown_times_and_keyless test_timed_fold_is_incremental \
   test_invalid_settings test_timed_cursor_retirement test_watcher_loop \
   test_watcher_loop_survives_ledger_failure test_watcher_loop_invalid_settings_refusal \
-  test_watcher_loop_bounded_alarm_when_marker_unwritable test_watcher_loop_leading_zero_cadence_uses_default
+  test_watcher_loop_bounded_alarm_when_marker_unwritable test_watcher_loop_leading_zero_cadence_uses_default \
+  test_watcher_loop_cadence_past_sentinel_uses_default

@@ -381,9 +381,14 @@ esac
 # Poll-loop ticks that survive a transient failure (watch_tick_guard below)
 # alarm on this cadence: each failure episode alarms once, and a tick that
 # keeps failing re-alarms at most every TICK_ALARM_SECS, never once per poll.
+# The accepted cadence is a canonical positive decimal of at most six digits,
+# so it never exceeds the age_of missing-marker sentinel (999999) - the age
+# a failing episode's first poll compares against - and a persistently
+# failing tick always raises its episode alarm; anything longer normalizes
+# onto 900 like the documented invalid fallback.
 TICK_ALARM_SECS=${FM_WATCH_TICK_ALARM_SECS:-900}
 case "$TICK_ALARM_SECS" in ''|0*|*[!0-9]*) TICK_ALARM_SECS= ;; esac
-[ -n "$TICK_ALARM_SECS" ] && [ "${#TICK_ALARM_SECS}" -le 9 ] || TICK_ALARM_SECS=900
+[ -n "$TICK_ALARM_SECS" ] && [ "${#TICK_ALARM_SECS}" -le 6 ] || TICK_ALARM_SECS=900
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake

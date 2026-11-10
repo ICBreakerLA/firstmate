@@ -1,0 +1,2 @@
+ok - lifecycle: routine self-handles, terminal survives a watcher restart, buffers once, no dup, injects once
+ok - lifecycle: stale pane transient self-handles, persistent escalates once and clears, resumed clears quietly

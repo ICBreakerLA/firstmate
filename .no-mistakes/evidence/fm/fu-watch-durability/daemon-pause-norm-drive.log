@@ -1,0 +1,4 @@
+ok - control: a matured declared-wait window re-surfaces exactly once at its own cadence
+ok - FM_PAUSE_RESURFACE_SECS=014400 normalizes onto the decimal default (no early recheck at age 7200)
+ok - FM_PAUSE_RESURFACE_SECS=00 normalizes onto the decimal default
+ok - unset FM_PAUSE_RESURFACE_SECS uses the library default 14400 (fires once past it)

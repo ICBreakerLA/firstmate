@@ -3617,7 +3617,7 @@ test_secondmate_liveness_tick_relaunch_failure_reports_once() {
 }
 
 test_secondmate_liveness_tick_fails_closed_on_ledger_errors() {
-  local dir state pid ledger mode rc
+  local dir state pid ledger mode alarm
   if [ "$(id -u)" -eq 0 ]; then
     pass "watch liveness: ledger permission errors skipped (root ignores file modes)"
     return 0
@@ -3629,19 +3629,22 @@ test_secondmate_liveness_tick_fails_closed_on_ledger_errors() {
     : > "$ledger"
     chmod "$mode" "$ledger"
     run_liveness_leg "$dir" ledger FM_FAKE_TMUX_CURRENT_COMMAND=zsh; pid=$LIVENESS_PID
-    rc=0
-    wait_for_exit "$pid" 300 || rc=$?
+    if wait_for_exit "$pid" 120; then
+      fail "a mode-$mode relaunch ledger stopped the watcher: $(cat "$dir/watch-ledger.out" "$dir/watch-ledger.err")"
+    fi
     chmod 644 "$ledger"
-    [ "$rc" -eq 1 ] || fail "a mode-$mode relaunch ledger did not fail the watcher (rc=$rc): $(cat "$dir/watch-ledger.out" "$dir/watch-ledger.err")"
     grep -F 'secondmate liveness check failed' "$dir/watch-ledger.err" >/dev/null \
       || fail "a mode-$mode ledger failure was not reported: $(cat "$dir/watch-ledger.err")"
+    alarm=$(grep -c -F 'secondmate liveness check failed' "$dir/watch-ledger.err")
+    [ "$alarm" -eq 1 ] \
+      || fail "a mode-$mode ledger alarm repeated past its bounded cadence: $alarm lines"
     [ ! -s "$dir/tmux.log" ] \
       || fail "a mode-$mode relaunch ledger still killed or spawned: $(cat "$dir/tmux.log")"
     [ ! -s "$ledger" ] || fail "a mode-$mode ledger gained rows: $(cat "$ledger")"
     ! grep -F 'secondmate-relaunch' "$state/.wake-queue" >/dev/null 2>&1 \
       || fail "a mode-$mode ledger failure queued a relaunch wake: $(cat "$state/.wake-queue")"
   done
-  pass "watch liveness: an unwritable or unreadable relaunch ledger refuses to kill or spawn"
+  pass "watch liveness: an unwritable or unreadable relaunch ledger refuses to kill or spawn while the cycle survives with one bounded alarm"
 }
 
 test_secondmate_liveness_tick_error_keeps_scanning_and_wakes() {

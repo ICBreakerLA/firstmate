@@ -212,7 +212,70 @@ test_watcher_loop() {
   pass "the actual watcher wakes and exits on an overdue key without any recorded pane"
 }
 
+test_watcher_loop_survives_ledger_failure() {
+  local dir="$TMP_ROOT/watcher-ledger-failure" pid i=0 rc alarm
+  mkdir -p "$dir/state" "$dir/config"
+  fm_test_track_watcher_state "$dir/state"
+  touch "$dir/config/open-decision-reminders" "$dir/state/home-summary.json"
+  ln -s "$TMP_ROOT/not-a-ledger" "$dir/state/.open-decision-reminders"
+  printf 'needs-decision [at=1000] [key=api]: choose\n' > "$dir/state/worker.status"
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_OPEN_DECISION_OVERDUE_SECS=100 \
+    FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/out" 2> "$dir/err" &
+  pid=$!
+  i=0
+  while [ "$i" -lt 30 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  kill -0 "$pid" 2>/dev/null || fail "watcher stopped on a failing reminder ledger: $(cat "$dir/err")"
+  sleep 2
+  kill -0 "$pid" 2>/dev/null || fail "watcher stopped on repeated ledger write failures: $(cat "$dir/err")"
+  printf 'blocked [at=900000000] [key=live]: help\n' >> "$dir/state/worker.status"
+  i=0
+  while [ "$i" -lt 100 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "a watcher surviving its ledger failure never surfaced the appended status: $(cat "$dir/out" "$dir/err")"
+  fi
+  rc=0
+  wait "$pid" || rc=$?
+  [ "$rc" -eq 0 ] || fail "watcher exited $rc on a failing reminder ledger: $(cat "$dir/err")"
+  grep -F 'watcher: open-decision reminder check failed' "$dir/err" >/dev/null \
+    || fail "a failing reminder ledger produced no alarm: $(cat "$dir/err")"
+  alarm=$(grep -c -F 'watcher: open-decision reminder check failed' "$dir/err")
+  [ "$alarm" -eq 1 ] || fail "the ledger alarm repeated on every failed poll: $alarm lines"
+  [ "$(wc -l < "$dir/state/.wake-queue" | tr -d ' ')" = 1 ] \
+    || fail "the surviving cycle queued more than the appended status wake: $(cat "$dir/state/.wake-queue")"
+  pass "a failing reminder ledger alarms once, and live supervision keeps surfacing new status"
+}
+
+test_watcher_loop_invalid_settings_refusal() {
+  local dir="$TMP_ROOT/watcher-invalid-settings" pid i=0 rc
+  mkdir -p "$dir/state" "$dir/config"
+  fm_test_track_watcher_state "$dir/state"
+  touch "$dir/config/open-decision-reminders" "$dir/state/home-summary.json"
+  printf 'blocked [at=1000] [key=api]: help\n' > "$dir/state/worker.status"
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_OPEN_DECISION_OVERDUE_SECS=0 \
+    bash "$ROOT/bin/fm-watch.sh" > "$dir/out" 2> "$dir/err" &
+  pid=$!
+  i=0
+  while [ "$i" -lt 100 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "watcher kept polling with an invalid reminder threshold"
+  fi
+  rc=0
+  wait "$pid" || rc=$?
+  [ "$rc" -eq 1 ] || fail "invalid settings did not keep the watcher-stopping refusal: rc=$rc"
+  grep -F 'watcher: invalid open-decision reminder settings' "$dir/err" >/dev/null \
+    || fail "the invalid-settings refusal did not name the settings: $(cat "$dir/err")"
+  pass "invalid reminder settings keep their watcher-stopping refusal at the poll loop"
+}
+
 fm_test_run test_disabled test_oldest_and_backoff test_numeric_keys_are_distinct \
   test_numeric_tasks_are_distinct test_resolution_and_reopen \
   test_wait_exemptions test_unknown_times_and_keyless test_timed_fold_is_incremental \
-  test_invalid_settings test_timed_cursor_retirement test_watcher_loop
+  test_invalid_settings test_timed_cursor_retirement test_watcher_loop \
+  test_watcher_loop_survives_ledger_failure test_watcher_loop_invalid_settings_refusal

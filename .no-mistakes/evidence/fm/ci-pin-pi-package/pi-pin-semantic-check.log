@@ -1,0 +1,18 @@
+=== BASE 3a39998a (.github/workflows/ci.yml) ===
+pi install steps found: 2
+  job='tests-portable-parallel-1' step='Install the Pi package for the Pi extension tests' spec=None
+  job='tests-portable-serial' step='Install the Pi package for the Pi extension tests' spec=None
+RESULT: FAIL
+base exit=1
+
+=== TARGET 48bf7b41 (.github/workflows/ci.yml) ===
+pi install steps found: 2
+  job='tests-portable-parallel-1' step='Install the Pi package for the Pi extension tests' spec='1.5.0'
+  job='tests-portable-serial' step='Install the Pi package for the Pi extension tests' spec='1.5.0'
+RESULT: PASS - every Pi install pins exact version 1.5.0
+target exit=0
+
+=== Upstream Pi tags confirmed via GitHub API (version exists) ===
+"name": "v1.5.2"
+"name": "v1.5.1"
+"name": "v1.5.0"

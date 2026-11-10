@@ -145,7 +145,8 @@ jobs:
       - name: Install the Pi package for the Pi extension tests
         run: |
           set -eu
-          npm install -g @earendil-works/pi-coding-agent
+          # Pin 1.5.0: 1.5.1 changed an internal pendingBashComponents shape the calm queued-row patch relies on.
+          npm install -g @earendil-works/pi-coding-agent@1.5.0
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable parallel shard 1
         run: |
@@ -247,11 +248,12 @@ jobs:
           tasks-axi --version
       # Runtime-facing Pi extension probes need the installed public package
       # to avoid capability skips. tests/fm-pi-primary-types.test.sh owns its
-      # separate compiler dependencies.
+      # separate compiler dependencies. Pin 1.5.0: 1.5.1 changed an internal
+      # pendingBashComponents shape the calm queued-row patch relies on.
       - name: Install the Pi package for the Pi extension tests
         run: |
           set -eu
-          npm install -g @earendil-works/pi-coding-agent
+          npm install -g @earendil-works/pi-coding-agent@1.5.0
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable serial shard ${{ matrix.shard }}
         env:

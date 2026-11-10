@@ -495,15 +495,15 @@ case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WI
 # invisibly - except an item held for the captain while the away-posture record
 # exists, which is never rechecked (away_record_present below).
 # The normalization below accepts only a canonical positive decimal of at
-# most nine digits - what bash's integer comparisons can read correctly
-# (_wedge_cap_int above owns the hazard) - and normalizes anything else,
-# including leading zeros, onto the library-owned default; a missing
-# FM_PAUSE_RESURFACE_SECS_DEFAULT - the constant owned by
-# bin/fm-classify-lib.sh - is a named startup refusal, so this expansion
-# can never abort the watcher on `set -u`.
+# most six digits - so it never exceeds the age_of missing-marker sentinel
+# (999999), the age resurface_absorbed compares when a window has no prior
+# re-surface - and normalizes anything else, including leading zeros, onto
+# the library-owned default; a missing FM_PAUSE_RESURFACE_SECS_DEFAULT - the
+# constant owned by bin/fm-classify-lib.sh - is a named startup refusal, so
+# this expansion can never abort the watcher on `set -u`.
 PAUSE_RESURFACE_SECS=${FM_PAUSE_RESURFACE_SECS:-${FM_PAUSE_RESURFACE_SECS_DEFAULT-}}
 case "$PAUSE_RESURFACE_SECS" in ''|0*|*[!0-9]*) PAUSE_RESURFACE_SECS= ;; esac
-[ -n "$PAUSE_RESURFACE_SECS" ] && [ "${#PAUSE_RESURFACE_SECS}" -le 9 ] || {
+[ -n "$PAUSE_RESURFACE_SECS" ] && [ "${#PAUSE_RESURFACE_SECS}" -le 6 ] || {
   [ -n "${FM_PAUSE_RESURFACE_SECS_DEFAULT-}" ] || {
     echo 'watcher: pause-resurface cadence unavailable: bin/fm-classify-lib.sh must define FM_PAUSE_RESURFACE_SECS_DEFAULT' >&2
     exit 1

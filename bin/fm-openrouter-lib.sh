@@ -289,11 +289,13 @@ fm_openrouter_usage() {
   fi
   printf '%s' "$body" | tr -d '\n' | awk '
     {
-      if (match($0, /"usage"[[:space:]]*:[[:space:]]*[0-9][0-9.eE+-]*/)) {
+      if (match($0, /"usage"[[:space:]]*:[[:space:]]*[^,}[:space:]]+/)) {
         s = substr($0, RSTART, RLENGTH)
         sub(/^[^:]*:[[:space:]]*/, "", s)
-        print s
-        found = 1
+        if (s ~ /^[0-9][0-9.eE+-]*$/) {
+          print s
+          found = 1
+        }
         exit
       }
     }

@@ -287,7 +287,17 @@ test_an_unreadable_usage_emits_nothing() {
   printf '%s' '{"data":{"label":"x"}}' >"$TMP_ROOT/usage.json"
   out=$(fm_openrouter_usage) && fail "an absent usage must refuse"
   assert_equals "" "$out" "an absent usage emits nothing with jq"
-  pass "a null or absent usage emits nothing so no null spend is logged"
+  printf '%s' '{"data":{"usage":null,"limits":{"usage":9.75}}}' >"$TMP_ROOT/usage.json"
+  out=$(fm_openrouter_usage) && fail "a null usage must refuse with jq"
+  assert_equals "" "$out" "with jq, a null usage does not fall through to a nested usage"
+  out=$(PATH="$NOJQ" fm_openrouter_usage) && fail "a null usage must refuse without jq"
+  assert_equals "" "$out" "without jq, a null usage does not fall through to a nested usage"
+  printf '%s' '{"data":{"usage":"n/a","limits":{"usage":9.75}}}' >"$TMP_ROOT/usage.json"
+  out=$(fm_openrouter_usage) && fail "a nonnumeric usage must refuse with jq"
+  assert_equals "" "$out" "with jq, a nonnumeric usage emits nothing"
+  out=$(PATH="$NOJQ" fm_openrouter_usage) && fail "a nonnumeric usage must refuse without jq"
+  assert_equals "" "$out" "without jq, a nonnumeric usage emits nothing"
+  pass "a null, absent or nonnumeric usage emits nothing so no bad spend is logged"
 }
 
 test_usage_falls_back_to_the_first_usage_without_jq() {

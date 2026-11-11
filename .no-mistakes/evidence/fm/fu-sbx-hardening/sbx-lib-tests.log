@@ -1,0 +1,16 @@
+ok - absent and off both resolve to off
+ok - sbx resolves its defaults and honours cpus, memory, allow and nm
+ok - a wildcard host never glob-expands against a matching file in the current directory
+ok - an unknown value, a bad option, and a non-file are refused
+ok - verify=app is opt-in, strict, and reset on reload
+ok - names are deterministic, per-home, bounded, and shell-safe
+ok - only the exact fleet name shape is accepted
+ok - removal refuses names this tree would not have created
+ok - removal is idempotent and reports a sandbox that survives
+ok - preflight passes on a running daemon and names what is missing otherwise
+ok - an existing config keeps its keys and gets the three timeouts
+ok - an absent config is created, not skipped
+ok - the helper runs the merge inside the named sandbox
+ok - a failed in-VM merge is reported, not hidden
+ok - slugs normalize every GitHub URL form and the fork is found among a repository's remotes
+# all fm-sbx-lib tests passed

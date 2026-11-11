@@ -1,0 +1,21 @@
+fm_sbx_is_fleet_name on candidate names (0=accepted,1=refused):
+-- base --
+  rc=0  fm-sbx-0123abcd-prod
+  rc=0  fm-sbx-0123abcd-t1
+  rc=0  fm-sbx-0123abcd-t1-9999
+  rc=0  fm-sbx-0123abcd-t1-9999-extra
+  rc=0  fm-sbx-0123abcd-ta_sk-9999
+  rc=1  fm-sbx-0123abcd--9999
+  rc=0  fm-sbx-0123abcd-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-9f3a
+  rc=0  fm-sbx-0123abcd-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-9f3a
+  rc=0  fm-sbx-29ce3852-task-shape-f564
+-- change --
+  rc=1  fm-sbx-0123abcd-prod
+  rc=1  fm-sbx-0123abcd-t1
+  rc=0  fm-sbx-0123abcd-t1-9999
+  rc=1  fm-sbx-0123abcd-t1-9999-extra
+  rc=1  fm-sbx-0123abcd-ta_sk-9999
+  rc=1  fm-sbx-0123abcd--9999
+  rc=0  fm-sbx-0123abcd-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-9f3a
+  rc=1  fm-sbx-0123abcd-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-9f3a
+  rc=0  fm-sbx-29ce3852-task-shape-f564

@@ -1,0 +1,3 @@
+Directory cwd contains: allow=cdn.example.org
+base parser result: allow='cdn.example.org'
+change parser result: allow='*.example.org'

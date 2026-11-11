@@ -1,0 +1,8 @@
+== change (target commit) ==
+ok - the launch-record scan stops at the first match
+exit=0
+== base commit ==
+not ok - the first matching brief record is mounted (missing: '/tmp/fm-sbx-run.OGlb0T/briefscan/home/state/operational-inbox/1-aaaa.msg:ro')
+--- output ---
+create --name fm-sbx-0123abcd-t1-9999 --pull missing --cpus 4 --memory 4g -e CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false -e CLAUDE_CODE_SEND_FEEDBACK=0 -e FM_TASK_INBOX=/home/lionel/firstmate/state/fu-sbx-hardening.inbox -e COMPACT_ADVISER_DISABLE=1 -e DISABLE_AUTOUPDATER=1 -e FM_SBX_CHANNEL=/tmp/fm-sbx-run.OGlb0T/briefscan/home/state/t1.sbx claude /tmp/fm-sbx-run.OGlb0T/briefscan/home/state/t1.sbx-clone /tmp/fm-sbx-run.OGlb0T/briefscan/home/data/t1 /tmp/fm-sbx-run.OGlb0T/briefscan/home/state/t1.sbx /tmp/fm-sbx-run.OGlb0T/briefscan/home/state/t1.inbox /tmp/fm-sbx-run.OGlb0T/briefscan/home/state/operational-inbox/2-bbbb.msg:ro /tmp/fm-sbx-run.OGlb0T/briefscan/home/.agents/skills:ro
+exit=1

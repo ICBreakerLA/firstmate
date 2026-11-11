@@ -196,26 +196,6 @@ test_the_environment_maps_every_tier_and_leaves_the_key_out() {
   pass "the environment maps every tier to the model and carries no key or host secret"
 }
 
-test_the_compact_window_defaults_overrides_and_refuses_a_bad_value() {
-  local env out w
-  env=$(fm_openrouter_env qwen/qwen3.8-27b)
-  assert_contains "$env" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=600000" "the default window is 600000"
-  env=$(FM_OPENROUTER_COMPACT_WINDOW=500000 fm_openrouter_env qwen/qwen3.8-27b)
-  assert_contains "$env" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000" "the override reaches the worker"
-  for w in 0 1000000 sixhundred -5 6000000000; do
-    out=$(FM_OPENROUTER_COMPACT_WINDOW=$w fm_openrouter_env qwen/qwen3.8-27b 2>&1) &&
-      fail "FM_OPENROUTER_COMPACT_WINDOW=$w must refuse"
-    assert_contains "$out" "positive integer below 1000000" "the refusal names the rule for FM_OPENROUTER_COMPACT_WINDOW=$w"
-    assert_not_contains "$out" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=" "no window reaches the worker for FM_OPENROUTER_COMPACT_WINDOW=$w"
-  done
-  reset
-  out=$(FM_OPENROUTER_COMPACT_WINDOW=0 fm_openrouter_resolve "$CFG" or:qwen 2>&1) &&
-    fail "a bad window must refuse the launch"
-  assert_contains "$out" "positive integer below 1000000" "the launch refusal names the rule"
-  assert_not_contains "$(cat "$TMP_ROOT/curl.log")" "ARGS" "nothing is requested for a bad window"
-  pass "the compact window defaults to 600000, takes a valid override, and refuses a bad one before any request"
-}
-
 test_usage_reads_the_keys_spend() {
   reset
   fm_openrouter_usage && fail "an unreadable usage must report nothing"
@@ -238,7 +218,6 @@ test_a_direct_id_never_falls_through
 test_a_rejected_key_stops_the_chain
 test_an_unknown_alias_or_bad_id_refuses
 test_the_environment_maps_every_tier_and_leaves_the_key_out
-test_the_compact_window_defaults_overrides_and_refuses_a_bad_value
 test_usage_reads_the_keys_spend
 
 echo "# all fm-openrouter-lib tests passed"

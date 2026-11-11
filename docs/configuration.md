@@ -1695,6 +1695,7 @@ An id with a slash is a direct model id and an id without one is an alias.
 
 The spend-limited worker key lives in `~/.config/firstmate/openrouter-worker-key` (`FM_OPENROUTER_KEY_FILE` overrides it, for tests).
 It must be a regular file, not a symlink, and is read on the host only.
+Its value may hold only `A-Z`, `a-z`, `0-9`, `.`, `_`, and `-`, the characters an OpenRouter key uses, because the value is interpolated into the curl config sent on stdin; a key file with any other character is refused without being used.
 The key is sent to `curl` on stdin so it is never in a host argument list, it never enters the sandbox, and it is never printed, logged, or written into the task record, status, brief, or any test output.
 The sandbox instead holds the fixed placeholder `sk-or-placeholder-firstmate` as `ANTHROPIC_AUTH_TOKEN`, passed to `sbx create`, so the value exists in the VM from its first moment.
 Once the sandbox exists, the wrapper registers a sandbox-scoped secret with `sbx secret set-custom --sandbox <name> --host openrouter.ai --placeholder sk-or-placeholder-firstmate --command "tr -d '[:space:]' <'<absolute key file path>'"`, and a launch whose secret cannot be stored is removed.
@@ -1706,13 +1707,15 @@ The key file path must be absolute, because the command runs in the sbx daemon r
 A launch with an `or:` model refuses, before any endpoint, clone, or task record exists, when any of these holds:
 
 - The worker is not a task worker on the claude harness with `config/worker-sandbox` set to `sbx`.
-- The key file is missing, a symlink, or empty, its path is not absolute, or OpenRouter rejects the key.
+- The key file is missing, a symlink, empty, or holds a character outside `A-Za-z0-9._-`, its path is not absolute, or OpenRouter rejects the key.
+- `curl` is not installed, because the profile probes the chain with it.
 - An id is `:free`, because free models cannot meet the zero-retention requirement, or an id is not a plain `vendor/model`.
 - The alias has no line in `config/openrouter-models.list`.
 - No id of the chain answers a 1-token request to `/api/v1/chat/completions` that demands a zero-retention endpoint (`provider.zdr` true and `provider.data_collection` `deny`).
 
 The ids are probed in order and the first that answers wins.
 A 402, 429, 5xx, no zero-retention endpoint, or a timeout skips to the next id; a 401 or 403 stops at once.
+Each probe is given `FM_OPENROUTER_PROBE_TIMEOUT` seconds (default 30) and the whole chain `FM_OPENROUTER_CHAIN_BUDGET` seconds (default 120), after which a launch refuses naming the ids it tried; a nonpositive or invalid value falls back to its default.
 There is no fallback to Claude: an unavailable OpenRouter profile refuses.
 The task record carries `model=or:<resolved id>` and, for an alias, `model_alias=<alias>`, and a relaunch keeps both.
 
@@ -1734,7 +1737,7 @@ Before the worker starts, the wrapper checks from inside the VM that `https://op
 A failed check stops the launch and removes the sandbox.
 The placeholder is not a secret, and a request that reaches another host carrying it is not substituted; OpenRouter refuses a wrong bearer token with a 401.
 
-The wrapper reads the key's lifetime spend from `/api/v1/key` before the worker starts and again when it exits, and appends `at= model= before= after= cost_usd=` to `data/<id>/openrouter-usage.log`.
+The wrapper reads the key's lifetime spend from the top-level `data.usage` field of `/api/v1/key` before the worker starts and again when it exits, parsed with `jq` when it is installed and otherwise anchored to the first `usage` field in the document, and appends `at= model= before= after= cost_usd=` to `data/<id>/openrouter-usage.log`.
 A reading that cannot be made writes nothing, and with parallel workers each line also includes the other workers' spend over the same period.
 
 In a [dispatch profile](#crew-dispatch-profiles-configcrew-dispatchjson) a Claude `or:` model is attributed to the `openrouter` quota provider, which carries no quota measurement, so it counts as unmeasured and unranked rather than drawing on the Claude plan.

@@ -29,19 +29,34 @@ printf 'ARGS: %s\\n' "\$*" >>"$TMP_ROOT/curl.log"
 printf '%s\\n' "\$cfg" | sed "s/$FAKE_KEY/<KEY>/g" >>"$TMP_ROOT/curl.log"
 case "\$cfg" in
 *"/v1/key"*)
-  [ -f "$TMP_ROOT/usage" ] || { printf '\\n500'; exit 0; }
-  printf '{"data":{"label":"x","usage":%s,"limit":10}}\\n200' "\$(cat "$TMP_ROOT/usage")" ;;
+  [ -f "$TMP_ROOT/usage" ] || [ -f "$TMP_ROOT/usage.json" ] || { printf '\\n500'; exit 0; }
+  if [ -f "$TMP_ROOT/usage.json" ]; then
+    cat "$TMP_ROOT/usage.json"; printf '\\n200'
+  else
+    printf '{"data":{"label":"x","usage":%s,"limit":10}}\\n200' "\$(cat "$TMP_ROOT/usage")"
+  fi ;;
 *)
   id=\$(printf '%s' "\$cfg" | sed -n 's/.*\\\\"model\\\\":\\\\"\\([^\\\\]*\\)\\\\".*/\\1/p' | tr '/' '_')
   [ ! -f "$TMP_ROOT/curl.down" ] || exit 7
+  [ ! -f "$TMP_ROOT/curl.slow" ] || sleep "\$(cat "$TMP_ROOT/curl.slow")"
   printf '\\n%s' "\$(cat "$TMP_ROOT/status/\$id" 2>/dev/null || echo 200)" ;;
 esac
 SH
 chmod +x "$FAKEBIN/curl"
 
+# A PATH with the fake curl but without jq, for the usage fallback; and one
+# without curl at all, for the named curl refusal. Each holds only the tools
+# the library itself needs.
+NOJQ="$TMP_ROOT/nojq"
+NOCURL="$TMP_ROOT/nocurl"
+mkdir -p "$NOJQ" "$NOCURL"
+for t in bash awk sed tr cat; do ln -s "$(command -v "$t")" "$NOJQ/$t"; done
+ln -s "$FAKEBIN/curl" "$NOJQ/curl"
+ln -s "$(command -v tr)" "$NOCURL/tr"
+
 reset() {
   printf '%s\n' "$FAKE_KEY" >"$FM_OPENROUTER_KEY_FILE"
-  rm -rf "$TMP_ROOT/status" "$TMP_ROOT/curl.down" "$TMP_ROOT/usage"
+  rm -rf "$TMP_ROOT/status" "$TMP_ROOT/curl.down" "$TMP_ROOT/curl.slow" "$TMP_ROOT/usage" "$TMP_ROOT/usage.json"
   mkdir -p "$TMP_ROOT/status"
   : >"$TMP_ROOT/curl.log"
   printf '# the chains\nqwen: qwen/qwen3.8-27b, qwen/qwen3-coder,  other/model:nitro\nsolo: vendor/one\nfree: vendor/model:free\n' >"$CFG/openrouter-models.list"
@@ -73,6 +88,17 @@ test_the_key_file_is_required_and_never_a_symlink() {
   assert_contains "$out" "needs its key in" "a symlink is not a key file"
   rm -f "$FM_OPENROUTER_KEY_FILE"
   pass "a missing, empty or symlinked key file refuses before any request"
+}
+
+test_a_key_outside_the_accepted_charset_is_refused() {
+  local out
+  reset
+  printf '%s\n' 'sk-or-x" output = "/tmp/canary' >"$FM_OPENROUTER_KEY_FILE"
+  out=$(fm_openrouter_resolve "$CFG" or:qwen 2>&1) && fail "a key with a quote must refuse"
+  assert_contains "$out" "outside A-Za-z0-9._-" "the refusal names the accepted set"
+  assert_not_contains "$out" "canary" "the key is not printed"
+  assert_not_contains "$(cat "$TMP_ROOT/curl.log")" "ARGS" "nothing is requested with a hostile key"
+  pass "a key with characters outside A-Za-z0-9._- refuses before any request"
 }
 
 test_free_models_are_refused_before_any_request() {
@@ -149,6 +175,31 @@ test_a_direct_id_never_falls_through() {
   pass "a direct id is probed alone and refuses when it fails"
 }
 
+test_a_missing_curl_is_named_instead_of_a_000_probe() {
+  local out
+  reset
+  out=$(PATH="$NOCURL" fm_openrouter_resolve "$CFG" or:qwen 2>&1) && fail "a missing curl must refuse"
+  assert_contains "$out" "needs curl" "the refusal names curl"
+  assert_not_contains "$out" "capacity" "the refusal does not blame OpenRouter capacity"
+  pass "a home without curl gets its own refusal, not a 000 skip through the chain"
+}
+
+test_the_chain_probe_is_bounded_by_a_total_budget() {
+  local out
+  reset
+  status_of qwen/qwen3.8-27b 402
+  printf '2\n' >"$TMP_ROOT/curl.slow"
+  out=$(FM_OPENROUTER_CHAIN_BUDGET=1 fm_openrouter_resolve "$CFG" or:qwen 2>&1) && fail "a spent budget must refuse"
+  assert_contains "$out" "1s chain probe budget" "the refusal names the spent budget"
+  assert_contains "$out" "FM_OPENROUTER_CHAIN_BUDGET" "the refusal names the knob"
+  assert_contains "$out" "qwen/qwen3.8-27b (HTTP 402)" "the id already tried is named"
+  assert_equals 1 "$(grep -c '^ARGS' "$TMP_ROOT/curl.log")" "the second id is not probed after the budget is spent"
+  reset
+  out=$(FM_OPENROUTER_CHAIN_BUDGET=1 fm_openrouter_resolve "$CFG" or:qwen) || fail "a fast chain is not bounded out"
+  assert_equals "$(printf 'qwen\tqwen/qwen3.8-27b')" "$out" "a fast first id still resolves"
+  pass "a total budget bounds the chain probe and names itself on a refusal"
+}
+
 test_a_rejected_key_stops_the_chain() {
   local out
   reset
@@ -207,17 +258,36 @@ test_usage_reads_the_keys_spend() {
   pass "usage is read from /v1/key without exposing the key"
 }
 
+test_usage_reads_the_top_level_field_not_a_nested_one() {
+  reset
+  printf '%s' '{"data":{"usage":1.5,"limits":{"usage":9.75}}}' >"$TMP_ROOT/usage.json"
+  assert_equals "1.5" "$(fm_openrouter_usage)" "the top-level usage wins over a later nested usage"
+  pass "usage is the top-level data.usage field, not the last usage field in the body"
+}
+
+test_usage_falls_back_to_the_first_usage_without_jq() {
+  reset
+  printf '%s' '{"data":{"usage":1.5,"limits":{"usage":9.75}}}' >"$TMP_ROOT/usage.json"
+  assert_equals "1.5" "$(PATH="$NOJQ" fm_openrouter_usage)" "the first usage field wins without jq"
+  pass "without jq, the first usage field is read rather than the last"
+}
+
 test_the_or_prefix_alone_selects_the_profile
 test_the_key_file_is_required_and_never_a_symlink
+test_a_key_outside_the_accepted_charset_is_refused
 test_free_models_are_refused_before_any_request
 test_an_alias_resolves_to_the_first_answering_id
 test_the_probe_demands_a_zero_retention_endpoint_and_hides_the_key
 test_a_failing_id_skips_to_the_next_in_the_chain
 test_a_chain_where_nothing_answers_refuses_and_lists_each_id
 test_a_direct_id_never_falls_through
+test_a_missing_curl_is_named_instead_of_a_000_probe
+test_the_chain_probe_is_bounded_by_a_total_budget
 test_a_rejected_key_stops_the_chain
 test_an_unknown_alias_or_bad_id_refuses
 test_the_environment_maps_every_tier_and_leaves_the_key_out
 test_usage_reads_the_keys_spend
+test_usage_reads_the_top_level_field_not_a_nested_one
+test_usage_falls_back_to_the_first_usage_without_jq
 
 echo "# all fm-openrouter-lib tests passed"

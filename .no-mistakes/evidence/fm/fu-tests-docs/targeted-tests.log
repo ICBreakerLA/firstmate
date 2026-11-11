@@ -1,0 +1,75 @@
+### bash tests/fm-spawn-consent.test.sh
+ok - --upstream-consent refuses a missing or empty value in both spellings
+ok - --upstream-consent rejects a scope that is not <host>/<owner>/<repo>
+ok - --upstream-consent is refused on local-only, scouts, secondmates, and relaunches
+ok - a well-formed --upstream-consent is accepted in both the space and '=' forms
+EXIT=0
+
+### bash tests/fm-spawn-batch.test.sh
+ok - batch dispatch re-execs and reports every id=repo pair
+ok - batch detection: single pair batches, non-pair rejected, single-task and slash-id stay single
+ok - batch dispatch requires the shared ship delivery contract before any pair runs
+ok - scout batch refuses ship delivery flags instead of ignoring them
+ok - a batch mixing a deferral and a failure reports both and exits as a failure
+ok - projects/ paths are scoped through the firstmate home for single-task spawn
+EXIT=0
+
+### bash tests/fm-classify-status-flood.test.sh
+ok - more than N lines in the window fold into one noisy event
+ok - a span at the cap surfaces every line and is not noisy
+ok - needs-decision, blocked, failed and done lines surface through a flood
+ok - a terminal line that crosses the cap still produces the one noisy event
+ok - lines spaced beyond the window never trip the cap
+ok - a later span start sees the same verdict, so the noisy wake fires once
+ok - the span that crosses the cap reports the noisy event once
+ok - a span past the 32 KiB seed window still folds its own lines past the cap
+ok - a line with no usable time stamp is never counted or suppressed
+ok - FM_STATUS_FLOOD_MAX=0 disables the cap
+ok - the default cap tolerates a busy task and catches a burst
+ok - an invalid cap falls back to the default instead of disabling the guard
+EXIT=0
+
+### bash tests/fm-output-scan.test.sh
+ok - every secret shape is reported by shape and line without its value
+ok - clean text exits 0 silently
+ok - key=value with a word-only value is not a secret hit
+ok - an anthropic key reports once
+ok - multiple hits are listed in line order
+ok - an absent deny-list leaves personal-data rules off
+ok - deny-list entries drive the email, phone, home-path and personal-term shapes
+ok - a malformed or unreadable deny-list is exit 2, never a silent pass
+ok - usage and file errors exit 2
+ok - a file argument is scanned like stdin
+ok - --diff scans only added lines and reports path:line
+ok - secret shapes stay quiet over docs/ and .agents/skills/
+ok - fm-x-reply refuses a hit before posting and still posts clean text
+ok - fm-x-reply honors the deny-list
+ok - scout teardown holds a report that fails the output scan
+EXIT=0
+
+### bash tests/fm-classify-decision-key.test.sh
+ok - a stated [key=X] opens X whether it precedes or follows the verb colon
+ok - a keyless needs-decision still opens and closes the default key
+ok - a resolution closes its decision regardless of either line's key position
+ok - blocked [key=X] opens X in both key positions
+ok - two colon-form keyed decisions never collapse into one shared bucket
+ok - a [key=x] mentioned mid-note is prose, never an opened or closed key
+ok - a malformed stated key is rejected in both positions, never folded as default
+ok - status_line_verb strips every bracket tag before the colon, in any order, and recovers the bare verb
+ok - a [corr=...] tag ahead of [key=...] no longer swallows the verb: opens and closes under the stated key
+ok - a [corr=...] tag with no stated key opens under 'default', exactly like a bare needs-decision line
+ok - a [key=x] tag alone (no corr tag) still opens x - no regression from the tag-stripping fix
+ok - blocked/resolved parse their bare verb with any bracket-tag order preceding the colon
+ok - the incremental fold matches the full fold across appends in both key positions
+ok - status_key_closing_verb separates resolution, durable transfer, and still-open
+ok - status_key_closing_verb reports the last real transition, in either key position
+ok - per-key reads retain resolutions without subprocess work growing with unrelated history
+ok - overridden resolve and durable-transfer verbs still close keys behind unrelated history
+ok - per-key filtering retains ship/scout terminals, reopenings, and secondmate blockers
+ok - prose without a colon cannot impersonate a ship or scout terminal declaration
+ok - a stated default retraction closes its decision and leaves an unrelated keyless wait standing
+ok - a declared wait outlives answers for other keys beyond the event window, and its own resolved line retracts it
+ok - only a colon-bearing or keyed line is a decision transition in the fold
+ok - a recorded line stays recorded across a later resolve
+EXIT=0
+

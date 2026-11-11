@@ -1,0 +1,58 @@
+Documentation claims cross-checked against the implementing code
+(docs are the deliverable; no runtime surface for markdown)
+
+== Guard defaults (intent: wedge guard timeout + consecutive-deferral max) ==
+docs/configuration.md:1050: ... bounded by `FM_WEDGE_GUARD_TIMEOUT_SECS` (default 5 seconds).
+1052:After `FM_WEDGE_GUARD_DEFER_MAX` (default 3) consecutive deferrals the escalation fires anyway, and its reason names the guard and the first line of its recommendation.
+1308:FM_WEDGE_GUARD_TIMEOUT_SECS=${FM_WEDGE_GUARD_TIMEOUT_SECS:-5}
+1309:FM_WEDGE_GUARD_DEFER_MAX=${FM_WEDGE_GUARD_DEFER_MAX:-3}
+
+== Header-only tunables indexed in docs/configuration.md ==
+3706:FM_EVENT_CAP_FAIL_MAX=3   # consecutive event-path capability-probe failures before the watcher disables its backend push fast-path for the rest of that process and polls; unset or empty uses 3
+3707:FM_WATCH_HANDLING_SUCCESSOR=0   # internal: set to 1 by bin/fm-watch-arm.sh for a watcher handling a successor arm's recovery handoff; it skips the startup marker reopen and settles the handoff itself
+3708:FM_WATCH_FOREGROUND_CHECKPOINT=0   # internal: set to 1 by bin/fm-watch-checkpoint.sh for the bounded foreground checkpoint, which also skips the startup marker reopen
+3709:FM_TEST_WATCHER_PRE_IDENTITY_DELAY=0   # test seam: seconds to pause after the singleton claim and before the lock identity and EXIT trap exist, exercising the arm's startup unsafe window
+3775:FM_LOCK_OWNER_SCOPE=   # internal: scope token bin/fm-watch.sh stamps into its staged lock-owner directory names so an interrupted acquisition cleans up only its own staging directories
+3802:FM_STATUS_FLOOD_WINDOW_SECS=600   # seconds of a task's stamped status lines the flood cap counts; a line spaced at or beyond this window is outside the count
+3803:FM_STATUS_FLOOD_SEED_BYTES=32768   # bytes of pre-span status lines replayed to rank a span's first line; a span whose prelude exceeds this reads only the newest bounded slice
+3804:FM_WAKE_ENRICH_TEST_DELAY=   # test seam: seconds to pause best-effort wake annotation enrichment, to prove queue appends stay independent of it
+
+== Implementing definitions ==
+bin/fm-watch.sh:522:EVENT_CAP_FAIL_MAX=${FM_EVENT_CAP_FAIL_MAX:-3}
+bin/fm-classify-lib.sh:2466:FM_STATUS_FLOOD_WINDOW_SECS=600
+bin/fm-classify-lib.sh:2468:FM_STATUS_FLOOD_SEED_BYTES=32768
+26:#   FM_LOCAL_LLM_SLOTS_URL   the endpoint fm_local_llm_server_processing reads to
+32:#   FM_LOCAL_LLM_GPU_PROBE_TIMEOUT   seconds the GPU probe gives powershell.exe
+128:# FM_LOCAL_LLM_SLOTS_URL overrides the endpoint so a test points at a stub.
+131:  url=${FM_LOCAL_LLM_SLOTS_URL:-http://127.0.0.1:8080/slots}
+233:  out=$(timeout "${FM_LOCAL_LLM_GPU_PROBE_TIMEOUT:-15}" powershell.exe -NoProfile -NonInteractive -Command \
+27:#   FM_OPENROUTER_API_URL    the host-side API base (default
+70:  printf '%s\n' "${FM_OPENROUTER_API_URL:-https://openrouter.ai/api}"
+3852:FM_LOCK_OWNER_SCOPE="$WATCHER_PID.$RANDOM.$RANDOM"
+3924:  for staged in "$STATE"/.*.owner."$FM_LOCK_OWNER_SCOPE".*; do
+bin/fm-watch-arm.sh:803:  FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" >"$child_out" &
+bin/fm-watch-checkpoint.sh:69:export FM_WATCH_FOREGROUND_CHECKPOINT=1
+bin/fm-watch.sh:3837:case "${FM_TEST_WATCHER_PRE_IDENTITY_DELAY:-0}" in
+bin/fm-watch.sh:3839:  *) sleep "$FM_TEST_WATCHER_PRE_IDENTITY_DELAY" ;;
+3317:  case "${FM_WAKE_ENRICH_TEST_DELAY:-0}" in
+3320:    *) sleep "$FM_WAKE_ENRICH_TEST_DELAY" ;;
+
+== Classify pause-resurface default owner ==
+3809:FM_PAUSE_RESURFACE_SECS=14400      # four hours between bounded rechecks of a declared external wait or verified captain-held transfer, repeated new-hash stale alarms for an ordinary crew task with an open backlog captain call, and repeated first-sight alarms from an otherwise-unclassifiable pane whose recovery-grade endpoint probe proves its agent alive and whose own status log or task worktree was written within FM_STALE_ESCALATE_SECS (without that progress evidence every new hash still surfaces immediately); a structured until time can make an external-wait recheck occur sooner but cannot extend this bound; this includes a live idle pane after its first inconclusive stale wake, a provably-working pane whose own unelapsed declared wait, backlog captain hold, or, where config/wedge-defer-worker-wait or config/wedge-defer-parked-gate arms it, its worker's own still-open `blocked:` or `needs-decision:` line or unanswered supervisor-owed validation gate, or, where config/wedge-defer-validating arms it, attributed validation run that is running or fixing, defers its FM_STALE_ESCALATE_SECS escalation, and a live busy pane past FM_BUSY_TURN_MAX_SECS, while the away-mode daemon uses the same setting and ages its window against the crew's own latest status line rather than pane busy state; set it in config/watch.env for durable non-Relay tuning of watchers started through bin/fm-watch-arm.sh, while the Codex checkpoint route with no config/supervision-host and the away-mode daemon start the watcher directly and use the default; a captain-held transfer or backlog captain hold is never rechecked while the away-posture record exists, while an armed validation gate awaiting the supervisor's decision keeps this recheck in either posture; zero and invalid values use 14400; the default is owned by FM_PAUSE_RESURFACE_SECS_DEFAULT in bin/fm-classify-lib.sh
+124:FM_PAUSE_RESURFACE_SECS_DEFAULT=14400
+
+== Wildcard-host grammar ==
+1511:A host name may contain `*` wildcards alongside letters, digits, dots, and dashes, and the allow-list grammar passes them to the sandbox's policy as written rather than expanding them against a local path.
+# fm_sbx_valid_allow_list <list>
+# Returns 0 when <list> is a comma-separated allow list: every entry is a host
+# name (letters, digits, dot, dash, star), optionally suffixed with one colon
+# and a numeric port (host:PORT).
+# An empty list, an empty entry, an empty host, a host carrying a second
+# colon, and an empty or non-numeric port all return 1.
+fm_sbx_valid_allow_list() {
+
+== --upstream-consent in docs/scripts.md and fm-spawn usage ==
+70:| `fm-spawn.sh`            | Spawn crewmates, scouts, `id=repo` batches, and secondmates on the resolved harness and runtime backend, including a ship's per-task `--upstream-consent` publication approval |
+4:# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--upstream-consent <host>/<owner>/<repo>] [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--from-dispatch] [--hermes-profile <name>] [--account <entry>] [--backend <name>] [--herdr-resume-lock-wait]
+46:#   --upstream-consent <host>/<owner>/<repo> records the captain's one-off
+49:#   home's role. The brief must record the same upstream-consent= token. It is

@@ -1,0 +1,6 @@
+=== 3. A batch mixing DEFERRED (capacity) and FAILED (missing project) ===
+deferred: project capped admits 1 worker(s) at once on this machine (/tmp/fm-manual.9gWmR2/home/config/project-capacity) and 1 already hold a place (live-a); task defer-mixed-z13 was not launched and its backlog item stays queued - dispatch it again once one of them records its ready PR or is cleaned up
+batch: DEFERRED defer-mixed-z13 (/tmp/fm-manual.9gWmR2/capped) - its project is at capacity, so it stays queued
+/home/agent/nm/worktrees/8be535c2bd9e/01M75VDX1PGYZ4GG667JM4HQWQ/bin/fm-spawn.sh: line 4307: cd: /tmp/fm-manual.9gWmR2/home/projects/none-mixed: No such file or directory
+batch: FAILED to spawn fail-mixed-z14 (projects/none-mixed)
+batch exit rc=1

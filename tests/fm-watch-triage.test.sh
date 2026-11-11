@@ -5598,6 +5598,110 @@ test_afk_busy_bound_stale_append_failure_alarms_and_survives() {
   pass "an away-mode busy-bound stale-wake append failure alarms once, retries later, and hands off on the re-arm"
 }
 
+# The wedge-timer's opt-in stream branch publishes through a guarded append
+# that can reject a stale snapshot (discard, no alarm) or fail transiently.
+# The transient failure is the same I/O class as the non-stream branch, so it
+# alarms once through the same guard and the cycle keeps polling; this route
+# charges its count only after a successful append, so nothing moves on a
+# failure and the next poll retries the same rung.
+test_wedge_stream_stale_append_failure_alarms_and_survives() {
+  local dir state fakebin out err capture window key gen pid cycles alarm
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "wedge stream stale-wake append failure skipped (root ignores file modes)"
+    return 0
+  fi
+  dir=$(make_case wedge-stream-append-failure); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; err="$dir/watch.err"; capture="$dir/pane.txt"
+  window="test:fm-wedge-stream"; key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'Working...' > "$capture"
+  printf 'window=%s\nkind=ship\nharness=pi\n' "$window" > "$state/wedge-stream.meta"
+  record_pi_busy "$state" wedge-stream
+  gen=$(cat "$state/wedge-stream.busy-gen")
+  "$ROOT/bin/fm-busy-event.sh" stream "$state" wedge-stream open --gen "$gen" --request 1
+  printf 'v1 gen=%s request=1 rev=1 ts=%s\n' "$gen" "$(( $(date +%s) - 600 ))" > "$state/wedge-stream.model-stream"
+  printf 'working: setup complete\n' > "$state/wedge-stream.status"
+  seen_sig "$state/wedge-stream.status" > "$state/.seen-wedge-stream_status"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STATE_OVERRIDE="$state" FM_STREAM_SILENT_MAX_SECS=300 FM_BUSY_TURN_MAX_SECS=99999 \
+    FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2> "$err" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" 300 || { reap "$pid"; fail "stream admission failed: $(cat "$err")"; }
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "stream admission acknowledgement failed"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$state/.wake-queue"
+  chmod 444 "$state/.wake-queue"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STATE_OVERRIDE="$state" FM_STREAM_SILENT_MAX_SECS=300 FM_BUSY_TURN_MAX_SECS=99999 \
+    FM_STALE_ESCALATE_SECS=240 FM_WATCH_TICK_ALARM_SECS=300 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2> "$err" &
+  pid=$!
+  cycles=0
+  while [ "$cycles" -lt 3 ]; do
+    wait_poll_cycle "$state" "$pid" 300 \
+      || { reap "$pid"; fail "the poll loop died on a stream stale-wake append failure: $(cat "$err")"; }
+    cycles=$((cycles + 1))
+  done
+  reap "$pid"
+  chmod 644 "$state/.wake-queue"
+  alarm=$(grep -c -F 'watcher: wedge stream stale-wake append failed' "$err" || true)
+  [ "$alarm" -eq 1 ] \
+    || fail "a failing stream append alarmed $alarm times, expected exactly one bounded alarm: $(cat "$err")"
+  [ ! -s "$out" ] || fail "a stream wake was printed for a row that never reached the queue: $(cat "$out")"
+  [ -s "$state/.stale-since-$key" ] \
+    || fail "the failed stream append consumed the ladder timer instead of leaving it for a retry"
+  [ ! -e "$state/.wedge-escalations-$key" ] \
+    || fail "the failed stream append charged an escalation count"
+  [ ! -s "$state/.wake-queue" ] || fail "a stream wake row reached an unwritable queue"
+  pass "a failed wedge stream stale-wake append alarms once and leaves the cycle alive to retry"
+}
+
+# A failed stale-wake append must not charge the escalation rung it retries:
+# the count is restored on failure, so the first delivered wake after the
+# queue recovers is escalation 1, not the next rung the failure consumed.
+test_wedge_stale_append_failure_restores_escalation_count() {
+  local dir state fakebin out err capture window key pid rc waited
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "wedge stale-wake count restore skipped (root ignores file modes)"
+    return 0
+  fi
+  dir=$(wedge_threshold_fixture wedge-stale-count-restore 'working: still compiling' 0)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; err="$dir/watch.err"
+  capture="$dir/pane.txt"; window="test:fm-wedge"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  : > "$state/.wake-queue"
+  chmod 444 "$state/.wake-queue"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_CONFIG_OVERRIDE="$dir/config" FM_FAKE_TMUX_CURRENT_COMMAND=grok \
+    FM_FAKE_CREW_STATE='state: working · source: run-step · ci running' \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_GATE_PARK_SECS=0 \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PAUSE_RESURFACE_SECS=999 FM_STALE_ESCALATE_SECS=1 FM_WATCH_TICK_ALARM_SECS=300 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$out" 2> "$err" &
+  pid=$!
+  waited=0
+  while ! grep -q -F 'watcher: wedge stale-wake append failed' "$err" 2>/dev/null; do
+    wait_poll_cycle "$state" "$pid" 300 \
+      || { reap "$pid"; fail "the poll loop died before its failed append retry: $(cat "$err")"; }
+    waited=$((waited + 1))
+    [ "$waited" -lt 10 ] \
+      || { reap "$pid"; fail "no wedge append failure was exercised: $(cat "$err")"; }
+  done
+  chmod 644 "$state/.wake-queue"
+  rc=0
+  wait_for_exit "$pid" 60 || rc=$?
+  [ "$rc" -eq 0 ] || fail "the retried escalation did not complete cleanly (rc=$rc): $(cat "$err")"
+  grep -F 'escalation 1' "$out" >/dev/null \
+    || fail "the retried append did not deliver escalation 1: $(cat "$out")"
+  ! grep -F 'escalation 2' "$out" >/dev/null \
+    || fail "a failed append charged the rung it retried: $(cat "$out")"
+  [ "$(wedge_stale_wakes "$state" "$window")" -eq 1 ] \
+    || fail "the recovered queue did not receive exactly one wake row"
+  pass "a failed wedge append restores its count, so the retry delivers escalation 1"
+}
+
 # CI's stock macOS Bash lane sets FM_TEST_STOCK_BASH=1 to run just the bash-3.2
 # churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 # Adding another stock-bash case means adding it to this list, not to ci.yml.
@@ -5712,6 +5816,8 @@ fm_test_run \
   test_afk_busy_declared_pause_ticking_pane_hands_off_once \
   test_wedge_stale_append_failure_alarms_and_survives \
   test_afk_busy_bound_stale_append_failure_alarms_and_survives \
+  test_wedge_stream_stale_append_failure_alarms_and_survives \
+  test_wedge_stale_append_failure_restores_escalation_count \
   test_nonterminal_stale_repairs_missing_or_corrupt_timer \
   test_wedge_escalation_deferred_while_worktree_is_written \
   test_write_deferral_resurfaces_on_the_bounded_cadence \

@@ -2202,12 +2202,28 @@ wedge_write_escalation_count() {  # <window> <window-key> <escalation-file> <sin
 # poll-loop ticks, so it runs through watch_tick_guard: a failed queue append
 # alarms once per failure episode on the bounded TICK_ALARM_SECS cadence and
 # leaves the poll cycle alive for the next poll to retry. The guard's 0 return
-# also covers an alarmed failure, so this records the append's own status for
-# the caller and the caller leaves the ladder's timer in place on failure.
+# also covers an alarmed failure, so the tick records the append's own status
+# for the caller, which leaves the ladder's timer in place on failure.
 _wedge_stale_append_tick() {  # <window> <reason>
   WEDGE_STALE_APPEND_STATUS=1
   fm_wake_append stale "$1" "$2" || return 1
   WEDGE_STALE_APPEND_STATUS=0
+}
+
+# The stream branch keeps fm_wake_append_guarded's snapshot-rejection status
+# apart from the transient class: rc 3 still discards the observation without
+# an alarm, while every other nonzero status is the same transient I/O the
+# non-stream tick alarms on and the caller retries.
+_wedge_stream_stale_append_tick() {  # <window> <reason> <task> <snapshot>
+  if fm_wake_append_guarded busy_stream_snapshot_current stale "$1" "$2" "$3" "$4"; then
+    WEDGE_STALE_APPEND_STATUS=0
+  else
+    WEDGE_STALE_APPEND_STATUS=$?
+  fi
+  case "$WEDGE_STALE_APPEND_STATUS" in
+    0|3) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task> <pane-hash> [dialog-name] [stream snapshot]
@@ -2461,23 +2477,31 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
         fi
         reason=$(stale_reason_naming_dialog "$reason" "$dialog")
         if [ -n "$stream_snapshot" ]; then
-          append_status=0
-          fm_wake_append_guarded busy_stream_snapshot_current stale "$win" "$reason" "$task" "$stream_snapshot" || append_status=$?
+          WEDGE_STALE_APPEND_STATUS=1
+          watch_tick_guard wedge-stream-stale 'wedge stream stale-wake append failed' _wedge_stream_stale_append_tick "$win" "$reason" "$task" "$stream_snapshot"
+          append_status=$WEDGE_STALE_APPEND_STATUS
           if [ "$append_status" -eq 3 ]; then
             wedge_episode_end "$_wkey"
             rm -f "$STATE/.model-stream-episode-$_wkey"
             clear_write_tracking "$_wkey"
             return 0
           fi
-          [ "$append_status" -eq 0 ] || exit 1
+          # A transient failure alarmed through the guard and must not end the
+          # cycle; this route charges its count only after a successful append,
+          # so the timer and count both stay put for the next poll to retry.
+          [ "$append_status" -eq 0 ] || return 0
           wedge_write_escalation_count "$win" "$_wkey" "$escalation_file" "$since_file" "$n"
         else
           WEDGE_STALE_APPEND_STATUS=1
           watch_tick_guard wedge-stale 'wedge stale-wake append failed' _wedge_stale_append_tick "$win" "$reason"
           # A failed append must not end the cycle and must not consume the
-          # ladder: the guard already alarmed, and returning here leaves the
-          # idle timer and escalation count in place for the next poll to retry.
-          [ "$WEDGE_STALE_APPEND_STATUS" -eq 0 ] || return 0
+          # ladder rung: the guard already alarmed, the idle timer stays in
+          # place, and the count this poll wrote up front is restored so the
+          # retry delivers the same escalation instead of the next one.
+          if [ "$WEDGE_STALE_APPEND_STATUS" -ne 0 ]; then
+            wedge_write_escalation_count "$win" "$_wkey" "$escalation_file" "$since_file" "$prev"
+            return 0
+          fi
         fi
         # The ladder's own step, not an episode end: this pane is still wedged,
         # so the idle timer restarts for the next rung of the same escalation
@@ -4160,13 +4184,14 @@ while :; do
   # No conversation scraping; unresolved records are never silently expired.
   fm_pending_reply_tick "$STATE" || true
 
-  # The three guarded ticks - open-decision reminder, secondmate liveness,
-  # secondmate wake-stall - must not take supervision down on ordinary
-  # transient I/O: watch_tick_guard alarms on a bounded cadence and the
-  # cycle continues. Among these guarded ticks the only watcher-stopping
-  # refusal is open_decision_reminder_tick's invalid-settings return (2),
-  # the stop docs/configuration.md "Open-decision reminders" sanctions;
-  # every other poll-loop phase keeps its existing failure contract.
+  # The guarded sites - the open-decision reminder, secondmate liveness, and
+  # secondmate wake-stall ticks, plus the wedge-timer and away-mode busy-bound
+  # stale-wake appends - must not take supervision down on ordinary transient
+  # I/O: watch_tick_guard alarms on a bounded cadence and the cycle continues.
+  # Among these guarded sites the only watcher-stopping refusal is
+  # open_decision_reminder_tick's invalid-settings return (2), the stop
+  # docs/configuration.md "Open-decision reminders" sanctions; every other
+  # poll-loop phase keeps its existing failure contract.
   watch_tick_guard open-decision 'open-decision reminder check failed' open_decision_reminder_tick || exit 1
   [ -z "$OPEN_DECISION_REMINDER" ] || wake "$OPEN_DECISION_REMINDER"
 

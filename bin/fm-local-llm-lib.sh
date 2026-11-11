@@ -19,8 +19,9 @@
 #                       http://127.0.0.1:8080); the sandbox's base URL and
 #                       network rule stay on port 8080
 #   FM_LOCAL_LLM_HEALTH_TIMEOUT   seconds one /v1/models request may take
-#                       (default 5; the dispatch fallback allows 30; must be a
-#                       positive whole number)
+#                       (default 5, or 30 on the dispatch-chosen path; must be
+#                       a positive whole number; raise it for a server whose
+#                       prefill keeps /v1/models slower than that)
 #   FM_LOCAL_LLM_LOCK   the host-wide lock file
 #   FM_LOCAL_LLM_SLOTS_URL   the endpoint fm_local_llm_server_processing reads to
 #                       decide whether the server is mid-request (default
@@ -51,11 +52,13 @@ FM_LOCAL_LLM_COMPACT_WINDOW=130000
 # What a dispatch-chosen local model falls back to when it is unavailable.
 FM_LOCAL_LLM_FALLBACK_MODEL=claude-haiku-4-5
 FM_LOCAL_LLM_FALLBACK_EFFORT=low
-# The dispatch fallback's own /v1/models bound: a server in a long prefill can
-# be alive yet slower than the pre-launch check's 5 s, and a false negative
-# there silently demotes a dispatch-chosen local model to the fallback model.
-# 30 s matches the OpenRouter availability probe's default bound and still
-# returns a wedged server's fallback promptly.
+# The dispatch fallback's own /v1/models bound: a server can be alive yet
+# slower than the pre-launch check's 5 s, and a false negative there silently
+# demotes a dispatch-chosen local model to the fallback model. 30 s matches the
+# OpenRouter availability probe's default bound and still returns a wedged
+# server's fallback promptly; it covers a slow-but-alive answer, not a full
+# compaction prefill, so an operator whose server's prefill keeps /v1/models
+# slower than that raises FM_LOCAL_LLM_HEALTH_TIMEOUT.
 FM_LOCAL_LLM_DISPATCH_HEALTH_TIMEOUT=30
 
 # fm_local_llm_is_model <model>: 0 when the model id selects the profile.
@@ -244,19 +247,19 @@ fm_local_llm_start_command() {
   sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$f" | grep -v -e '^$' -e '^#' | head -n 1
 }
 
-# fm_local_llm_start_and_wait <command>
+# fm_local_llm_start_and_wait <command> [health-timeout-seconds]
 # Runs the host-side start command once, detached, then waits up to
 # FM_LOCAL_LLM_START_WAIT seconds for the server to answer with the model. 0
 # once it does. A start command that exits non-zero ends the wait early.
 fm_local_llm_start_and_wait() {
-  local cmd=$1 limit poll deadline pid ended=0
+  local cmd=$1 bound=${2:-} limit poll deadline pid ended=0
   limit=${FM_LOCAL_LLM_START_WAIT:-120}
   poll=${FM_LOCAL_LLM_START_POLL:-2}
   bash -c "$cmd" </dev/null >/dev/null 2>&1 9>&- &
   pid=$!
   deadline=$((SECONDS + limit))
   while :; do
-    fm_local_llm_health >/dev/null 2>&1 && return 0
+    fm_local_llm_health "$bound" >/dev/null 2>&1 && return 0
     if [ "$ended" -eq 0 ] && ! kill -0 "$pid" 2>/dev/null; then
       ended=1
       wait "$pid" || return 1
@@ -274,8 +277,10 @@ fm_local_llm_start_and_wait() {
 #       (once started through config/local-llm-start when it did not);
 #   (c) the one local slot is free, and is claimed here.
 # 0: the local model is usable and the slot is claimed (FM_LOCAL_LLM_HOLDER is
-# set). 1: unavailable; one notice line names the failed check and the model
-# used instead. Nothing is created either way beyond the claim.
+# set, and FM_LOCAL_LLM_SELECTED_HEALTH_TIMEOUT carries the validated health
+# bound for the rest of this launch). 1: unavailable; one notice line names the
+# failed check and the model used instead. Nothing is created either way beyond
+# the claim.
 fm_local_llm_select() {
   local id=$1 sbx=$2 cfg=$3 why cmd err bound
   why=
@@ -289,7 +294,7 @@ fm_local_llm_select() {
     cmd=$(fm_local_llm_start_command "$cfg")
     if [ -z "$cmd" ]; then
       why="the server is not answering and no start command is configured (config/local-llm-start)"
-    elif fm_local_llm_start_and_wait "$cmd"; then
+    elif fm_local_llm_start_and_wait "$cmd" "$bound"; then
       why=
     else
       why="the server did not answer within ${FM_LOCAL_LLM_START_WAIT:-120}s of its start command"
@@ -299,7 +304,8 @@ fm_local_llm_select() {
   if [ -z "$why" ]; then
     err=$(fm_local_llm_claim "$id" 2>&1) || why="the one local slot is taken (${err#error: })"
   fi
-  [ -z "$why" ] && return 0
+  # shellcheck disable=SC2034 # Read by the sourcing script (fm-spawn.sh).
+  [ -z "$why" ] && FM_LOCAL_LLM_SELECTED_HEALTH_TIMEOUT=$bound && return 0
   echo "local model $FM_LOCAL_LLM_MODEL unavailable: $why; using $FM_LOCAL_LLM_FALLBACK_MODEL (effort $FM_LOCAL_LLM_FALLBACK_EFFORT) instead" >&2
   return 1
 }

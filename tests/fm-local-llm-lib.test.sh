@@ -242,6 +242,22 @@ test_select_keeps_the_local_model_when_the_server_is_slow_to_answer() {
   pass "a server slower than the pre-launch health bound keeps its dispatch-chosen model"
 }
 
+test_select_starts_a_slow_but_alive_server_without_falling_back() {
+  reset_world
+  cat >"$CFG/start.sh" <<SH
+#!/bin/sh
+echo x >> "$TMP_ROOT/start.count"
+printf '%s\n' '$SERVER_UP' > "$TMP_ROOT/models.json"
+SH
+  chmod +x "$CFG/start.sh"
+  printf '%s\n' "$CFG/start.sh" >"$CFG/local-llm-start"
+  printf '6\n' >"$TMP_ROOT/curl.delay"
+  select_case 1
+  expect_code 0 "$RC" "a server that answers slower than 5s once started is still alive: $OUT"
+  assert_equals "" "$OUT" "a slow but alive started server must not print a fallback notice"
+  pass "the start path applies the dispatch health bound, so a slow server does not fall back"
+}
+
 test_select_checks_in_order_and_names_the_failed_check() {
   reset_world
   GPU_BUSY=1
@@ -360,6 +376,7 @@ test_a_background_job_without_the_descriptor_does_not_keep_the_claim
 test_select_uses_the_local_model_when_every_check_holds
 test_select_names_an_invalid_health_bound_and_falls_back
 test_select_keeps_the_local_model_when_the_server_is_slow_to_answer
+test_select_starts_a_slow_but_alive_server_without_falling_back
 test_select_checks_in_order_and_names_the_failed_check
 test_select_never_starts_anything_without_the_sandbox
 test_select_starts_the_server_once_then_rechecks

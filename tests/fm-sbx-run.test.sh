@@ -752,6 +752,43 @@ test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock() {
   pass "the local profile gets its environment, a sandbox-scoped rule and the spawn's claim for the worker's life"
 }
 
+# fake_slow_local_server <world> <minimum-bound>: a host curl that answers
+# /v1/models only when its --max-time is at least <minimum-bound>, recording
+# the bound it was given. Models a server alive but slower than the 5 s
+# pre-launch check.
+fake_slow_local_server() {
+  cat >"$FAKE/curl" <<SH
+#!/usr/bin/env bash
+bound= prev=
+for a in "\$@"; do
+  case "\$prev" in --max-time|-m) bound=\$a ;; esac
+  prev=\$a
+done
+printf '%s\\n' "\$bound" >>"$W/curl.bound"
+[ -n "\$bound" ] && [ "\$bound" -ge $2 ] || exit 28
+echo '{"data":[{"id":"qwen3.8-27b-gsq-rco"}]}'
+SH
+  chmod +x "$FAKE/curl"
+}
+
+test_local_llm_uses_the_dispatch_health_bound_for_its_recheck() {
+  local out rc
+  new_world llm-bound
+  fake_slow_local_server "$W" 30
+  claim_slot t1
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm -- claude 2>&1); rc=$?
+  expect_code 1 "$rc" "without the dispatch bound the 5s pre-launch default must refuse: $out"
+  assert_contains "$out" "local model server is not answering" "the slow server is refused at the default bound"
+  assert_not_contains "$(log)" "create " "no sandbox is created"
+  slot_free || fail "the refusing wrapper's exit must release the slot"
+  claim_slot t1
+  out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm --local-llm-health-timeout 30 -- claude 2>&1); rc=$?
+  expect_code 0 "$rc" "the dispatch bound must let the slow server through: $out"
+  assert_contains "$(cat "$W/curl.bound")" "30" "the recheck uses the dispatch bound"
+  slot_free || fail "the slot must be free after the wrapper exits"
+  pass "the wrapper recheck uses the dispatch health bound, so a slow-but-alive server keeps its local model"
+}
+
 test_local_llm_off_changes_nothing() {
   local create
   new_world llm-off
@@ -1132,6 +1169,7 @@ test_verify_flag_off_changes_nothing
 test_verify_refusals_happen_before_any_sandbox_exists
 test_verify_signal_stops_the_broker_and_forces_down
 test_local_llm_gets_its_environment_a_scoped_rule_and_the_lock
+test_local_llm_uses_the_dispatch_health_bound_for_its_recheck
 test_local_llm_off_changes_nothing
 test_local_llm_refuses_before_any_sandbox_exists
 test_local_llm_failed_preflight_releases_the_slot

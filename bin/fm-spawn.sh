@@ -3588,6 +3588,7 @@ fi
 LOCAL_LLM_ACTIVE=0
 MODEL_FELL_BACK_FROM=
 FM_LOCAL_LLM_HOLDER=
+FM_LOCAL_LLM_SELECTED_HEALTH_TIMEOUT=
 if fm_local_llm_is_model "$MODEL"; then
   [ "$KIND" != secondmate ] || {
     echo "error: the local-model profile ($MODEL) runs only sandboxed task workers, not a persistent secondmate" >&2
@@ -7617,6 +7618,7 @@ if [ "$SBX_ACTIVE" -eq 1 ]; then
   [ -z "$FM_SBX_ALLOW" ] || CLAUDE_BIN="$CLAUDE_BIN --allow $(shell_quote "$FM_SBX_ALLOW")"
   [ "$FM_SBX_VERIFY" != app ] || CLAUDE_BIN="$CLAUDE_BIN --verify app"
   [ "$LOCAL_LLM_ACTIVE" -eq 0 ] || CLAUDE_BIN="$CLAUDE_BIN --local-llm"
+  [ -z "$FM_LOCAL_LLM_SELECTED_HEALTH_TIMEOUT" ] || CLAUDE_BIN="$CLAUDE_BIN --local-llm-health-timeout $FM_LOCAL_LLM_SELECTED_HEALTH_TIMEOUT"
   [ "$OPENROUTER_ACTIVE" -eq 0 ] || CLAUDE_BIN="$CLAUDE_BIN --openrouter $(shell_quote "${MODEL#"$FM_OPENROUTER_PREFIX"}")"
   [ ! -d "$DATA/sbx-npm-cache" ] || CLAUDE_BIN="$CLAUDE_BIN --npm-cache $(shell_quote "$DATA/sbx-npm-cache")"
   CLAUDE_BIN="$CLAUDE_BIN --"

@@ -13,7 +13,8 @@
 #       --root DIR --wt DIR --clone DIR --name SANDBOX [--cpus N] [--memory Ng]
 #       [--busy-gen GEN] [--kind ship|scout] [--nm] [--nm-pin VERSION]
 #       [--allow HOSTS] [--npm-cache DIR] [--verify app] [--local-llm]
-#       [--openrouter MODEL] -- CLAUDE_ARGS...
+#       [--local-llm-health-timeout SECONDS] [--openrouter MODEL] --
+#       CLAUDE_ARGS...
 #
 #   --wt, --clone   the host worktree and the standalone clone bin/fm-sbx-bridge.sh
 #                   made of it; only the clone is mounted, and the VM sees a
@@ -55,6 +56,12 @@
 #                   api.anthropic.com and one sandbox-scoped allow for the
 #                   server's port, and the launch stops if the VM cannot reach
 #                   the server or can reach the Anthropic API.
+#   --local-llm-health-timeout SECONDS
+#                   the /v1/models bound for the pre-worker recheck. The spawn
+#                   passes a dispatch-chosen launch's validated bound here so
+#                   that one dispatch decision governs every health gate;
+#                   absent keeps the pre-launch 5 s (or the operator override).
+#                   Only meaningful with --local-llm.
 #   --openrouter MODEL
 #                   the OpenRouter profile (bin/fm-openrouter-lib.sh,
 #                   docs/configuration.md "OpenRouter worker profile"): the
@@ -131,7 +138,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ID='' CONFIG='' STATE='' DATA='' ROOT='' WT='' CLONE='' NAME=''
 CPUS=4 MEMORY=4g BUSY_GEN='' KIND=ship NM=0 NM_PIN='' ALLOW='' NPM_CACHE=''
-RELAY_PID='' CLEANED=0 VERIFY='' VERIFY_PID='' LOCAL_LLM=0 OPENROUTER='' OR_KEY_FILE='' OR_USAGE_BEFORE=''
+RELAY_PID='' CLEANED=0 VERIFY='' VERIFY_PID='' LOCAL_LLM=0 LOCAL_LLM_HEALTH_TIMEOUT='' OPENROUTER='' OR_KEY_FILE='' OR_USAGE_BEFORE=''
 BROKER="$SCRIPT_DIR/fm-sbx-verify-broker.sh"
 CLAUDE_USER_HOME=/home/agent
 
@@ -160,6 +167,7 @@ while [ "$#" -gt 0 ]; do
   --npm-cache) NPM_CACHE=${2:-}; shift 2 ;;
   --verify) VERIFY=${2:-}; shift 2 ;;
   --local-llm) LOCAL_LLM=1; shift ;;
+  --local-llm-health-timeout) LOCAL_LLM_HEALTH_TIMEOUT=${2:-}; shift 2 ;;
   --openrouter) OPENROUTER=${2:-}; shift 2 ;;
   --) shift; break ;;
   *) die "unknown argument '$1' (see the script header)" ;;
@@ -185,7 +193,7 @@ done
 [ -d "$CLONE/.git" ] || die "no standalone clone at $CLONE (bin/fm-spawn.sh creates it with fm-sbx-bridge.sh clone)"
 fm_sbx_preflight || exit 1
 [ -z "$VERIFY" ] || "$BROKER" check --config "$CONFIG" --state "$STATE" || exit 1
-[ "$LOCAL_LLM" = 0 ] || fm_local_llm_health || exit 1
+[ "$LOCAL_LLM" = 0 ] || fm_local_llm_health "$LOCAL_LLM_HEALTH_TIMEOUT" || exit 1
 if [ -n "$OPENROUTER" ]; then
   [ "$LOCAL_LLM" = 0 ] || die "--openrouter cannot be combined with --local-llm"
   fm_openrouter_valid_id "$OPENROUTER" || die "--openrouter takes an OpenRouter model id (vendor/model)"

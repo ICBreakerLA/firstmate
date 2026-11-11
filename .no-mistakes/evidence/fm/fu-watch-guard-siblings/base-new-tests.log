@@ -1,0 +1,12 @@
+=== base, test slot 100 ===
+1..138
+not ok - the poll loop died on a wedge stale-wake append failure: /home/agent/nm/worktrees/75ad9f10e122/01M75FPEENRS26PPZBSMP2B9TV/bin/fm-wake-lib.sh: line 2696: /tmp/fm-watch-triage-tests.iZ5X1t/wedge-stale-append-failure/state/.wake-queue: Permission denied
+=== base, test slot 101 ===
+1..138
+not ok - the away-mode handoff died on a stale-wake append failure (rc=1): /home/agent/nm/worktrees/75ad9f10e122/01M75FPEENRS26PPZBSMP2B9TV/bin/fm-wake-lib.sh: line 2696: /tmp/fm-watch-triage-tests.wZ2OBa/afk-busy-bound-append-failure/state/.wake-queue: Permission denied
+=== base, test slot 102 ===
+1..138
+not ok - the poll loop died on a stream stale-wake append failure: /home/agent/nm/worktrees/75ad9f10e122/01M75FPEENRS26PPZBSMP2B9TV/bin/fm-wake-lib.sh: line 2696: /tmp/fm-watch-triage-tests.ZGJJBg/wedge-stream-append-failure/state/.wake-queue: Permission denied
+=== base, test slot 103 ===
+1..138
+not ok - the poll loop died before its failed append retry: /home/agent/nm/worktrees/75ad9f10e122/01M75FPEENRS26PPZBSMP2B9TV/bin/fm-wake-lib.sh: line 2696: /tmp/fm-watch-triage-tests.ToXyTi/wedge-stale-count-restore/state/.wake-queue: Permission denied

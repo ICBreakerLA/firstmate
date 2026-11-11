@@ -1,0 +1,6 @@
+1..138
+ok - a failed wedge stale-wake append alarms once and leaves the cycle alive to retry
+ok - an away-mode busy-bound stale-wake append failure alarms once, retries later, and hands off on the re-arm
+ok - a failed wedge stream stale-wake append alarms once and leaves the cycle alive to retry
+ok - a failed wedge append restores its count, so the retry delivers escalation 1
+FM_TEST_COMPLETE

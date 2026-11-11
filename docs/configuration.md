@@ -1724,7 +1724,7 @@ The sandbox gets this environment on top of the usual allowlist, built by `fm_op
 | `ANTHROPIC_AUTH_TOKEN` | The placeholder `sk-or-placeholder-firstmate`; the sbx proxy substitutes the real key on requests to `openrouter.ai`. |
 | `ANTHROPIC_API_KEY` | Empty, so Claude Code uses the bearer token. |
 | `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL` | The resolved model id, so every tier, the background model, and subagents use the one model. |
-| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `200000`. |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `600000`, under the model's 1,048,576-token window. |
 | `CLAUDE_CODE_ATTRIBUTION_HEADER` | `0`. |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1`. |
 

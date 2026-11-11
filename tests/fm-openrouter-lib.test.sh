@@ -186,7 +186,7 @@ test_the_environment_maps_every_tier_and_leaves_the_key_out() {
   assert_contains "$env" "ANTHROPIC_BASE_URL=https://openrouter.ai/api" "the base URL is OpenRouter"
   assert_contains "$env" "ANTHROPIC_API_KEY=" "the API key variable is set"
   assert_equals "ANTHROPIC_API_KEY=" "$(printf '%s\n' "$env" | grep '^ANTHROPIC_API_KEY')" "the API key variable is empty"
-  assert_contains "$env" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000" "auto-compact is 200000"
+  assert_contains "$env" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=600000" "auto-compact is 600000"
   assert_contains "$env" "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" "nonessential traffic is off"
   assert_contains "$env" "CLAUDE_CODE_ATTRIBUTION_HEADER=0" "the attribution header is off"
   assert_not_contains "$env" "ANTHROPIC_AUTH_TOKEN" "the token is added by the wrapper, not this list"

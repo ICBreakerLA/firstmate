@@ -871,7 +871,7 @@ test_openrouter_gets_its_environment_scoped_rules_and_checks() {
   assert_contains "$create" "-e ANTHROPIC_DEFAULT_SONNET_MODEL=qwen/qwen3.8-27b" "the middle tier maps to the model"
   assert_contains "$create" "-e ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen/qwen3.8-27b" "the background tier maps to the model"
   assert_contains "$create" "-e CLAUDE_CODE_SUBAGENT_MODEL=qwen/qwen3.8-27b" "subagents map to the model"
-  assert_contains "$create" "-e CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000" "auto-compact is 200000"
+  assert_contains "$create" "-e CLAUDE_CODE_AUTO_COMPACT_WINDOW=600000" "auto-compact is 600000"
   assert_contains "$create" "-e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1" "nonessential traffic is off"
   assert_contains "$create" "-e CLAUDE_CODE_ATTRIBUTION_HEADER=0" "the attribution header is off"
   assert_contains "$(log)" "secret set-custom --sandbox $NAME --host openrouter.ai --placeholder sk-or-placeholder-firstmate --command tr -d" "the proxy gets a sandbox-scoped secret whose command names only the host key file"

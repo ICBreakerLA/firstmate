@@ -49,7 +49,9 @@ FM_OPENROUTER_AUTH_PLACEHOLDER='sk-or-placeholder-firstmate'
 # never attach the captain's sign-in to a request from it.
 # shellcheck disable=SC2034 # Read by the sourcing script (fm-sbx-run.sh).
 FM_OPENROUTER_ANTHROPIC_HOST=api.anthropic.com
-FM_OPENROUTER_COMPACT_WINDOW=200000
+
+# DeepSeek V4.1 Flash on OpenRouter has a 1,048,576-token window; measured compaction fires at roughly 72-82% of the setting, so 600000 compacts near 430k-490k and a typical task never compacts.
+FM_OPENROUTER_COMPACT_WINDOW=600000
 
 # fm_openrouter_is_model <model>: 0 when the model id selects the profile.
 fm_openrouter_is_model() {

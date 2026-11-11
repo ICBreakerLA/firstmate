@@ -25,6 +25,9 @@
 #   FM_OPENROUTER_API_URL    the host-side API base (default
 #                            https://openrouter.ai/api)
 #   FM_OPENROUTER_PROBE_TIMEOUT   seconds one probe is given (default 30)
+#   FM_OPENROUTER_COMPACT_WINDOW   the worker's auto-compaction window
+#                            (default 600000, under the model's 1,048,576-token
+#                            window)
 # This tree never changes the global sbx policy and never passes the key's
 # value to any sbx argument; the proxy reads it on demand from the key file.
 
@@ -49,7 +52,26 @@ FM_OPENROUTER_AUTH_PLACEHOLDER='sk-or-placeholder-firstmate'
 # never attach the captain's sign-in to a request from it.
 # shellcheck disable=SC2034 # Read by the sourcing script (fm-sbx-run.sh).
 FM_OPENROUTER_ANTHROPIC_HOST=api.anthropic.com
-FM_OPENROUTER_COMPACT_WINDOW=200000
+
+# DeepSeek V4.1 Flash on OpenRouter has a 1,048,576-token window; measured compaction fires at roughly 72-82% of the setting, so 600000 compacts near 430k-490k and a typical task never compacts.
+# fm_openrouter_compact_window
+# The worker's auto-compaction window, from FM_OPENROUTER_COMPACT_WINDOW when set.
+# Prints the value; a clear refusal on stderr and 1 when it is not a positive
+# integer below 1000000 (the model's window is 1048576).
+fm_openrouter_compact_window() {
+  local w=${FM_OPENROUTER_COMPACT_WINDOW:-600000}
+  case "$w" in
+  '' | *[!0-9]*) ;;
+  *)
+    if [ "$w" -gt 0 ] && [ "$w" -lt 1000000 ]; then
+      printf '%s\n' "$w"
+      return 0
+    fi
+    ;;
+  esac
+  printf 'error: FM_OPENROUTER_COMPACT_WINDOW must be a positive integer below 1000000 (the model window is 1048576), got: %s\n' "${w:-<empty>}" >&2
+  return 1
+}
 
 # fm_openrouter_is_model <model>: 0 when the model id selects the profile.
 fm_openrouter_is_model() {
@@ -157,12 +179,14 @@ fm_openrouter_chain() {
 # fm_openrouter_resolve <config-dir> <or:model>
 # Resolves the spawn's model to one answering OpenRouter id and prints
 # "<alias>\t<id>" (the alias is empty for a direct id). Refusals, before
-# anything exists: an unusable model id, a :free id, a missing key, an alias
-# with no chain, a key OpenRouter rejects, or no model of the chain answering a
-# 1-token zero-retention request. Each chain id is probed in order and a 402,
-# 429, 5xx, "no endpoint" or timeout skips to the next.
+# anything exists: an invalid FM_OPENROUTER_COMPACT_WINDOW override, an
+# unusable model id, a :free id, a missing key, an alias with no chain, a key
+# OpenRouter rejects, or no model of the chain answering a 1-token
+# zero-retention request. Each chain id is probed in order and a 402, 429, 5xx,
+# "no endpoint" or timeout skips to the next.
 fm_openrouter_resolve() {
   local cfg=$1 arg=${2#"$FM_OPENROUTER_PREFIX"} alias='' ids id key code tried=''
+  fm_openrouter_compact_window >/dev/null || return 1
   if [ -z "$arg" ]; then
     echo "error: the OpenRouter profile needs a model after or: (or:<vendor>/<model>, or an alias from config/openrouter-models.list)" >&2
     return 1
@@ -219,7 +243,8 @@ fm_openrouter_resolve() {
 # model tier maps to the one model, and nothing but OpenRouter is contacted by
 # the worker's own runtime.
 fm_openrouter_env() {
-  local m=$1
+  local m=$1 window
+  window=$(fm_openrouter_compact_window) || return 1
   printf '%s\n' \
     "ANTHROPIC_BASE_URL=$FM_OPENROUTER_VM_URL" \
     "ANTHROPIC_API_KEY=" \
@@ -229,7 +254,7 @@ fm_openrouter_env() {
     "ANTHROPIC_DEFAULT_HAIKU_MODEL=$m" \
     "ANTHROPIC_SMALL_FAST_MODEL=$m" \
     "CLAUDE_CODE_SUBAGENT_MODEL=$m" \
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW=$FM_OPENROUTER_COMPACT_WINDOW" \
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW=$window" \
     "CLAUDE_CODE_ATTRIBUTION_HEADER=0" \
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"
 }

@@ -128,6 +128,21 @@ test_noisy_event_lands_in_the_span_that_crosses_the_cap() {
   pass "the span that crosses the cap reports the noisy event once"
 }
 
+test_seed_window_crossing_folds_the_span() {
+  local f="$TMP_ROOT/seed-window.status" events offset pad i
+  : > "$f"
+  pad=$(printf 'x%.0s' $(seq 1 2000))
+  for i in $(seq 1 20); do printf 'working: filler %s %s\n' "$i" "$pad" >> "$f"; done
+  offset=$(wc -c < "$f" | tr -d ' ')
+  [ "$offset" -gt 32768 ] || fail "fixture prelude is not past the seed window: $offset"
+  append_lines "$f" 8 1000 5 'checks green'
+  events=$(FM_STATUS_FLOOD_MAX=3 fold_events "$f" "$offset") || fail "a span past the seed window produced no event"
+  [ "$(count_of "$events" 'noisy: seed-window')" -eq 1 ] || fail "expected one noisy event: $events"
+  [ "$(count_of "$events" 'checks green')" -eq 3 ] || fail "expected the first 3 span lines to surface: $events"
+  case "$events" in *'step 4'*) fail "a span line past the cap surfaced: $events" ;; esac
+  pass "a span past the 32 KiB seed window still folds its own lines past the cap"
+}
+
 test_unstamped_lines_are_never_counted() {
   local f="$TMP_ROOT/untimed.status" events i
   : > "$f"
@@ -176,6 +191,7 @@ test_terminal_line_at_the_cap_still_reports_noisy
 test_window_resets_after_ten_minutes
 test_verdict_is_independent_of_the_span_start
 test_noisy_event_lands_in_the_span_that_crosses_the_cap
+test_seed_window_crossing_folds_the_span
 test_unstamped_lines_are_never_counted
 test_zero_disables_the_cap
 test_default_cap_is_well_above_a_busy_task

@@ -2197,11 +2197,24 @@ wedge_write_escalation_count() {  # <window> <window-key> <escalation-file> <sin
 # above, immediately before the wake it authorized is published: a close, a
 # fresh progress write, or a replacement request during those reads cancels
 # that wake and its count instead of surfacing an obsolete observation.
+#
+# The ladder's stale-wake append is ordinary transient I/O, like the guarded
+# poll-loop ticks, so it runs through watch_tick_guard: a failed queue append
+# alarms once per failure episode on the bounded TICK_ALARM_SECS cadence and
+# leaves the poll cycle alive for the next poll to retry. The guard's 0 return
+# also covers an alarmed failure, so this records the append's own status for
+# the caller and the caller leaves the ladder's timer in place on failure.
+_wedge_stale_append_tick() {  # <window> <reason>
+  WEDGE_STALE_APPEND_STATUS=1
+  fm_wake_append stale "$1" "$2" || return 1
+  WEDGE_STALE_APPEND_STATUS=0
+}
+
 wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task> <pane-hash> [dialog-name] [stream snapshot]
   local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 hash=$6 dialog=${7-} since age n prev reason evidence guard guard_note
   local stream_snapshot=${8:-} stream_ts stream_detail='' append_status
   local _wkey _wrollback_sentinel _wrb_ts _wrb_cap_reason _wrb_cap_status _wrb_rm_status
-  local _wrb_since _wrb_now _wrb_age _wrb_cap_ts _wrb_gate
+  local _wrb_since _wrb_now _wrb_age _wrb_cap_ts _wrb_gate WEDGE_STALE_APPEND_STATUS
   _wkey=$(window_key "$win")
   # Cap-fire short-circuit: a previous poll wrote a rollback-failure sentinel,
   # from any of the routes that have to defend cap state this state dir would not
@@ -2459,7 +2472,12 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           [ "$append_status" -eq 0 ] || exit 1
           wedge_write_escalation_count "$win" "$_wkey" "$escalation_file" "$since_file" "$n"
         else
-          fm_wake_append stale "$win" "$reason" || exit 1
+          WEDGE_STALE_APPEND_STATUS=1
+          watch_tick_guard wedge-stale 'wedge stale-wake append failed' _wedge_stale_append_tick "$win" "$reason"
+          # A failed append must not end the cycle and must not consume the
+          # ladder: the guard already alarmed, and returning here leaves the
+          # idle timer and escalation count in place for the next poll to retry.
+          [ "$WEDGE_STALE_APPEND_STATUS" -eq 0 ] || return 0
         fi
         # The ladder's own step, not an episode end: this pane is still wedged,
         # so the idle timer restarts for the next rung of the same escalation
@@ -2628,7 +2646,7 @@ handle_paused_stale() {  # <window> <task> <hash>
 # branch rather than after it.
 busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-file> [dialog-name]
   local win=$1 task=$2 h=$3 since_file=$4 escalation_file=$5 dialog=${6-} key statusf declared
-  local stream_episode stream_snapshot=$BUSY_STREAM_SNAPSHOT label="busy (no completed turn)"
+  local stream_episode stream_snapshot=$BUSY_STREAM_SNAPSHOT label="busy (no completed turn)" WEDGE_STALE_APPEND_STATUS
   statusf="$STATE/$task.status"
   if status_is_paused_or_captain_held "$(status_declared_wait_line "$statusf")"; then
     if afk_present; then
@@ -2665,9 +2683,15 @@ busy_turn_bound_check() {  # <window> <task> <hash> <since-file> <escalation-fil
       if wake_triage_r1_guard "$task"; then
         printf '%s' "$declared" > "$STATE/.stale-$key"
       elif [ "$(cat "$STATE/.stale-$key" 2>/dev/null || true)" != "$declared" ]; then
-        fm_wake_append stale "$win" "stale: $win" || exit 1
-        printf '%s' "$declared" > "$STATE/.stale-$key"
-        wake "stale: $win"
+        WEDGE_STALE_APPEND_STATUS=1
+        watch_tick_guard wedge-away-stale 'wedge away-mode stale-wake append failed' _wedge_stale_append_tick "$win" "stale: $win"
+        # A failed append alarms through the guard and leaves the declaration
+        # suppressor unadvanced, so the next poll retries the handoff instead of
+        # recording a wake that never reached the durable queue.
+        if [ "$WEDGE_STALE_APPEND_STATUS" -eq 0 ]; then
+          printf '%s' "$declared" > "$STATE/.stale-$key"
+          wake "stale: $win"
+        fi
       fi
       return 0
     fi

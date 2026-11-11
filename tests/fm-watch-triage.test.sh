@@ -5503,6 +5503,101 @@ test_wake_triage_batch_off_default() {
   pass "with batching off (the default) nothing is held and the window check is inert"
 }
 
+# A wedge stale-wake append is ordinary transient I/O, so it routes through the
+# same bounded tick guard as the poll-loop ticks: with the durable queue
+# unwritable, the escalation alarms once and the cycle keeps polling instead of
+# exiting 1. The ladder's idle timer stays armed so the next poll retries, and
+# no wake is printed for a row that never reached the queue.
+test_wedge_stale_append_failure_alarms_and_survives() {
+  local dir state fakebin out err capture window key pid cycles alarm
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "wedge stale-wake append failure skipped (root ignores file modes)"
+    return 0
+  fi
+  dir=$(wedge_threshold_fixture wedge-stale-append-failure 'working: still compiling' 0)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; err="$dir/watch.err"
+  capture="$dir/pane.txt"; window="test:fm-wedge"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  : > "$state/.wake-queue"
+  chmod 444 "$state/.wake-queue"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_CONFIG_OVERRIDE="$dir/config" FM_FAKE_TMUX_CURRENT_COMMAND=grok \
+    FM_FAKE_CREW_STATE='state: working · source: run-step · ci running' \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_GATE_PARK_SECS=0 \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PAUSE_RESURFACE_SECS=999 FM_STALE_ESCALATE_SECS=1 FM_WATCH_TICK_ALARM_SECS=300 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$out" 2> "$err" &
+  pid=$!
+  cycles=0
+  while [ "$cycles" -lt 3 ]; do
+    wait_poll_cycle "$state" "$pid" 300 \
+      || { reap "$pid"; fail "the poll loop died on a wedge stale-wake append failure: $(cat "$err")"; }
+    cycles=$((cycles + 1))
+  done
+  reap "$pid"
+  chmod 644 "$state/.wake-queue"
+  alarm=$(grep -c -F 'watcher: wedge stale-wake append failed' "$err" || true)
+  [ "$alarm" -eq 1 ] \
+    || fail "a failing wedge append alarmed $alarm times, expected exactly one bounded alarm: $(cat "$err")"
+  [ ! -s "$out" ] || fail "a wake was printed for a row that never reached the queue: $(cat "$out")"
+  [ -s "$state/.stale-since-$key" ] \
+    || fail "the failed append consumed the ladder's idle timer instead of leaving it for a retry"
+  [ ! -s "$state/.wake-queue" ] || fail "a wake row reached an unwritable queue"
+  pass "a failed wedge stale-wake append alarms once and leaves the cycle alive to retry"
+}
+
+# The away-mode busy-bound handoff appends a plain stale wake for the daemon.
+# That append is the same transient I/O: with the queue unwritable, the handoff
+# alarms through the bounded tick guard instead of exiting 1 on the append, the
+# declaration suppressor stays unadvanced so the handoff is retried, and the
+# cycle ends on the durable re-arm handoff the failure leaves behind - a clean
+# rc 0 supervision handoff, never the append's rc 1.
+test_afk_busy_bound_stale_append_failure_alarms_and_survives() {
+  local dir state fakebin out err capture window key sig pid rc alarm statusf
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "away-mode busy-bound stale-wake append failure skipped (root ignores file modes)"
+    return 0
+  fi
+  dir=$(make_case afk-busy-bound-append-failure); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; err="$dir/watch.err"; capture="$dir/pane.txt"
+  window="test:fm-afk-bound-append"
+  statusf="$state/afk-bound-append.status"
+  printf 'Working... (7200.4s) lavish-axi poll' > "$capture"
+  printf 'window=%s\nkind=scout\nharness=pi\n' "$window" > "$state/afk-bound-append.meta"
+  record_pi_busy "$state" afk-bound-append
+  printf 'paused: hosting the Lavish review, awaiting captain feedback\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-afk-bound-append_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  touch -t 200001010000 "$state/afk-bound-append.meta"
+  date '+%s' > "$state/.afk"
+  : > "$state/.wake-queue"
+  chmod 444 "$state/.wake-queue"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_FAKE_CREW_STATE='state: working · source: pane · harness busy (pi-ext)' \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=1 FM_PAUSE_RESURFACE_SECS=999 \
+    FM_WATCH_TICK_ALARM_SECS=300 FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2> "$err" &
+  pid=$!
+  rc=0
+  wait_for_exit "$pid" 150 || rc=$?
+  chmod 644 "$state/.wake-queue"
+  [ "$rc" -eq 0 ] \
+    || fail "the away-mode handoff died on a stale-wake append failure (rc=$rc): $(cat "$err")"
+  grep -Fx 'check: rearm-resurface' "$out" >/dev/null \
+    || fail "the failed append did not leave the durable re-arm handoff: $(cat "$out")"
+  ! grep -Fx "stale: $window" "$out" >/dev/null \
+    || fail "the away-mode handoff printed a wake that never reached the queue: $(cat "$out")"
+  alarm=$(grep -c -F 'watcher: wedge away-mode stale-wake append failed' "$err" || true)
+  [ "$alarm" -eq 1 ] \
+    || fail "a failing away-mode append alarmed $alarm times, expected exactly one bounded alarm: $(cat "$err")"
+  [ ! -e "$state/.stale-$key" ] \
+    || fail "the failed append advanced the declaration suppressor and would silence the retry"
+  [ ! -s "$state/.wake-queue" ] || fail "a wake row reached an unwritable queue"
+  pass "an away-mode busy-bound stale-wake append failure alarms once, retries later, and hands off on the re-arm"
+}
+
 # CI's stock macOS Bash lane sets FM_TEST_STOCK_BASH=1 to run just the bash-3.2
 # churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 # Adding another stock-bash case means adding it to this list, not to ci.yml.
@@ -5615,6 +5710,8 @@ fm_test_run \
   test_busy_declared_pause_is_rechecked_not_wedge_escalated \
   test_afk_busy_declared_pause_hands_off_plain_stale \
   test_afk_busy_declared_pause_ticking_pane_hands_off_once \
+  test_wedge_stale_append_failure_alarms_and_survives \
+  test_afk_busy_bound_stale_append_failure_alarms_and_survives \
   test_nonterminal_stale_repairs_missing_or_corrupt_timer \
   test_wedge_escalation_deferred_while_worktree_is_written \
   test_write_deferral_resurfaces_on_the_bounded_cadence \

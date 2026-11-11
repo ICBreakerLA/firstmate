@@ -785,6 +785,8 @@ test_local_llm_uses_the_dispatch_health_bound_for_its_recheck() {
   out=$(FM_LOCAL_LLM_LOCK="$W/llm.lock" wrap --kind scout --local-llm --local-llm-health-timeout 30 -- claude 2>&1); rc=$?
   expect_code 0 "$rc" "the dispatch bound must let the slow server through: $out"
   assert_contains "$(cat "$W/curl.bound")" "30" "the recheck uses the dispatch bound"
+  assert_contains "$(log)" "exec $NAME curl -fsS --max-time 30 http://host.docker.internal:8080/v1/models" "the in-VM positive check uses the dispatch bound"
+  assert_contains "$(log)" "exec $NAME curl -fsS --max-time 10 https://api.anthropic.com/v1/models" "the negative Anthropic check stays short"
   slot_free || fail "the slot must be free after the wrapper exits"
   pass "the wrapper recheck uses the dispatch health bound, so a slow-but-alive server keeps its local model"
 }

@@ -348,6 +348,7 @@ SH
   expect_code 0 "$rc" "a started server must be used: $out"
   assert_equals "1" "$(wc -l <"$CASE/start.count" | tr -d ' ')" "the start command ran once"
   assert_grep "--local-llm" "$CASE/launch.log" "the worker is the local-model worker"
+  assert_grep "--local-llm-health-timeout 30" "$CASE/launch.log" "the dispatch health bound reaches the wrapper"
   assert_grep "model=qwen3.8-27b-gsq-rco" "$HOME_DIR/state/fb-start.meta" "the record carries the local model"
   assert_no_grep "model_fallback_from" "$HOME_DIR/state/fb-start.meta" "no fallback is recorded"
   release_slot

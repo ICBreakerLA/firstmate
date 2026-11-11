@@ -57,11 +57,12 @@
 #                   server's port, and the launch stops if the VM cannot reach
 #                   the server or can reach the Anthropic API.
 #   --local-llm-health-timeout SECONDS
-#                   the /v1/models bound for the pre-worker recheck. The spawn
-#                   passes a dispatch-chosen launch's validated bound here so
-#                   that one dispatch decision governs every health gate;
-#                   absent keeps the pre-launch 5 s (or the operator override).
-#                   Only meaningful with --local-llm.
+#                   the /v1/models bound for the pre-worker recheck and the
+#                   in-VM reachability check. The spawn passes a dispatch-chosen
+#                   launch's validated bound here so that one dispatch decision
+#                   governs every health gate; absent keeps the pre-launch 5 s
+#                   (or the operator override). Only meaningful with
+#                   --local-llm.
 #   --openrouter MODEL
 #                   the OpenRouter profile (bin/fm-openrouter-lib.sh,
 #                   docs/configuration.md "OpenRouter worker profile"): the
@@ -193,7 +194,10 @@ done
 [ -d "$CLONE/.git" ] || die "no standalone clone at $CLONE (bin/fm-spawn.sh creates it with fm-sbx-bridge.sh clone)"
 fm_sbx_preflight || exit 1
 [ -z "$VERIFY" ] || "$BROKER" check --config "$CONFIG" --state "$STATE" || exit 1
-[ "$LOCAL_LLM" = 0 ] || fm_local_llm_health "$LOCAL_LLM_HEALTH_TIMEOUT" || exit 1
+if [ "$LOCAL_LLM" = 1 ]; then
+  LOCAL_LLM_HEALTH_TIMEOUT=$(fm_local_llm_health_bound "$LOCAL_LLM_HEALTH_TIMEOUT") || exit 1
+  fm_local_llm_health "$LOCAL_LLM_HEALTH_TIMEOUT" || exit 1
+fi
 if [ -n "$OPENROUTER" ]; then
   [ "$LOCAL_LLM" = 0 ] || die "--openrouter cannot be combined with --local-llm"
   fm_openrouter_valid_id "$OPENROUTER" || die "--openrouter takes an OpenRouter model id (vendor/model)"
@@ -458,7 +462,7 @@ if [ "$LOCAL_LLM" = 1 ]; then
     die "could not add the per-sandbox deny rule ($FM_LOCAL_LLM_ANTHROPIC_HOST) for $NAME"
   sbx policy allow network --sandbox "$NAME" "$FM_LOCAL_LLM_POLICY_HOST" >/dev/null 2>&1 ||
     die "could not add the per-sandbox network rule ($FM_LOCAL_LLM_POLICY_HOST) for $NAME"
-  sbx exec "$NAME" curl -fsS --max-time 10 "$FM_LOCAL_LLM_VM_URL/v1/models" >/dev/null 2>&1 ||
+  sbx exec "$NAME" curl -fsS --max-time "$LOCAL_LLM_HEALTH_TIMEOUT" "$FM_LOCAL_LLM_VM_URL/v1/models" >/dev/null 2>&1 ||
     die "$NAME cannot reach the local model server at $FM_LOCAL_LLM_VM_URL; no worker was started"
   ! sbx exec "$NAME" curl -fsS --max-time 10 "https://$FM_LOCAL_LLM_ANTHROPIC_HOST/v1/models" >/dev/null 2>&1 ||
     die "$NAME can still reach $FM_LOCAL_LLM_ANTHROPIC_HOST with a credential; no worker was started"

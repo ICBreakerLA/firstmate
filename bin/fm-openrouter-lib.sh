@@ -26,6 +26,7 @@
 #                            ~/.config/firstmate/openrouter-worker-key)
 #   FM_OPENROUTER_API_URL    the host-side API base (default
 #                            https://openrouter.ai/api)
+# Operator tunables:
 #   FM_OPENROUTER_PROBE_TIMEOUT   seconds one probe is given (default 30)
 #   FM_OPENROUTER_CHAIN_BUDGET    seconds the whole chain probe may take
 #                                 (default 120)
@@ -274,8 +275,8 @@ fm_openrouter_env() {
 
 # fm_openrouter_usage
 # The key's lifetime spend in USD from the top-level data.usage field of
-# /api/v1/key, or nothing when it cannot be read. Used before and after a task
-# for its cost line.
+# /api/v1/key (or the first usage field when jq is absent), or nothing when it
+# cannot be read. Used before and after a task for its cost line.
 fm_openrouter_usage() {
   local key out body v
   key=$(fm_openrouter_key 2>/dev/null) || return 1

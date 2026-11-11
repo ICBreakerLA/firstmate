@@ -1651,7 +1651,7 @@ Both fallback values are the named settings `FM_LOCAL_LLM_FALLBACK_MODEL` and `F
    When the server is not answering and `config/local-llm-start` holds a command, it runs once and the spawn waits up to `FM_LOCAL_LLM_START_WAIT` seconds (default 120) for the server to answer, then rechecks the GPU; a command that exits non-zero or a wait that runs out falls back.
 3. The one local slot is free; the spawn claims it as above.
 
-The dispatch check in step 2, and every later `/v1/models` check on that same dispatch-chosen launch — the start wait, the wrapper's host recheck, and the sandbox's own reachability check — allows 30 seconds by default, not the pre-launch 5, so a server that is alive yet slow to answer is not treated as dead and does not silently replace a dispatch-chosen local model with `claude-haiku-4-5`.
+The dispatch check in step 2, and every later `/v1/models` check on that same dispatch-chosen launch - the start wait, the wrapper's host recheck, and the sandbox's own reachability check - allows 30 seconds by default, not the pre-launch 5, so a server that is alive yet slow to answer is not treated as dead and does not silently replace a dispatch-chosen local model with `claude-haiku-4-5`.
 That bound covers a slow-but-alive answer, not a full compaction prefill; a server whose prefill keeps `/v1/models` slower than 30 seconds needs `FM_LOCAL_LLM_HEALTH_TIMEOUT` raised.
 `FM_LOCAL_LLM_HEALTH_TIMEOUT` overrides both bounds when it is set.
 

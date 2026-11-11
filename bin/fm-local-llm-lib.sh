@@ -14,7 +14,7 @@
 # and keeps the spawn's host-wide one-at-a-time claim for the life of the
 # sandbox.
 #
-# Overrides, for tests only:
+# Overrides:
 #   FM_LOCAL_LLM_URL    the address the host-side health check asks (default
 #                       http://127.0.0.1:8080); the sandbox's base URL and
 #                       network rule stay on port 8080

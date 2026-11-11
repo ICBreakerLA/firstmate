@@ -276,6 +276,20 @@ test_usage_reads_the_top_level_field_not_a_nested_one() {
   pass "usage is the top-level data.usage field, not the last usage field in the body"
 }
 
+test_an_unreadable_usage_emits_nothing() {
+  local out
+  reset
+  printf '%s' '{"data":{"usage":null}}' >"$TMP_ROOT/usage.json"
+  out=$(fm_openrouter_usage) && fail "a null usage must refuse"
+  assert_equals "" "$out" "a null usage emits nothing with jq"
+  out=$(PATH="$NOJQ" fm_openrouter_usage) && fail "a null usage must refuse without jq"
+  assert_equals "" "$out" "a null usage emits nothing without jq"
+  printf '%s' '{"data":{"label":"x"}}' >"$TMP_ROOT/usage.json"
+  out=$(fm_openrouter_usage) && fail "an absent usage must refuse"
+  assert_equals "" "$out" "an absent usage emits nothing with jq"
+  pass "a null or absent usage emits nothing so no null spend is logged"
+}
+
 test_usage_falls_back_to_the_first_usage_without_jq() {
   reset
   printf '%s' '{"data":{"usage":1.5,"limits":{"usage":9.75}}}' >"$TMP_ROOT/usage.json"
@@ -300,6 +314,7 @@ test_an_unknown_alias_or_bad_id_refuses
 test_the_environment_maps_every_tier_and_leaves_the_key_out
 test_usage_reads_the_keys_spend
 test_usage_reads_the_top_level_field_not_a_nested_one
+test_an_unreadable_usage_emits_nothing
 test_usage_falls_back_to_the_first_usage_without_jq
 
 echo "# all fm-openrouter-lib tests passed"

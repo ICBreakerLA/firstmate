@@ -277,14 +277,15 @@ fm_openrouter_env() {
 # /api/v1/key, or nothing when it cannot be read. Used before and after a task
 # for its cost line.
 fm_openrouter_usage() {
-  local key out body
+  local key out body v
   key=$(fm_openrouter_key 2>/dev/null) || return 1
   out=$(fm_openrouter_curl "$key" GET /v1/key) || return 1
   [ "${out##*$'\n'}" = 200 ] || return 1
   body=${out%$'\n'*}
   if command -v jq >/dev/null 2>&1; then
-    printf '%s' "$body" | jq -er '.data.usage' 2>/dev/null
-    return
+    v=$(printf '%s' "$body" | jq -er '.data.usage | numbers' 2>/dev/null) || return 1
+    printf '%s\n' "$v"
+    return 0
   fi
   printf '%s' "$body" | tr -d '\n' | awk '
     {

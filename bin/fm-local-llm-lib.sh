@@ -18,6 +18,9 @@
 #   FM_LOCAL_LLM_URL    the address the host-side health check asks (default
 #                       http://127.0.0.1:8080); the sandbox's base URL and
 #                       network rule stay on port 8080
+#   FM_LOCAL_LLM_HEALTH_TIMEOUT   seconds one /v1/models request may take
+#                       (default 5; the dispatch fallback allows 30; must be a
+#                       positive whole number)
 #   FM_LOCAL_LLM_LOCK   the host-wide lock file
 #   FM_LOCAL_LLM_SLOTS_URL   the endpoint fm_local_llm_server_processing reads to
 #                       decide whether the server is mid-request (default
@@ -48,6 +51,12 @@ FM_LOCAL_LLM_COMPACT_WINDOW=130000
 # What a dispatch-chosen local model falls back to when it is unavailable.
 FM_LOCAL_LLM_FALLBACK_MODEL=claude-haiku-4-5
 FM_LOCAL_LLM_FALLBACK_EFFORT=low
+# The dispatch fallback's own /v1/models bound: a server in a long prefill can
+# be alive yet slower than the pre-launch check's 5 s, and a false negative
+# there silently demotes a dispatch-chosen local model to the fallback model.
+# 30 s matches the OpenRouter availability probe's default bound and still
+# returns a wedged server's fallback promptly.
+FM_LOCAL_LLM_DISPATCH_HEALTH_TIMEOUT=30
 
 # fm_local_llm_is_model <model>: 0 when the model id selects the profile.
 fm_local_llm_is_model() {
@@ -62,17 +71,37 @@ fm_local_llm_lock_file() {
   printf '%s\n' "${FM_LOCAL_LLM_LOCK:-${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/firstmate/local-llm.lock}"
 }
 
-# fm_local_llm_health
+# fm_local_llm_health_bound [default-seconds]
+# The --max-time for one /v1/models request: FM_LOCAL_LLM_HEALTH_TIMEOUT when
+# set, otherwise the caller's default (5 for the pre-launch check, the longer
+# dispatch bound above for the fallback decision). Refuses anything that is not
+# a positive whole number of seconds, so a typo is named instead of reading as
+# a silent not-answering server.
+fm_local_llm_health_bound() {
+  local t=${FM_LOCAL_LLM_HEALTH_TIMEOUT:-${1:-5}} msg
+  msg="error: FM_LOCAL_LLM_HEALTH_TIMEOUT must be a positive whole number of seconds, not '$t'"
+  case "$t" in
+  '' | *[!0-9]*) echo "$msg" >&2; return 1 ;;
+  esac
+  case "$t" in
+  *[1-9]*) ;;
+  *) echo "$msg" >&2; return 1 ;;
+  esac
+  printf '%s\n' "$t"
+}
+
+# fm_local_llm_health [default-seconds]
 # 0 when the host's server answers /v1/models and lists the profile's model;
 # otherwise a clear refusal on stderr and 1. Nothing is created.
 fm_local_llm_health() {
-  local url body
+  local url body bound
   url=$(fm_local_llm_url)
+  bound=$(fm_local_llm_health_bound "${1:-}") || return 1
   command -v curl >/dev/null 2>&1 || {
     echo "error: the local-model profile needs curl to check the server at $url" >&2
     return 1
   }
-  body=$(curl -fsS --max-time 5 "$url/v1/models" 2>/dev/null) || {
+  body=$(curl -fsS --max-time "$bound" "$url/v1/models" 2>/dev/null) || {
     echo "error: the local model server is not answering at $url/v1/models; start it with: local-llm up (then local-llm status)" >&2
     return 1
   }
@@ -248,13 +277,15 @@ fm_local_llm_start_and_wait() {
 # set). 1: unavailable; one notice line names the failed check and the model
 # used instead. Nothing is created either way beyond the claim.
 fm_local_llm_select() {
-  local id=$1 sbx=$2 cfg=$3 why cmd err
+  local id=$1 sbx=$2 cfg=$3 why cmd err bound
   why=
-  if [ "$sbx" != 1 ]; then
+  if ! bound=$(fm_local_llm_health_bound "$FM_LOCAL_LLM_DISPATCH_HEALTH_TIMEOUT" 2>&1); then
+    why=${bound#error: }
+  elif [ "$sbx" != 1 ]; then
     why="the home has no sandbox profile (config/worker-sandbox is not sbx or sbx is absent)"
   elif fm_local_llm_gpu_conflict; then
     why="ComfyUI holds the GPU"
-  elif ! err=$(fm_local_llm_health 2>&1 >/dev/null); then
+  elif ! err=$(fm_local_llm_health "$bound" 2>&1 >/dev/null); then
     cmd=$(fm_local_llm_start_command "$cfg")
     if [ -z "$cmd" ]; then
       why="the server is not answering and no start command is configured (config/local-llm-start)"

@@ -1626,6 +1626,9 @@ A launch with that model refuses, before any endpoint, clone, or task record exi
 - The server at `http://127.0.0.1:8080` does not answer `/v1/models` with that model listed (`FM_LOCAL_LLM_URL` overrides only this host-side check, for tests; the sandbox always uses port 8080).
 - Another local-model spawn or worker holds the one local slot.
 
+`FM_LOCAL_LLM_HEALTH_TIMEOUT` sets how many seconds one `/v1/models` request may take, and must be a positive whole number; any other value refuses the launch with a message naming the variable.
+It defaults to 5 for the pre-launch refusal check above.
+
 The server has one slot, so one local-model worker runs at a time across the whole host.
 The spawn claims that slot itself, with an exclusive non-blocking `flock` on `$XDG_STATE_HOME/firstmate/local-llm.lock` (`FM_LOCAL_LLM_LOCK`), before it creates anything, so of two spawns close together the second is refused and leaves no worktree, clone, or record.
 The claim names the task in the lock file and passes to a small detached holder, which keeps the lock until the task's `bin/fm-sbx-run.sh` has taken it over through the lock's `.handoff` FIFO and then ended, however it ends, including a crash.
@@ -1646,6 +1649,9 @@ Both fallback values are the named settings `FM_LOCAL_LLM_FALLBACK_MODEL` and `F
    `fm_local_llm_gpu_conflict` is the replaceable probe: on this PC it asks `powershell.exe` for a python process whose path is under `C:\ComfyUI\venv`; a missing `powershell.exe` means no conflict, but a probe that exists and fails, times out, or gives no number is treated as a conflict (unavailable, so the spawn falls back rather than risk running alongside ComfyUI).
    When the server is not answering and `config/local-llm-start` holds a command, it runs once and the spawn waits up to `FM_LOCAL_LLM_START_WAIT` seconds (default 120) for the server to answer, then rechecks the GPU; a command that exits non-zero or a wait that runs out falls back.
 3. The one local slot is free; the spawn claims it as above.
+
+The dispatch check in step 2 allows 30 seconds by default, not the pre-launch 5, because a server busy with a long prefill can be alive yet slower than that bound; treating it as dead would silently replace a dispatch-chosen local model with `claude-haiku-4-5`.
+`FM_LOCAL_LLM_HEALTH_TIMEOUT` overrides both bounds when it is set.
 
 Every fallback prints one line on stderr naming the failed check and the model used instead, and the task record carries the model actually used in `model=` plus `model_fallback_from=` naming the local model.
 

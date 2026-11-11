@@ -4185,8 +4185,9 @@ while :; do
   fm_pending_reply_tick "$STATE" || true
 
   # The guarded sites - the open-decision reminder, secondmate liveness, and
-  # secondmate wake-stall ticks, plus the wedge-timer and away-mode busy-bound
-  # stale-wake appends - must not take supervision down on ordinary transient
+  # secondmate wake-stall ticks, plus the wedge-timer escalation stale-wake
+  # append (including its stream branch) and the away-mode busy-bound handoff
+  # append - must not take supervision down on ordinary transient
   # I/O: watch_tick_guard alarms on a bounded cadence and the cycle continues.
   # Among these guarded sites the only watcher-stopping refusal is
   # open_decision_reminder_tick's invalid-settings return (2), the stop

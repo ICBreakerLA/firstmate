@@ -65,6 +65,19 @@ test_sbx_defaults_and_options() {
   pass "sbx resolves its defaults and honours cpus, memory, allow and nm"
 }
 
+test_a_wildcard_host_is_not_glob_expanded() {
+  local d got
+  d="$TMP_ROOT/glob"
+  mkdir -p "$d"
+  : >"$d/allow=cdn.example.org"
+  printf 'sbx allow=*.example.org\n' >"$TMP_ROOT/ws"
+  got=$( ( cd "$d" && fm_sbx_load_config "$TMP_ROOT/ws" && printf '%s' "$FM_SBX_ALLOW" ) ) ||
+    fail "a wildcard allow entry must be accepted"
+  assert_equals '*.example.org' "$got" \
+    "a wildcard host is read literally, never expanded against the current directory"
+  pass "a wildcard host never glob-expands against a matching file in the current directory"
+}
+
 test_malformed_values_are_refused() {
   local bad err
   for bad in 'docker\n' 'sbx cpus=0\n' 'sbx cpus=65\n' 'sbx memory=4\n' 'sbx memory=0g\n' 'sbx gpus=1\n' 'off cpus=2\n' 'sbx allow=\n' 'sbx allow=a b;c\n' 'sbx allow=a,,b\n' 'sbx allow=host/path\n' 'sbx allow=example.org:\n' 'sbx allow=:8080\n' 'sbx allow=example.org:80x0\n' 'sbx allow=github.com:443:443\n' 'sbx nm=latest\n' 'sbx nm=v1.2\n' 'sbx nm=v1.2.3;x\n' 'sbx verify=\n' 'sbx verify=other\n' 'sbx verify=app,x\n'; do
@@ -103,10 +116,26 @@ test_name_is_stable_distinct_and_safe() {
   pass "names are deterministic, per-home, bounded, and shell-safe"
 }
 
+test_fleet_name_shape_is_exact() {
+  local n long
+  n=$(fm_sbx_name /home/a task-shape)
+  fm_sbx_is_fleet_name "$n" || fail "a derived name must be accepted"
+  fm_sbx_is_fleet_name fm-sbx-0123abcd-t1-9999 || fail "the documented shape must be accepted"
+  long="fm-sbx-0123abcd-$(printf 'x%.0s' $(seq 1 40))-9f3a"
+  fm_sbx_is_fleet_name "$long" || fail "a forty-character id segment must be accepted"
+  for n in fm-sbx-0123abcd-prod fm-sbx-0123abcd-t1 fm-sbx-0123abcd-t1-9999-extra \
+    fm-sbx-0123abcd-ta_sk-9999 fm-sbx-0123abcd--9999 fm-sbx-0123ABCd-t1-9999 \
+    "fm-sbx-0123abcd-$(printf 'x%.0s' $(seq 1 41))-9f3a"; do
+    fm_sbx_is_fleet_name "$n" && fail "'$n' is not a name this tree creates"
+  done
+  pass "only the exact fleet name shape is accepted"
+}
+
 test_only_fleet_names_are_removable() {
   : >"$SBX_LOG"
   fm_sbx_rm my-own-sandbox 2>/dev/null && fail "a foreign sandbox name must be refused"
   fm_sbx_rm 'fm-sbx-nm-a' 2>/dev/null && fail "a name without a home hash must be refused"
+  fm_sbx_rm fm-sbx-0123abcd-prod 2>/dev/null && fail "a hand-named sandbox must be refused"
   if grep -q '^rm' "$SBX_LOG"; then fail "no sbx rm may be issued for a refused name"; fi
   pass "removal refuses names this tree would not have created"
 }
@@ -192,9 +221,11 @@ test_local_timeouts_report_a_failed_run() {
 
 test_absent_and_off_leave_the_default_off
 test_sbx_defaults_and_options
+test_a_wildcard_host_is_not_glob_expanded
 test_malformed_values_are_refused
 test_verify_token_is_opt_in_and_strict
 test_name_is_stable_distinct_and_safe
+test_fleet_name_shape_is_exact
 test_only_fleet_names_are_removable
 test_removal_is_idempotent_and_verified
 test_preflight_names_the_missing_requirement

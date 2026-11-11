@@ -1,0 +1,17 @@
+== New regression tests against BASE 511f6204 (expected: fail) ==
+--- ONLY=slow on base ---
+not ok - a server slower than the pre-launch bound is still alive for the dispatch check: local model qwen3.8-27b-gsq-rco unavailable: the server is not answering and no start command is configured (config/local-llm-start); using claude-haiku-4-5 (effort low) instead: expected exit 0, got 1
+--- ONLY=start on base ---
+not ok - a server that answers slower than 5s once started is still alive: local model qwen3.8-27b-gsq-rco unavailable: the server did not answer within 2s of its start command; using claude-haiku-4-5 (effort low) instead: expected exit 0, got 1
+--- ONLY=health on base ---
+not ok - the override sets the bound (missing: '--max-time 9')
+--- output ---
+-fsS --max-time 5 http://127.0.0.1:18080/v1/models
+
+== Same tests against CHANGE 777071d7 (expected: pass) ==
+--- ONLY=slow on change ---
+ok - a server slower than the pre-launch health bound keeps its dispatch-chosen model
+--- ONLY=start on change ---
+ok - the start path applies the dispatch health bound, so a slow server does not fall back
+--- ONLY=health on change ---
+ok - the health check uses 5 seconds by default and honours the override

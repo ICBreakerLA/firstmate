@@ -1,0 +1,28 @@
+== Live validation: real bin/fm-local-llm-lib.sh, real curl, real slow HTTP server ==
+date: 2026-11-11T14:13:57Z  repo: 777071d73669d56907a4fb466681ef3306de3690
+
+SCENARIO 1 default-5s-bound: rc=1 elapsed=5036ms
+  stderr: error: the local model server is not answering at http://127.0.0.1:18095/v1/models; start it with: local-llm up (then local-llm status)
+  RESULT PASS
+SCENARIO 2 override-9s: rc=0 elapsed=6407ms out=
+  RESULT PASS
+SCENARIO 4 invalid-typo: rc=1 notice=local model qwen3.8-27b-gsq-rco unavailable: FM_LOCAL_LLM_HEALTH_TIMEOUT must be a positive whole number of seconds, not 'fast'; using claude-haiku-4-5 (effort low) instead requests_before=3 requests_after=3
+  RESULT PASS
+
+SCENARIO 3 dispatch-slow-but-alive (parent shell):
+  rc=0 elapsed=6049ms
+  stdout=
+  stderr=<empty>
+  FM_LOCAL_LLM_SELECTED_HEALTH_TIMEOUT=30
+  FM_LOCAL_LLM_HOLDER=<unset>
+  RESULT PASS: dispatch keeps the local model and exports the 30s bound for the launch
+SCENARIO 3b start-command-slow-but-alive:
+  rc=0 elapsed=8094ms
+  stderr=<empty>
+  selected_bound=30
+  server_started=yes
+  RESULT PASS: the start wait used the 30s dispatch bound and kept the local model
+SCENARIO 5 override-outranks-dispatch-default:
+  rc=1 elapsed=4449ms
+  notice=local model qwen3.8-27b-gsq-rco unavailable: the server is not answering and no start command is configured (config/local-llm-start); using claude-haiku-4-5 (effort low) instead
+  RESULT PASS: FM_LOCAL_LLM_HEALTH_TIMEOUT=4 shrank the dispatch bound and the slow server fell back

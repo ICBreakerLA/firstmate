@@ -200,6 +200,17 @@ test_the_chain_probe_is_bounded_by_a_total_budget() {
   pass "a total budget bounds the chain probe and names itself on a refusal"
 }
 
+test_a_leading_zero_chain_budget_is_decimal() {
+  local out b
+  for b in 08 010 0008; do
+    reset
+    out=$(FM_OPENROUTER_CHAIN_BUDGET=$b fm_openrouter_resolve "$CFG" or:qwen 2>&1) || fail "budget $b must not abort the probe"
+    assert_equals "$(printf 'qwen\tqwen/qwen3.8-27b')" "$out" "budget $b still resolves the chain"
+    assert_not_contains "$out" "value too great for base" "budget $b is never read as octal"
+  done
+  pass "a leading-zero chain budget is decimal and does not abort the probe"
+}
+
 test_a_rejected_key_stops_the_chain() {
   local out
   reset
@@ -283,6 +294,7 @@ test_a_chain_where_nothing_answers_refuses_and_lists_each_id
 test_a_direct_id_never_falls_through
 test_a_missing_curl_is_named_instead_of_a_000_probe
 test_the_chain_probe_is_bounded_by_a_total_budget
+test_a_leading_zero_chain_budget_is_decimal
 test_a_rejected_key_stops_the_chain
 test_an_unknown_alias_or_bad_id_refuses
 test_the_environment_maps_every_tier_and_leaves_the_key_out

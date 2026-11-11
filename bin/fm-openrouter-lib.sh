@@ -217,6 +217,7 @@ fm_openrouter_resolve() {
   budget=${FM_OPENROUTER_CHAIN_BUDGET:-120}
   case "$budget" in '' | *[!0-9]*) budget=120 ;; esac
   [ "$budget" -gt 0 ] || budget=120
+  budget=$((10#$budget))
   max_time=${FM_OPENROUTER_PROBE_TIMEOUT:-30}
   case "$max_time" in '' | *[!0-9]*) max_time=30 ;; esac
   [ "$max_time" -gt 0 ] || max_time=30

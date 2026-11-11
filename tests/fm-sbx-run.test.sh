@@ -181,6 +181,20 @@ test_environment_is_an_explicit_allowlist() {
   pass "only allowlisted variables reach the sandbox"
 }
 
+test_the_worker_knob_passthroughs_reach_the_sandbox() {
+  local create
+  new_world passthrough
+  CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1 CLAUDE_CODE_SEND_FEEDBACK=1 \
+    FM_TASK_INBOX="$STATE/t1.inbox" COMPACT_ADVISER_DISABLE=1 \
+    wrap --kind scout -- claude >/dev/null 2>&1
+  create=$(grep '^create ' "$LOG")
+  assert_contains "$create" "-e CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1" "the prompt-suggestion knob passes"
+  assert_contains "$create" "-e CLAUDE_CODE_SEND_FEEDBACK=1" "the feedback knob passes"
+  assert_contains "$create" "-e FM_TASK_INBOX=$STATE/t1.inbox" "the task inbox path passes"
+  assert_contains "$create" "-e COMPACT_ADVISER_DISABLE=1" "the compact-adviser disable knob passes"
+  pass "the four worker pass-through variables reach the sandbox environment"
+}
+
 test_the_commit_identity_reaches_the_sandbox_environment() {
   local create
   new_world ident
@@ -1101,6 +1115,7 @@ test_two_launches_of_the_same_task_leave_two_distinct_parseable_json_files() {
 
 test_creates_with_minimal_mounts_and_cleans_up
 test_environment_is_an_explicit_allowlist
+test_the_worker_knob_passthroughs_reach_the_sandbox
 test_the_commit_identity_reaches_the_sandbox_environment
 test_the_token_enters_only_through_the_sandbox_secret_store
 test_a_port_pinned_allow_entry_is_accepted

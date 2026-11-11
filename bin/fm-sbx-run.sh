@@ -287,7 +287,7 @@ BRIEF_RECORD=''
 for a in "$@"; do
   rec=''
   if fm_operational_doorbell_path "$a" rec 2>/dev/null && [ -f "$rec" ]; then
-    case "$rec" in "$STATE"/operational-inbox/*) BRIEF_RECORD=$rec ;; esac
+    case "$rec" in "$STATE"/operational-inbox/*) BRIEF_RECORD=$rec; break ;; esac
   fi
 done
 

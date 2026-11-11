@@ -1508,6 +1508,7 @@ The file holds one line.
 
 `cpus` is 1 to 64 and defaults to 4, and `memory` is a whole number of gigabytes and defaults to `4g`.
 `allow` is a comma-separated list of further host names that every sandbox of this home may reach, each with an optional `:PORT` suffix that narrows the entry to that one port; a bare host name opens every port of that host.
+A host name may contain `*` wildcards, which the allow-list grammar passes to the sandbox's policy as written.
 It is added to each sandbox's own network policy, never to the global one.
 `nm` pins the no-mistakes version a sandboxed validation ship may use, such as `nm=v1.79.0`, and a host binary of any other version refuses the launch.
 Without `nm`, the host's own no-mistakes version is used, and the copy installed in the VM must report that same version or the launch refuses.
@@ -1526,6 +1527,8 @@ A remote secondmate home never inherits the file, because the sandbox runtime is
 ### What a sandboxed worker can see and do
 
 Each task gets its own sandbox, named `fm-sbx-<home-hash>-<id>-<id-hash>` so a listing tells fleet sandboxes from any other and two homes never collide.
+The home hash is eight lowercase hex digits, the id segment is one to forty characters of letters, digits, and dashes, and the id hash is four lowercase hex digits.
+Removal refuses any sandbox name outside that shape.
 The sandbox mounts only these paths:
 
 - The task's standalone clone of its worktree, under `state/<id>.sbx-clone`.

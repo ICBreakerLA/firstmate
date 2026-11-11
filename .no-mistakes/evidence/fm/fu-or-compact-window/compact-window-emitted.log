@@ -1,0 +1,11 @@
+# base 511f6204 bin/fm-openrouter-lib.sh vs target
+--- base emits:
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000
+--- target emits:
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=600000
+
+--- docs table row (target):
+1727:| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `600000`, under the model's 1,048,576-token window. |
+
+# headroom check
+600000 is 57.22% of the 1048576-token window; at 72-82% of the setting compaction fires near 432000-492000, so typical tasks stay uncached-reset-free

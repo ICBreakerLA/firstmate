@@ -88,8 +88,11 @@ fm_sbx_load_config() {
     return 1
   fi
   raw=$(tr '\n\t' '  ' <"$file" || true)
-  # shellcheck disable=SC2086
-  set -- $raw
+  # Split on spaces without glob expansion: a wildcard host in allow= must reach
+  # the validator as written, never expanded against the caller's directory.
+  local -a words=()
+  IFS=' ' read -ra words <<<"$raw"
+  if [ "${#words[@]}" -gt 0 ]; then set -- "${words[@]}"; else set --; fi
   first=${1:-}
   [ "$#" -eq 0 ] || shift
   rest=$*
@@ -160,12 +163,18 @@ fm_sbx_name() {
   printf 'fm-sbx-%s-%s-%s\n' "$hh" "$san" "$ih"
 }
 
-# fm_sbx_is_fleet_name <name>: true only for a name this tree would create.
+# fm_sbx_is_fleet_name <name>: true only for the exact name fm_sbx_name creates,
+# fm-sbx-<8 lowercase hex>-<id, 1-40 chars of [A-Za-z0-9-]>-<4 lowercase hex>.
 fm_sbx_is_fleet_name() {
-  case "$1" in
-  fm-sbx-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[A-Za-z0-9]*) return 0 ;;
+  local name=${1:-} mid
+  case "$name" in
+  fm-sbx-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+  *) return 1 ;;
   esac
-  return 1
+  mid=${name#fm-sbx-????????-}
+  mid=${mid%-????}
+  case "$mid" in '' | *[!A-Za-z0-9-]*) return 1 ;; esac
+  [ "${#mid}" -le 40 ]
 }
 
 # fm_sbx_preflight: the sbx CLI is installed and its daemon is running.

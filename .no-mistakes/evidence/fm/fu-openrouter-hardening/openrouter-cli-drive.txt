@@ -1,0 +1,46 @@
+
+=== 1. hostile worker key (quote) refuses through real fm-spawn ===
+rc=1
+error: the OpenRouter key file /tmp/fm-or-cli-drive.oykgwa/hostile/or-key holds a character outside A-Za-z0-9._-, so the key is refused
+curl requests made: 0
+task record present: no
+canary leaked: 0
+
+=== 2. missing curl gets its own named refusal through real fm-spawn ===
+curl visible under NOCURL: none
+rc=1
+error: the OpenRouter profile needs curl to probe the model chain; install it and retry
+blames capacity: 0
+curl requests made: 0
+
+=== 3. total chain budget bounds the probe through real fm-spawn ===
+rc=1
+error: the 1s chain probe budget (FM_OPENROUTER_CHAIN_BUDGET) ran out before every id was tried: qwen/qwen3.8-27b (HTTP 402)
+probe requests made: 1
+task record present: no
+
+=== 4. a leading-zero budget is decimal (08 does not abort) through real fm-spawn ===
+rc=0
+warning: /tmp/fm-or-cli-drive.oykgwa/octal/home/data/or-octal/launch-brief.md records no ship branch; defaulting to legacy branch fm/or-octal
+warning: /tmp/fm-or-cli-drive.oykgwa/octal/home/data/or-octal/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned or-octal harness=claude kind=ship mode=no-mistakes yolo=off window=firstmate:fm-or-octal worktree=/tmp/fm-or-cli-drive.oykgwa/octal/wt
+octal bash error: 0
+recorded model: model=or:qwen/qwen3.8-27b
+
+=== teardown ===
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/pre-rebase': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/post-rewrite': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/pre-merge-commit': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/post-merge': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/post-applypatch': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/post-commit': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/pre-push': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/pre-commit': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/applypatch-msg': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/sendemail-validate': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/commit-msg': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/prepare-commit-msg': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/pre-auto-gc': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/pre-applypatch': Permission denied
+rm: cannot remove '/tmp/fm-or-cli-drive.oykgwa/octal/home/state/or-octal.git-hooks/post-checkout': Permission denied
+removed /tmp/fm-or-cli-drive.oykgwa

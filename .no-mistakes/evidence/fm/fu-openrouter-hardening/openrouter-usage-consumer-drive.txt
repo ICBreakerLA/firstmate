@@ -1,0 +1,11 @@
+--- with jq: usage log ---
+at=1794406600 model=qwen/qwen3.8-27b before=1.50 after=1.75 cost_usd=0.250000
+--- with jq: null after reading -> log ---
+(no log)
+ok - the consumer logs the top-level usage and writes nothing when the after-reading is null
+--- without jq: usage log ---
+at=1794406606 model=qwen/qwen3.8-27b before=1.50 after=1.75 cost_usd=0.250000
+--- without jq: null after reading -> log ---
+(no log)
+ok - without jq the consumer still reads the top-level usage and a null writes nothing
+# ad-hoc openrouter usage consumer drive passed

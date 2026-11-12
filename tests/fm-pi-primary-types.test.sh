@@ -18,6 +18,12 @@ done
 DEPENDENCY_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-pi-primary-types.XXXXXX")
 trap 'rm -rf "$DEPENDENCY_ROOT"' EXIT
 
+# Own the npm cache rather than trusting an ambient NPM_CONFIG_CACHE: sandboxed
+# workers (bin/fm-sbx-npm-seed.sh, bin/fm-spawn.sh) mount a shared cache
+# read-only for offline `npm ci`, and this test's real registry `npm install`
+# still needs to write cache entries even on a hit.
+export NPM_CONFIG_CACHE="$DEPENDENCY_ROOT/npm-cache"
+
 printf 'Pi production-consumer typechecks: npm %s\n' "$(npm --version)"
 result=0
 for version in 1.1.0 1.2.0; do

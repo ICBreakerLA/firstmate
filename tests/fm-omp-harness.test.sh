@@ -777,6 +777,79 @@ EOF
   pass ".omp watch extension: an explicit tool or command revives supervision after a shutdown with no session start"
 }
 
+# A recovery marker that advanced mid-restore supersedes the in-flight delivery:
+# the arm layer answers the handling confirmation with status 3 (generation
+# mismatch), so the wake must reach main once with no rejection appendix, the
+# confirmation must not be retried, the pending record must finish when main
+# consumes the wake, and the confirm result must land in the opt-in log.
+test_watch_extension_superseded_delivery_has_no_rejection_appendix() {
+  local repo home log out status extension_log
+  repo="$TMP_ROOT/watch-superseded/repo"; home="$TMP_ROOT/watch-superseded/home"; log="$TMP_ROOT/watch-superseded/arm.log"
+  extension_log="$home/state/.watch-extension.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then
+  printf 'superseded generation=%s watcher=%s\n' "$2" "$4" >> "${FM_ARM_LOG:?}"
+  exit 3
+fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+if [ ! -e "${FM_HOME:?}/state/.first-cycle-fired" ]; then
+  : > "$FM_HOME/state/.first-cycle-fired"
+  printf 'watcher: started pid=%s (beacon 0s) recovery-generation=stale-generation\n' "$$"
+  sleep 1
+  printf 'check: rearm-resurface\n'
+  exit 0
+fi
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=successor-generation\n' "$$"
+sleep 30
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_WATCH_EXTENSION_LOG_KEEP_LINES=50 FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
+const home = process.env.FM_HOME;
+writeFileSync(`${home}/state/.lock`, `${process.pid}\n`);
+const handoff = `${home}/state/extensions/omp-primary-watch/session-replacement-actionable.json`;
+const handlers = new Map(); let tool = null; const sent = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool(t) { tool = t; },
+  sendUserMessage(m, o) { sent.push({ m, o }); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+await tool.execute();
+for (let i = 0; i < 100 && sent.length < 1; i += 1) await new Promise((r) => setTimeout(r, 100));
+if (sent.length !== 1) throw new Error(`expected one follow-up wake, saw ${sent.length}: ${JSON.stringify(sent)}`);
+if (!sent[0].m.includes("check: rearm-resurface")) throw new Error(`the wake lost its reason: ${sent[0].m}`);
+if (sent[0].m.includes("handling delivery confirmation was rejected")) {
+  throw new Error(`a superseded delivery carried a rejection appendix: ${sent[0].m}`);
+}
+const rows = readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n");
+const confirms = rows.filter((row) => row.startsWith("superseded "));
+if (confirms.length !== 1) throw new Error(`a superseded confirmation must not be retried: ${rows.join(" | ")}`);
+await new Promise((r) => setTimeout(r, 500));
+if (sent.length !== 1) throw new Error(`the superseded wake was re-sent: ${JSON.stringify(sent)}`);
+// Consuming the wake must finish the pending record for good.
+await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: sent[0].m }, {});
+await handlers.get("session_shutdown")({}, {});
+if (existsSync(handoff)) throw new Error("a consumed superseded wake still rode the replacement handoff");
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp must deliver a superseded wake with no rejection appendix: $out"
+  [ -z "$out" ] || fail "omp superseded-delivery test printed output: $out"
+  [ -f "$extension_log" ] || fail "omp extension recorded no bounded confirm log"
+  grep -qF "result=superseded" "$extension_log" \
+    || fail "extension log has no superseded confirm result: $(cat "$extension_log")"
+  pass ".omp watch extension: a superseded handling confirmation delivers one plain wake, is not retried, and is logged"
+}
+
 # An opted-in home spawns the supervision host in the arm's place; its streamed
 # status line drives readiness and the handling handoff, and a handed-back
 # wake is delivered with every host line and the away note.
@@ -1074,6 +1147,7 @@ test_ownership_proof_is_omp_keyed
 test_turnend_guard_extension_compels_one_continuation
 test_watch_extension_arms_and_delivers
 test_watch_extension_recovers_from_a_shutdown_without_session_start
+test_watch_extension_superseded_delivery_has_no_rejection_appendix
 test_watch_extension_runs_the_supervision_host
 test_watch_extension_runs_the_supervision_host quiet
 test_watch_extension_keeps_the_arm_without_the_file_or_with_off

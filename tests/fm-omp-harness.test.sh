@@ -31,6 +31,9 @@
 #   7. The watch extension arms through fm_watch_arm_omp and delivers an
 #      actionable close as one follow-up; an explicit repair revives a
 #      generation a shutdown left stopped with no later session_start.
+#   8. The watch extension treats a dead-but-unclosed arm child as an empty
+#      slot, reclaims a provably stale session lock on session_start, and its
+#      idle reconcile arms only on a stale beacon with supervision needed.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -682,6 +685,274 @@ EOF
   pass ".omp watch extension: fm_watch_arm_omp arms once, repeats as a no-op, and delivers an actionable close as one follow-up"
 }
 
+# An arm child that has exited but whose close event has not fired because a
+# straggler still holds its stdio pipes must not keep the single-flight slot.
+# Before this case the repair call answered "unchanged" and started nothing
+# until that close finally fired, which is the stuck fm_watch_arm_omp symptom.
+test_watch_extension_repairs_a_dead_but_unclosed_arm_child() {
+  local repo home log out status
+  repo="$TMP_ROOT/watch-dead-child/repo"; home="$TMP_ROOT/watch-dead-child/home"; log="$TMP_ROOT/watch-dead-child/arm.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+if [ ! -e "${FM_HOME:?}/state/.dead-child-fired" ]; then
+  : > "$FM_HOME/state/.dead-child-fired"
+  printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-dead\n' "$$"
+  # Keep stdout/stderr open after this arm exits, so no close event can free
+  # the slot: only the liveness check can.
+  sleep 20 &
+  exit 0
+fi
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-live\n' "$$"
+sleep 30
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, existsSync, readFileSync } from "node:fs";
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const handlers = new Map(); let tool = null;
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool(t) { tool = t; },
+  sendUserMessage() { return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const waitFor = async (cond, label) => {
+  for (let i = 0; i < 100; i += 1) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(label);
+};
+const armRows = () => existsSync(process.env.FM_ARM_LOG)
+  ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").filter(Boolean)
+  : [];
+const first = await tool.execute();
+if (!/^watcher: started omp extension arm child 1;/.test(first.content[0].text)) throw new Error(`the first arm did not start: ${first.content[0].text}`);
+await waitFor(() => armRows().length === 1, "the first arm child never launched");
+// Let the first arm exit. Its straggler keeps the pipes open, so no close
+// event fires and the slot still holds a child whose process is gone.
+await new Promise((r) => setTimeout(r, 500));
+const repaired = await tool.execute();
+if (!/^watcher: started omp extension arm child 2;/.test(repaired.content[0].text)) {
+  throw new Error(`a dead-but-unclosed arm child kept the slot: ${repaired.content[0].text}`);
+}
+await waitFor(() => armRows().length === 2, `the repair did not start a fresh arm: ${armRows().join(" | ")}`);
+await new Promise((r) => setTimeout(r, 300));
+if (armRows().length !== 2) throw new Error(`the abandoned child launched a stale retry: ${armRows().join(" | ")}`);
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension dead-child repair: $out"
+  [ -z "$out" ] || fail "omp watch extension dead-child repair test printed output: $out"
+  pass ".omp watch extension: a dead-but-unclosed arm child is an empty slot the repair call recovers"
+}
+
+# A resumed omp process starts under a .lock naming the previous, dead harness
+# pid. session_start must reclaim only a lock the shared verdict proves stale,
+# through bin/fm-lock.sh, and then arm without waiting for a model turn.
+test_watch_extension_reclaims_a_stale_lock_on_session_start() {
+  local repo home log out status
+  repo="$TMP_ROOT/watch-lock/repo"; home="$TMP_ROOT/watch-lock/home"; log="$TMP_ROOT/watch-lock/arm.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  cat > "$repo/bin/fm-session-lock-lib.sh" <<'SH'
+#!/usr/bin/env bash
+# Test double for the shared reclaim verdict's only observable here: a live
+# foreign owner blocks, anything else is reclaimable.
+fm_session_lock_pid_blocks_reclaim() {
+  [ -n "${FM_TEST_LIVE_LOCK_PID:-}" ] && [ "$1" = "$FM_TEST_LIVE_LOCK_PID" ] && return 0
+  return 1
+}
+SH
+  cat > "$repo/bin/fm-lock.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${FM_TEST_LOCK_PID:?}" > "${FM_STATE_OVERRIDE:?}/.lock"
+SH
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-lock\n' "$$"
+sleep 30
+SH
+  chmod +x "$repo/bin/"*.sh
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { spawn, spawnSync } from "node:child_process";
+import { writeFileSync, existsSync, readFileSync } from "node:fs";
+const lock = `${process.env.FM_HOME}/state/.lock`;
+process.env.FM_TEST_LOCK_PID = String(process.pid);
+const handlers = new Map();
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool() {},
+  sendUserMessage() { return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const waitFor = async (cond, label) => {
+  for (let i = 0; i < 100; i += 1) {
+    if (cond()) return;
+    await sleep(50);
+  }
+  throw new Error(label);
+};
+const armRows = () => existsSync(process.env.FM_ARM_LOG)
+  ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").filter(Boolean)
+  : [];
+
+// A live foreign owner holds the lock: never reclaim or arm over it.
+const foreign = spawn("sleep", ["30"]);
+writeFileSync(lock, `${foreign.pid}\n`);
+process.env.FM_TEST_LIVE_LOCK_PID = String(foreign.pid);
+await handlers.get("session_start")({ type: "session_start" }, {});
+await sleep(500);
+if (armRows().length !== 0) throw new Error(`a live foreign lock was armed over: ${armRows().join(" | ")}`);
+if (readFileSync(lock, "utf8").trim() !== String(foreign.pid)) throw new Error("a live foreign lock was rewritten");
+const foreignExited = new Promise((r) => foreign.once("exit", r));
+foreign.kill("SIGKILL");
+await foreignExited;
+
+// The recorded holder is dead: reclaim it and arm with no model turn.
+process.env.FM_TEST_LIVE_LOCK_PID = "";
+writeFileSync(lock, `${foreign.pid}\n`);
+await handlers.get("session_start")({ type: "session_start" }, {});
+await waitFor(() => armRows().length === 1, "a provably stale lock was not reclaimed into an arm");
+if (readFileSync(lock, "utf8").trim() !== String(process.pid)) throw new Error("the reclaimed lock does not name this session");
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension stale-lock reclaim: $out"
+  [ -z "$out" ] || fail "omp watch extension stale-lock reclaim test printed output: $out"
+  pass ".omp watch extension: session_start reclaims only a provably stale lock and arms"
+}
+
+# Idle self-healing: the reconcile tick arms on a stale beacon only when
+# supervision is needed and no live child or retry already owns the slot, and
+# a second tick never overlaps an owned arm.
+test_watch_extension_reconciles_idle_supervision() {
+  local repo home log beatlog out status
+  repo="$TMP_ROOT/watch-reconcile/repo"; home="$TMP_ROOT/watch-reconcile/home"
+  log="$TMP_ROOT/watch-reconcile/arm.log"; beatlog="$TMP_ROOT/watch-reconcile/beat.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  cat > "$repo/bin/fm-watcher-beat-check.sh" <<'SH'
+#!/usr/bin/env bash
+[ -e "${FM_HOME:?}/state/.need-watch" ] || exit 0
+printf 'beat-check\n' >> "${FM_BEAT_LOG:?}"
+exit 1
+SH
+  cat > "$repo/bin/fm-wake-lib.sh" <<'SH'
+#!/usr/bin/env bash
+fm_afk_daemon_owns_supervision() { [ -e "${FM_HOME:?}/state/.test-away-owns" ]; }
+SH
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-reconcile\n' "$$"
+sleep 30
+SH
+  chmod +x "$repo/bin/"*.sh
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_BEAT_LOG="$beatlog" FM_OMP_WATCH_RECONCILE_SECS=1 FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, existsSync, readFileSync } from "node:fs";
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const pi = { on() {}, registerCommand() {}, registerTool() {}, sendUserMessage() { return undefined; } };
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const waitFor = async (cond, label) => {
+  for (let i = 0; i < 100; i += 1) {
+    if (cond()) return;
+    await sleep(50);
+  }
+  throw new Error(label);
+};
+const armRows = () => existsSync(process.env.FM_ARM_LOG)
+  ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").filter(Boolean)
+  : [];
+// Healthy or idle: the tick runs but starts nothing.
+await sleep(1400);
+if (armRows().length !== 0) throw new Error(`an idle tick armed supervision: ${armRows().join(" | ")}`);
+// A stale beacon with supervision needed starts exactly one arm.
+writeFileSync(`${process.env.FM_HOME}/state/.need-watch`, "");
+await waitFor(() => armRows().length === 1, "the reconcile tick did not arm on a stale beacon");
+// A second tick must not overlap the live arm child it just started.
+await sleep(1400);
+if (armRows().length !== 1) throw new Error(`the reconcile tick overlapped an owned arm: ${armRows().join(" | ")}`);
+if (!existsSync(process.env.FM_BEAT_LOG)) throw new Error("the reconcile tick never ran the beacon check");
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension idle reconcile: $out"
+  [ -z "$out" ] || fail "omp watch extension idle reconcile test printed output: $out"
+  pass ".omp watch extension: an idle reconcile arms one cycle on a stale beacon and never overlaps an owned arm"
+}
+
+# Away and quiet mode hand triage and arming to their daemon: while the shared
+# fm_afk_daemon_owns_supervision test says it owns supervision, the idle
+# reconcile must stand down even with a stale beacon.
+test_watch_extension_reconcile_stands_down_for_the_away_owner() {
+  local repo home log out status
+  repo="$TMP_ROOT/watch-away-owner/repo"; home="$TMP_ROOT/watch-away-owner/home"; log="$TMP_ROOT/watch-away-owner/arm.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  printf 'away\n' > "$home/state/.afk"
+  : > "$home/state/.test-away-owns"
+  : > "$home/state/.need-watch"
+  cat > "$repo/bin/fm-watcher-beat-check.sh" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  cat > "$repo/bin/fm-wake-lib.sh" <<'SH'
+#!/usr/bin/env bash
+fm_afk_daemon_owns_supervision() { [ -e "${FM_HOME:?}/state/.test-away-owns" ]; }
+SH
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+sleep 30
+SH
+  chmod +x "$repo/bin/"*.sh
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_WATCH_RECONCILE_SECS=1 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, existsSync, readFileSync } from "node:fs";
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const pi = { on() {}, registerCommand() {}, registerTool() {}, sendUserMessage() { return undefined; } };
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+await new Promise((r) => setTimeout(r, 1500));
+if (existsSync(process.env.FM_ARM_LOG) && readFileSync(process.env.FM_ARM_LOG, "utf8").trim()) {
+  throw new Error(`the reconcile armed over the away owner: ${readFileSync(process.env.FM_ARM_LOG, "utf8").trim()}`);
+}
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension away-owner stand-down: $out"
+  [ -z "$out" ] || fail "omp watch extension away-owner stand-down test printed output: $out"
+  pass ".omp watch extension: the idle reconcile stands down while the away/quiet daemon owns supervision"
+}
+
 # omp emits session_shutdown for ordinary replacement and terminal quit alike. A
 # shutdown with no later session_start in the same process leaves the bound
 # generation stopped, and before this case the repair tool answered "omp session
@@ -1146,6 +1417,10 @@ test_control_composer_and_model_tables
 test_ownership_proof_is_omp_keyed
 test_turnend_guard_extension_compels_one_continuation
 test_watch_extension_arms_and_delivers
+test_watch_extension_repairs_a_dead_but_unclosed_arm_child
+test_watch_extension_reclaims_a_stale_lock_on_session_start
+test_watch_extension_reconciles_idle_supervision
+test_watch_extension_reconcile_stands_down_for_the_away_owner
 test_watch_extension_recovers_from_a_shutdown_without_session_start
 test_watch_extension_superseded_delivery_has_no_rejection_appendix
 test_watch_extension_runs_the_supervision_host

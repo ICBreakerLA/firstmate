@@ -42,8 +42,16 @@ Each adapter:
 - Preserves one child or scheduled retry at a time.
 - Applies bounded exponential retry after an unexpected or failed close.
 
-Pi treats an arm child whose process is already gone as an empty slot even while its close event is still pending, so a repair call or a scheduled retry starts a fresh arm instead of answering unchanged.
+Pi and omp treat an arm child whose process is already gone as an empty slot even while its close event is still pending, so a repair call or a scheduled retry starts a fresh arm instead of answering unchanged.
 A failed follow-up never cancels continuity restoration.
+
+omp also re-checks liveness while idle and recovers a resumed session without a model turn:
+
+- One unref'd reconcile tick, default 60 seconds (`FM_OMP_WATCH_RECONCILE_SECS`), runs only while the bound generation is live, the session owns the lock, and no restoration, pending wake, live arm child, retry timer, or away/quiet daemon owns supervision.
+- The tick asks `bin/fm-watcher-beat-check.sh` whether supervision is needed and the beacon is stale, and starts one ordinary arm only on its alarm exit.
+- On `session_start`, a lock the shared `fm_session_lock_pid_blocks_reclaim` verdict proves reclaimable is taken through `bin/fm-lock.sh`, so a resumed omp process arms before its first prompt; a live owner or an unreadable record is left untouched.
+
+The extension header owns the exact gating and ordering.
 
 ### Pi session replacement
 

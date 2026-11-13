@@ -19,6 +19,20 @@
 //     successor arms; unlike Pi, it is not retained until a distinct active
 //     successor generation commits its own arm, so omp keeps the plain
 //     teardown-and-rearm replacement shape.
+//   - Continuity is also self-healing while idle: one unref'd reconcile tick
+//     (FM_OMP_WATCH_RECONCILE_SECS, default 60) asks
+//     bin/fm-watcher-beat-check.sh whether supervision is needed and the beacon
+//     is stale, and starts one ordinary arm only on its alarm exit, while the
+//     live generation owns the lock, no restoration or pending wake is in
+//     flight, no live child or retry is owned, and no away/quiet daemon owns
+//     supervision.
+//   - On session_start a recorded lock owner the shared
+//     fm_session_lock_pid_blocks_reclaim verdict proves stale is reclaimed
+//     through bin/fm-lock.sh before arming, so a resumed process re-arms with
+//     no model turn; a live or unreadable owner is left untouched.
+//   - An arm child whose process is gone but whose close has not fired is an
+//     empty slot at every single-flight gate, and is retired so its late close
+//     cannot deliver a stale wake.
 //   - The Pi supervision branch is out of scope for omp: every actionable wake
 //     is delivered to main, so no branch offer is made and no calm presentation
 //     hooks exist.
@@ -65,7 +79,7 @@
 // replacement handoff.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // typebox resolves inside omp's extension loader (verified, omp 18.1.11); the
@@ -166,6 +180,14 @@ const armReadyTimeoutMs = positiveInteger(
 );
 const hostReadyTimeoutMs = Math.max(armReadyTimeoutMs, 30000);
 const armRetireTimeoutMs = positiveInteger("FM_WATCH_ARM_RETIRE_TIMEOUT_MS", 1000);
+// Idle liveness recheck. A successor can die after its verification, or a wake
+// can arrive while no model turn consumes it; nothing else in this process
+// re-checks the watcher beacon while it sits idle. One unref'd tick asks
+// bin/fm-watcher-beat-check.sh whether supervision is needed and the beacon is
+// stale, and only then starts one arm.
+const reconcileMs = positiveInteger("FM_OMP_WATCH_RECONCILE_SECS", 60) * 1000;
+const beatCheckScript = `${fmRoot}/bin/fm-watcher-beat-check.sh`;
+const afkRecord = `${state}/.afk`;
 const repairOnlyHint = "call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
 
@@ -243,6 +265,20 @@ function pidAlive(pid: string): boolean {
   }
 }
 
+// An arm child whose process is gone but whose close event has not fired yet
+// (stdio pipes still held) must not keep the single-flight slot: neither a
+// repair call nor a scheduled retry would start anything until that close
+// finally fires. Every gate that asks "is a cycle already owned" uses this
+// instead of owner.child so both paths can always recover.
+function liveArmChild(owner: SessionGeneration): ChildProcess | null {
+  const child = owner.child;
+  if (!child) return null;
+  if (child.exitCode !== null || child.signalCode !== null) return null;
+  const pid = child.pid;
+  if (pid === undefined || !pidAlive(String(pid))) return null;
+  return child;
+}
+
 function lockOwnership(): LockOwnership {
   let lockPid = "";
   try {
@@ -258,6 +294,68 @@ function lockOwnership(): LockOwnership {
     if (!pid || pid === "1") break;
   }
   return pidAlive(lockPid) ? "other" : "missing";
+}
+
+function bashWithHomeEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    FM_HOME: fmHome,
+    FM_STATE_OVERRIDE: state,
+    FM_ROOT_OVERRIDE: fmRoot,
+    FM_CONFIG_OVERRIDE: config,
+  };
+}
+
+// True when away or quiet mode's daemon is the live, identity-matched
+// supervision owner. The extension then stands down its idle reconcile and
+// leaves triage and arming to that daemon (bin/fm-wake-lib.sh owns the test).
+function awayDaemonOwnsSupervision(): boolean {
+  try {
+    accessSync(afkRecord);
+  } catch (error) {
+    return nodeErrorCode(error) !== "ENOENT";
+  }
+  const result = spawnSync(
+    "bash",
+    ["-c", '. "$1"; fm_afk_daemon_owns_supervision "$2"', "fm-afk-check", `${fmRoot}/bin/fm-wake-lib.sh`, state],
+    { cwd: fmRoot, encoding: "utf8", timeout: 15000, env: bashWithHomeEnv() },
+  );
+  return result.status === 0;
+}
+
+// A resumed omp process starts under a .lock that still names the previous,
+// dead harness pid, so lockOwnership() reads it as missing and the extension
+// never arms before the first model turn. Only a lock the shared session-lock
+// contract proves reclaimable is taken over, through bin/fm-lock.sh; a live
+// owner, another harness, or an unreadable record is left exactly as it is.
+function reclaimProvablyStaleLock(): boolean {
+  let lockPid = "";
+  try {
+    lockPid = readFileSync(`${state}/.lock`, "utf8").trim();
+  } catch {
+    return false;
+  }
+  if (!/^[0-9]+$/.test(lockPid) || lockPid === "1" || lockPid === String(process.pid)) return false;
+  const env = bashWithHomeEnv();
+  const verdict = spawnSync(
+    "bash",
+    ["-c", '. "$1"; fm_session_lock_pid_blocks_reclaim "$2"', "fm-lock-check", `${fmRoot}/bin/fm-session-lock-lib.sh`, lockPid],
+    { cwd: fmRoot, encoding: "utf8", timeout: 15000, env },
+  );
+  // Exit 0 means the recorded owner still blocks reclaim; only 1 is provably
+  // stale and safe to hand to the shared acquire path below.
+  if (verdict.status !== 1) return false;
+  const acquired = spawnSync("bash", [`${fmRoot}/bin/fm-lock.sh`], {
+    cwd: fmRoot,
+    encoding: "utf8",
+    timeout: 30000,
+    env,
+  });
+  if (acquired.status !== 0) {
+    appendExtensionLog(`lock reclaim refused status=${acquired.status ?? "none"}`);
+    return false;
+  }
+  return lockOwnership() === "owned";
 }
 
 function markLoaded(): void {
@@ -616,6 +714,38 @@ export default function (pi: ExtensionAPI) {
     return generation;
   }
 
+  // Idle self-healing: only when the bound generation is live, this session
+  // owns the lock, no restoration or pending wake is in flight, no live arm
+  // child or scheduled retry exists, and no away/quiet daemon owns supervision.
+  // A stale beacon with supervision needed starts exactly one ordinary arm;
+  // healthy, idle, or unowned homes change nothing. This never runs in a
+  // stopped generation and never arms from a session that does not hold the
+  // lock, so it cannot resurrect a shut-down or superseded session.
+  function reconcileSupervision(): void {
+    const owner = activeGeneration;
+    if (!owner || !generationIsLive(owner)) return;
+    if (owner.restoring || owner.pendingActionables.length > 0) return;
+    if (liveArmChild(owner) || owner.retryTimer) return;
+    if (lockOwnership() !== "owned") return;
+    if (awayDaemonOwnsSupervision()) return;
+    const check = spawnSync("bash", [beatCheckScript], {
+      cwd: fmRoot,
+      encoding: "utf8",
+      // Short: this blocks the omp event loop, and the check only reads state.
+      timeout: 10000,
+      env: bashWithHomeEnv(),
+    });
+    // 1 is the alarm: supervision is needed and the beacon is stale. 0 means
+    // healthy or nothing needs a watcher; 2 is a usage error. Neither warrants
+    // an arm.
+    if (check.status !== 1) return;
+    const result = startArm(owner);
+    appendExtensionLog(`reconcile arm ok=${result.ok} ${result.message}`);
+  }
+
+  const reconcileTimer = setInterval(reconcileSupervision, reconcileMs);
+  reconcileTimer.unref();
+
   async function sendWake(
     owner: SessionGeneration,
     message: string,
@@ -901,7 +1031,7 @@ export default function (pi: ExtensionAPI) {
         // been idle.
         const deferred = owner.deferredClose;
         owner.deferredClose = null;
-        if (deferred && !owner.child && !owner.retryTimer) {
+        if (deferred && !liveArmChild(owner) && !owner.retryTimer) {
           scheduleRetry(owner, deferred.message, deferred.predecessorArmPid);
         }
       }
@@ -987,7 +1117,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   function scheduleRetry(owner: SessionGeneration, message: string, predecessorArmPid: string): void {
-    if (!generationIsLive(owner) || owner.child || owner.retryTimer) return;
+    if (!generationIsLive(owner) || liveArmChild(owner) || owner.retryTimer) return;
     const ownership = lockOwnership();
     if (ownership !== "owned") {
       surfaceFailure(owner, `watcher: FAILED - omp extension cannot restore continuity because this session no longer owns the lock\n${message}`);
@@ -1021,7 +1151,15 @@ export default function (pi: ExtensionAPI) {
       };
     }
     markLoaded();
-    if (owner.child) {
+    const stale = owner.child;
+    if (stale && !liveArmChild(owner)) {
+      // A dead-but-unclosed child is an empty slot. Retire it before the new
+      // arm takes the field so its late close cannot deliver a stale wake, and
+      // its release cannot clobber the successor below.
+      armRetired.add(stale);
+      owner.child = null;
+    }
+    if (liveArmChild(owner)) {
       return {
         ok: true,
         message: `watcher: unchanged - omp extension already owns an arm child; no manual re-arm needed; ${repairOnlyHint}`,
@@ -1105,6 +1243,9 @@ export default function (pi: ExtensionAPI) {
       resolveClosed();
       settleReadiness(false);
       releaseChild();
+      // A retired child - one the extension stopped, or a dead-but-unclosed
+      // slot replaced by a newer arm - has no wake or retry left to contribute.
+      if (armRetired.has(armChild)) return;
       const classification = classifyClose(hostMode, stdout, stderr, code, signal);
       const predecessor = String(armChild.pid ?? "");
       if (classification.kind === "actionable") {
@@ -1134,6 +1275,7 @@ export default function (pi: ExtensionAPI) {
       resolveClosed();
       settleReadiness(false);
       releaseChild();
+      if (armRetired.has(armChild)) return;
       if (!generationIsLive(owner)) return;
       if (owner.restoring) return;
       scheduleRetry(owner, `watcher: FAILED - omp extension arm child ${id} failed: ${error.message}`, String(armChild.pid ?? ""));
@@ -1186,7 +1328,8 @@ export default function (pi: ExtensionAPI) {
   pi.on?.("session_start", async () => {
     reviveStoppedGeneration();
     markLoaded();
-    if (lockOwnership() !== "owned") return;
+    if (lockOwnership() !== "owned" && !reclaimProvablyStaleLock()) return;
+    markLoaded();
     activateOwnedWatch(generation);
   });
   pi.on?.("session_shutdown", async () => {

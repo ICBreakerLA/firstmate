@@ -20,12 +20,13 @@
 //     successor generation commits its own arm, so omp keeps the plain
 //     teardown-and-rearm replacement shape.
 //   - Continuity is also self-healing while idle: one unref'd reconcile tick
-//     (FM_OMP_WATCH_RECONCILE_SECS, default 60) runs the ordinary delivery path
-//     for an actionable a dead-but-unclosed arm left undelivered; otherwise,
-//     while the live generation owns the lock, no restoration is in flight, no
-//     live child or retry is owned, and no away/quiet daemon owns supervision,
-//     it asks bin/fm-watcher-beat-check.sh whether supervision is needed and the
-//     beacon is stale, and starts one ordinary arm only on its alarm exit.
+//     (FM_OMP_WATCH_RECONCILE_SECS, default 60) runs the ordinary delivery
+//     path for an actionable wake a dead-but-unclosed arm left undelivered;
+//     otherwise, while the live generation owns the lock, no restoration is
+//     in flight, no live child or retry is owned, and no away/quiet daemon
+//     owns supervision, it asks bin/fm-watcher-beat-check.sh whether
+//     supervision is needed and the beacon is stale, and starts one ordinary
+//     arm only on its alarm exit.
 //   - On session_start a recorded lock owner the shared
 //     fm_session_lock_pid_blocks_reclaim verdict proves stale is reclaimed
 //     through bin/fm-lock.sh before arming, so a resumed process re-arms with

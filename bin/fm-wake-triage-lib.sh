@@ -83,8 +83,8 @@ wake_triage_log() {
   return 0
 }
 
-# R2 predicate: 0 iff <status-file> is a declared wait - the same read the
-# supervisor routes on, in two parts. First the shared declared-wait reader
+# R2 predicate: 0 iff <status-file> is a declared wait, read in two parts.
+# First the shared declared-wait reader the supervisor routes on
 # (status_declared_wait_line: a pause kept across a resolved line for another
 # phase key, or a captain-held line while it is the latest event). Then a
 # status outcome

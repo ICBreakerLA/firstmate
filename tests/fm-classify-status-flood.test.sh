@@ -143,6 +143,27 @@ test_seed_window_crossing_folds_the_span() {
   pass "a span past the 32 KiB seed window still folds its own lines past the cap"
 }
 
+test_episode_dedupe_survives_a_seed_past_32_kib() {
+  local f="$TMP_ROOT/seed-episode.status" whole tail_events offset pad i
+  : > "$f"
+  pad=$(printf 'x%.0s' $(seq 1 5500))
+  for i in 1 2 3 4 5 6; do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 5))" "$i" "$pad" >> "$f"
+  done
+  whole=$(FM_STATUS_FLOOD_MAX=5 fold_events "$f") || fail "the flood episode produced no noisy event"
+  [ "$(count_of "$whole" 'noisy: seed-episode')" -eq 1 ] || fail "expected exactly one noisy event: $whole"
+  offset=$(wc -c < "$f" | tr -d ' ')
+  [ "$offset" -gt 32768 ] || fail "fixture prelude is not past the seed window: $offset"
+  for i in 7 8 9 10; do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 5))" "$i" "$pad" >> "$f"
+  done
+  tail_events=$(FM_STATUS_FLOOD_MAX=5 fold_events "$f" "$offset") || true
+  case "$tail_events" in
+    *noisy*) fail "the same flood episode was announced twice; the second span replayed a truncated seed: $tail_events" ;;
+  esac
+  pass "a later span inside a flood whose seed prefix exceeds 32 KiB stays folded"
+}
+
 test_unstamped_lines_are_never_counted() {
   local f="$TMP_ROOT/untimed.status" events i
   : > "$f"
@@ -192,6 +213,7 @@ test_window_resets_after_ten_minutes
 test_verdict_is_independent_of_the_span_start
 test_noisy_event_lands_in_the_span_that_crosses_the_cap
 test_seed_window_crossing_folds_the_span
+test_episode_dedupe_survives_a_seed_past_32_kib
 test_unstamped_lines_are_never_counted
 test_zero_disables_the_cap
 test_default_cap_is_well_above_a_busy_task

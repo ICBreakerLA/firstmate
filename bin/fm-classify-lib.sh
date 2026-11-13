@@ -2464,7 +2464,8 @@ _fm_status_open_decision_origins() {  # <status-file> [<kind>]
 # needs every line the cap counted before the span, so FM_STATUS_FLOOD_SEED_BYTES
 # is only the starting seed window: it grows until the replay reaches the file
 # start, already ranks the span's first line past the cap, or has replayed only
-# stamps a full flood window older than that line. 0 disables the cap.
+# stamps a full flood window older than that line. A zero or invalid size
+# replays from the file start.
 FM_STATUS_FLOOD_WINDOW_SECS=600
 FM_STATUS_FLOOD_MAX_DEFAULT=20
 FM_STATUS_FLOOD_SEED_BYTES=32768
@@ -2511,6 +2512,9 @@ _fm_flood_seed() {  # <status-file> <start-offset> <max> <span-epoch>
   _fm_flood_epochs=''
   [ "$start" -gt 0 ] || return 0
   window=$FM_STATUS_FLOOD_SEED_BYTES
+  case "$window" in
+    ''|*[!0-9]*|0) window=$start ;;
+  esac
   while :; do
     if [ "$start" -gt "$window" ]; then from=$((start - window)); else from=0; fi
     chunk=$(_fm_status_read_span "$f" "$from" "$((start - from))" 2>/dev/null) || return 0

@@ -192,6 +192,41 @@ SH
   pass "seed growth for a non-flooding span stops at the flood window"
 }
 
+test_zero_seed_bytes_replays_from_the_file_start() {
+  local f="$TMP_ROOT/zero-seed.status" driver="$TMP_ROOT/zero-seed-driver.sh"
+  local out="$TMP_ROOT/zero-seed.out" done_marker="$TMP_ROOT/zero-seed.done" offset events pid i=0
+  : > "$f"; rm -f "$done_marker"
+  append_lines "$f" 8 1000 5 'checks green'
+  offset=$(head -n 4 "$f" | wc -c | tr -d ' ')
+  append_lines "$f" 1 1040 1 'checks green'
+  cat > "$driver" <<'SH'
+#!/usr/bin/env bash
+set -u
+. "$1/bin/fm-classify-lib.sh"
+FM_STATUS_FLOOD_SEED_BYTES=0
+FM_STATUS_FLOOD_MAX=4
+record=$(status_span_first_actionable_record "$2" "$3") || exit 1
+rest=${record#*$'\t'}
+printf '%s' "${rest#*$'\t'}"
+: > "$4"
+SH
+  chmod +x "$driver"
+  "$driver" "$ROOT" "$f" "$offset" "$done_marker" > "$out" 2>&1 &
+  pid=$!
+  while [ ! -e "$done_marker" ] && kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do
+    sleep 0.1; i=$((i + 1))
+  done
+  if [ ! -e "$done_marker" ]; then
+    kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    fail "a zero seed window hung the classification instead of replaying from the file start"
+  fi
+  wait "$pid" || fail "a zero seed window failed to classify the span"
+  events=$(cat "$out")
+  [ "$(count_of "$events" 'noisy: zero-seed')" -eq 1 ] \
+    || fail "a zero seed window lost the full-replay rank: $events"
+  pass "a zero seed window replays from the file start and terminates"
+}
+
 test_unstamped_lines_are_never_counted() {
   local f="$TMP_ROOT/untimed.status" events i
   : > "$f"
@@ -243,6 +278,7 @@ test_noisy_event_lands_in_the_span_that_crosses_the_cap
 test_seed_window_crossing_folds_the_span
 test_episode_dedupe_survives_a_seed_past_32_kib
 test_seed_growth_stops_at_the_flood_window
+test_zero_seed_bytes_replays_from_the_file_start
 test_unstamped_lines_are_never_counted
 test_zero_disables_the_cap
 test_default_cap_is_well_above_a_busy_task

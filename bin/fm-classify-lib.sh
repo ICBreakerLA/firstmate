@@ -415,6 +415,61 @@ _fm_status_declared_wait_scan() {  # <resolve-verb> <legacy-captain-re>
   return 1
 }
 
+# The newest status event that no later `resolved` line retracts, or nothing
+# when the event a resolved line answered is the newest one. The same phase-key
+# fold as status_declared_wait_line above, asked of ANY event rather than only a
+# pause: firstmate answers a decision by appending its own `resolved` line to
+# the worker's status log, and one that closes an unrelated, older decision must
+# not hide the outcome the worker declared after it. A delivered `done: PR ...
+# checks green` is still the task's newest word while the captain holds that
+# delivery, so a reader that stopped at the raw latest line would read the
+# firstmate answer as the worker's state and re-examine a lane nobody is
+# ignoring. Bounded like the fold above: only a tail window made wholly of
+# resolved events widens the read to the whole file.
+status_latest_unretracted_event_line() {  # <status-file>
+  local f=$1 last verb resolve legacy_re
+  last=$(last_status_line "$f")
+  [ -n "$last" ] || return 0
+  status_line_verb "$last" verb
+  resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
+  if [ "$verb" != "$resolve" ]; then
+    printf '%s\n' "$last"
+    return 0
+  fi
+  legacy_re="^[[:space:]]*(${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT})"
+  tail -n "$FM_CLASSIFY_EVENT_WINDOW_LINES" "$f" 2>/dev/null \
+    | _fm_status_unretracted_event_scan "$resolve" "$legacy_re" \
+    || _fm_status_unretracted_event_scan "$resolve" "$legacy_re" < "$f" || :
+}
+
+# Walk the status lines on stdin back from the newest event, remembering the
+# phase key of each resolved line, and print the first other event whose key
+# none of them shares. Returns 1 when every event is a resolved line.
+_fm_status_unretracted_event_scan() {  # <resolve-verb> <legacy-captain-re>
+  local resolve=$1 legacy_re=$2 line verb key keys=$'\n' i=0
+  local -a lines=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    lines[i]=$line
+    i=$((i + 1))
+  done
+  while [ "$i" -gt 0 ]; do
+    i=$((i - 1))
+    line=${lines[i]}
+    case "$line" in *[![:space:]]*) ;; *) continue ;; esac
+    _fm_status_line_is_event "$line" "$legacy_re" || continue
+    status_line_verb "$line" verb
+    key=$(_fm_decision_key "$line" "$_FM_CLASSIFY_KEYLESS_PHASE") || key=
+    if [ "$verb" = "$resolve" ]; then
+      keys="$keys$key"$'\n'
+      continue
+    fi
+    case "$keys" in *$'\n'"$key"$'\n'*) return 1 ;; esac
+    printf '%s\n' "$line"
+    return 0
+  done
+  return 1
+}
+
 # A condition-aware declared wait: a `paused:` line may say WHEN it expects to
 # clear with `until <YYYY-MM-DDTHH:MM[:SS]Z>` anywhere in its text (UTC only, so
 # no local-zone guess is ever recorded). Prints that time as epoch seconds so a

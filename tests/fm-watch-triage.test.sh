@@ -2901,6 +2901,95 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold() {
   pass "consecutive wedge escalations on the same pane accumulate and demand deep inspection at the threshold"
 }
 
+# The live ladder, not a direct gate call: a crew that delivered a green PR and
+# is held for the captain sits on a static pane, and firstmate's answer to an
+# unrelated, older decision is the newest line in its status log. Before R2 read
+# past that resolved tail, every threshold pass re-armed "possible wedge,
+# escalation N" on the fixed gap and no backoff marker was ever written.
+test_wedge_escalation_backs_off_a_held_delivery_after_a_resolved_answer() {
+  local dir state fakebin out capture_file window key pane_hash sig pid marker interval next
+  local status_f
+  dir=$(make_case wedge-declared-wait-backoff); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-held-delivery"; status_f="$state/held-delivery.status"
+  printf 'idle prompt output' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/held-delivery.meta"
+  printf 'done [at=1794000000]: PR https://example.test/pr/200 checks green\nresolved [at=1794000100] [key=older-decision]: answered by firstmate\n' \
+    > "$status_f"
+  sig=$(seen_sig "$status_f"); printf '%s' "$sig" > "$state/.seen-held-delivery_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle prompt output")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # The delivered crew's run still shows a live pipeline step, so the static
+  # pane is classified provably-working and reaches the wedge ladder.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+
+  # Priming round: first sighting of this stale hash is absorbed and starts the
+  # wedge timer without going through wedge_timer_check.
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher exited on the priming round (should absorb): $(cat "$out")"
+  fi
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the intentional wedge priming stop"
+
+  # Round 1: the crossed threshold emits one escalation and arms R2's marker.
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "the first threshold pass did not escalate the held delivery: $(cat "$out")"
+  grep -F "possible wedge, escalation 1" "$out" >/dev/null \
+    || fail "the first threshold pass did not report escalation 1: $(cat "$out")"
+  [ -e "$state/.wake-backoff-held-delivery" ] \
+    || fail "the live escalation did not arm R2's backoff marker"
+  marker=$(cat "$state/.wake-backoff-held-delivery")
+  ack_stopped_cycle "$state" || fail "could not acknowledge the first wedge escalation"
+
+  # Round 2: the same held delivery re-aged inside the backoff window raises no
+  # second escalation and leaves the marker untouched.
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher exited on a re-aged held delivery inside the R2 window: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || fail "a re-aged held delivery inside the R2 window still woke the supervisor: $(cat "$out")"
+  [ "$(cat "$state/.wake-backoff-held-delivery" 2>/dev/null || true)" = "$marker" ] \
+    || fail "the suppressed recheck rewrote R2's backoff marker"
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the suppressed wedge recheck"
+
+  # Round 3: once the window elapses one recheck is allowed again, and its
+  # interval doubles for the next wait.
+  read -r interval _ next < "$state/.wake-backoff-held-delivery"
+  printf '%s %s %s' "$interval" "$(( $(date +%s) - 1 ))" "$next" \
+    > "$state/.wake-backoff-held-delivery"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "the recheck after the R2 window did not fire: $(cat "$out")"
+  grep -F "possible wedge, escalation 2" "$out" >/dev/null \
+    || fail "the post-window recheck did not report escalation 2: $(cat "$out")"
+  read -r interval _ _ < "$state/.wake-backoff-held-delivery"
+  [ "$interval" = 480 ] || fail "R2 did not double the interval after the allowed recheck (got $interval)"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the post-window wedge recheck"
+  unset FM_FAKE_CREW_STATE
+  pass "the live wedge ladder arms R2 for a held delivery under an older decision's resolved line, suppresses inside the window, and rechecks on the doubled gap"
+}
+
 test_wedge_escalation_resets_when_pane_becomes_active() {
   local dir state fakebin out capture_file window key pane_hash sig pid
   dir=$(make_case wedge-escalation-reset); state="$dir/state"; fakebin="$dir/fakebin"
@@ -5428,7 +5517,27 @@ test_wake_triage_gate_decision() {
   [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "a declared-wait stale must be allowed on first sight"
   wake_triage_gate stale "$task" "$key" "stale: x" 240
   [ "$WAKE_TRIAGE_ACTION" = suppress ] || fail "a declared-wait stale within the backoff must be suppressed (R2)"
-  pass "the gate emits working/non-stale wakes (including a no-meta lane) and backs off a declared-wait recheck (R2)"
+  # A delivered outcome still stands while firstmate's answer to an UNRELATED,
+  # older decision is the newest line: the key it closes is not the delivery's
+  # keyless phase, so the gate must read the done line beneath it and back off
+  # exactly as it did before that answer landed.
+  task="delivered"; printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
+  printf 'done [at=1794000000]: PR https://example.test/pr/200 checks green\nresolved [at=1794000100] [key=older-decision]: answered by firstmate\n' \
+    > "$state/$task.status"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "a delivered outcome under an unrelated resolved line must be allowed on first sight"
+  [ -e "$state/.wake-backoff-$task" ] || fail "a delivered outcome under an unrelated resolved line did not arm R2"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = suppress ] || fail "a delivered outcome under an unrelated resolved line must back off (R2)"
+  # A resolved line that closes the outcome's OWN keyless phase does end it: the
+  # task is no longer standing in a wait, so the recheck is emitted at once.
+  task="answered"; printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
+  printf 'done [at=1794000000]: PR https://example.test/pr/200 checks green\nresolved [at=1794000100]: answered by firstmate\n' \
+    > "$state/$task.status"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "an answered delivery must not back off"
+  [ ! -e "$state/.wake-backoff-$task" ] || fail "an answered delivery armed a backoff marker"
+  pass "the gate emits working/non-stale wakes (including a no-meta lane) and backs off a declared-wait recheck (R2), reading past a resolved line for another key"
 }
 
 # --- opt-in batching (Step 3): hold, flush, and the gate's hold branch --------
@@ -5791,6 +5900,7 @@ fm_test_run \
   test_stale_terminal_status_overridden_by_active_run \
   test_nonterminal_stale_provably_working_absorbed_then_escalated \
   test_wedge_escalation_marks_demand_deep_inspection_after_threshold \
+  test_wedge_escalation_backs_off_a_held_delivery_after_a_resolved_answer \
   test_wedge_escalation_resets_when_pane_becomes_active \
   test_gone_endpoint_reports_once_instead_of_escalating_forever \
   test_live_and_unproven_endpoints_still_wedge_escalate \

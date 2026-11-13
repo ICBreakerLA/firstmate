@@ -5537,6 +5537,24 @@ test_wake_triage_gate_decision() {
   wake_triage_gate stale "$task" "$key" "stale: x" 240
   [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "an answered delivery must not back off"
   [ ! -e "$state/.wake-backoff-$task" ] || fail "an answered delivery armed a backoff marker"
+  # A captain-held hold under firstmate's answer to another key is still a
+  # standing wait: the shared declared-wait reader drops captain-held behind any
+  # later event, so R2 must read the held line as the newest unretracted one.
+  task="held-under-answer"; printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
+  printf 'captain-held [key=route]: tracked by route\nresolved [key=older-decision]: answered by firstmate\n' \
+    > "$state/$task.status"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "a captain-held wait under an unrelated resolved line must be allowed on first sight"
+  [ -e "$state/.wake-backoff-$task" ] || fail "a captain-held wait under an unrelated resolved line did not arm R2"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = suppress ] || fail "a captain-held wait under an unrelated resolved line must back off (R2)"
+  # An answer for the hold's own key ends it, so the recheck is emitted at once.
+  task="held-answered"; printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
+  printf 'captain-held [key=route]: tracked by route\nresolved [key=route]: captain answered\n' \
+    > "$state/$task.status"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "an answered captain-held wait must not back off"
+  [ ! -e "$state/.wake-backoff-$task" ] || fail "an answered captain-held wait armed a backoff marker"
   pass "the gate emits working/non-stale wakes (including a no-meta lane) and backs off a declared-wait recheck (R2), reading past a resolved line for another key"
 }
 

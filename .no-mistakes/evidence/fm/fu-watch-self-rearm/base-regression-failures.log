@@ -1,0 +1,46 @@
+=== BASE (d369eee1) test_watch_extension_repairs_a_dead_but_unclosed_arm_child
+not ok - omp watch extension dead-child repair: file:///home/agent/nm/worktrees/80f7399884b3/01M7B4QBP31TGEQYG2QA868FPB/[eval1]:31
+  throw new Error(`a dead-but-unclosed arm child kept the slot: ${repaired.content[0].text}`);
+        ^
+
+Error: a dead-but-unclosed arm child kept the slot: watcher: unchanged - omp extension already owns an arm child; no manual re-arm needed; call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy
+    at file:///home/agent/nm/worktrees/80f7399884b3/01M7B4QBP31TGEQYG2QA868FPB/[eval1]:31:9
+
+Node.js v22.22.1: expected exit 0, got 1
+exit=1
+=== BASE (d369eee1) test_watch_extension_reclaims_a_stale_lock_on_session_start
+not ok - omp watch extension stale-lock reclaim: file:///home/agent/nm/worktrees/80f7399884b3/01M7B4QBP31TGEQYG2QA868FPB/[eval1]:21
+  throw new Error(label);
+        ^
+
+Error: a provably stale lock was not reclaimed into an arm
+    at waitFor (file:///home/agent/nm/worktrees/80f7399884b3/01M7B4QBP31TGEQYG2QA868FPB/[eval1]:21:9)
+    at async file:///home/agent/nm/worktrees/80f7399884b3/01M7B4QBP31TGEQYG2QA868FPB/[eval1]:43:1
+
+Node.js v22.22.1: expected exit 0, got 1
+exit=1
+=== BASE (d369eee1) test_watch_extension_reconciles_idle_supervision
+not ok - omp watch extension idle reconcile: file:///home/agent/nm/worktrees/80f7399884b3/01M7B4QBP31TGEQYG2QA868FPB/[eval1]:13
+  throw new Error(label);
+        ^
+
+Error: the reconcile tick did not arm on a stale beacon
+    at waitFor (file:///home/agent/nm/worktrees/80f7399884b3/01M7B4QBP31TGEQYG2QA868FPB/[eval1]:13:9)
+    at async file:///home/agent/nm/worktrees/80f7399884b3/01M7B4QBP31TGEQYG2QA868FPB/[eval1]:23:1
+
+Node.js v22.22.1: expected exit 0, got 1
+exit=1
+=== BASE (d369eee1) test_watch_extension_reconciles_a_stranded_actionable
+not ok - omp watch extension stranded actionable: file:///home/agent/nm/worktrees/80f7399884b3/01M7B4QBP31TGEQYG2QA868FPB/[eval1]:19
+  throw new Error(label);
+        ^
+
+Error: the idle reconcile never delivered the stranded wake (arms: arm=56277)
+    at waitFor (file:///home/agent/nm/worktrees/80f7399884b3/01M7B4QBP31TGEQYG2QA868FPB/[eval1]:19:9)
+    at async file:///home/agent/nm/worktrees/80f7399884b3/01M7B4QBP31TGEQYG2QA868FPB/[eval1]:28:1
+
+Node.js v22.22.1: expected exit 0, got 1
+exit=1
+=== BASE (d369eee1) test_watch_extension_reconcile_stands_down_for_the_away_owner
+ok - .omp watch extension: the idle reconcile stands down while the away/quiet daemon owns supervision
+exit=0

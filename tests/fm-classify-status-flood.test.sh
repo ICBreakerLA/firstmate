@@ -194,37 +194,46 @@ SH
 
 test_zero_seed_bytes_replays_from_the_file_start() {
   local f="$TMP_ROOT/zero-seed.status" driver="$TMP_ROOT/zero-seed-driver.sh"
-  local out="$TMP_ROOT/zero-seed.out" done_marker="$TMP_ROOT/zero-seed.done" offset events pid i=0
-  : > "$f"; rm -f "$done_marker"
+  local seed out done_marker offset events fold_rc pid i
+  : > "$f"
   append_lines "$f" 8 1000 5 'checks green'
-  offset=$(head -n 4 "$f" | wc -c | tr -d ' ')
+  offset=$(head -n 6 "$f" | wc -c | tr -d ' ')
   append_lines "$f" 1 1040 1 'checks green'
   cat > "$driver" <<'SH'
 #!/usr/bin/env bash
 set -u
 . "$1/bin/fm-classify-lib.sh"
-FM_STATUS_FLOOD_SEED_BYTES=0
+FM_STATUS_FLOOD_SEED_BYTES=$5
 FM_STATUS_FLOOD_MAX=4
-record=$(status_span_first_actionable_record "$2" "$3") || exit 1
-rest=${record#*$'\t'}
-printf '%s' "${rest#*$'\t'}"
-: > "$4"
+record=$(status_span_first_actionable_record "$2" "$3")
+fold_rc=$?
+if [ "$fold_rc" -eq 0 ]; then
+  rest=${record#*$'\t'}
+  printf '%s' "${rest#*$'\t'}"
+fi
+printf '%s' "$fold_rc" > "$4"
 SH
   chmod +x "$driver"
-  "$driver" "$ROOT" "$f" "$offset" "$done_marker" > "$out" 2>&1 &
-  pid=$!
-  while [ ! -e "$done_marker" ] && kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do
-    sleep 0.1; i=$((i + 1))
+  for seed in 0 00 000; do
+    out="$TMP_ROOT/zero-seed-$seed.out"
+    done_marker="$TMP_ROOT/zero-seed-$seed.done"
+    rm -f "$done_marker"; i=0
+    "$driver" "$ROOT" "$f" "$offset" "$done_marker" "$seed" > "$out" 2>&1 &
+    pid=$!
+    while [ ! -e "$done_marker" ] && kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do
+      sleep 0.1; i=$((i + 1))
+    done
+    if [ ! -e "$done_marker" ]; then
+      kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+      fail "seed '$seed' hung the classification instead of replaying from the file start"
+    fi
+    wait "$pid" || fail "seed '$seed' failed to classify the span"
+    events=$(cat "$out")
+    fold_rc=$(cat "$done_marker")
+    [ "$fold_rc" -eq 1 ] || fail "seed '$seed' did not rank the span past the cap (fold rc $fold_rc): $events"
+    [ -z "$events" ] || fail "seed '$seed' surfaced span lines instead of replaying the whole prefix: $events"
   done
-  if [ ! -e "$done_marker" ]; then
-    kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
-    fail "a zero seed window hung the classification instead of replaying from the file start"
-  fi
-  wait "$pid" || fail "a zero seed window failed to classify the span"
-  events=$(cat "$out")
-  [ "$(count_of "$events" 'noisy: zero-seed')" -eq 1 ] \
-    || fail "a zero seed window lost the full-replay rank: $events"
-  pass "a zero seed window replays from the file start and terminates"
+  pass "zero-valued seed spellings replay from the file start and terminate"
 }
 
 test_unstamped_lines_are_never_counted() {

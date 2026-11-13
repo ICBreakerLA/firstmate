@@ -2513,7 +2513,8 @@ _fm_flood_seed() {  # <status-file> <start-offset> <max> <span-epoch>
   [ "$start" -gt 0 ] || return 0
   window=$FM_STATUS_FLOOD_SEED_BYTES
   case "$window" in
-    ''|*[!0-9]*|0) window=$start ;;
+    ''|*[!0-9]*) window=$start ;;
+    *) window=$((10#$window)); [ "$window" -gt 0 ] || window=$start ;;
   esac
   while :; do
     if [ "$start" -gt "$window" ]; then from=$((start - window)); else from=0; fi

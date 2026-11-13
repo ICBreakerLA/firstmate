@@ -2172,6 +2172,82 @@ SH
   pass "seed growth for a non-flooding span stops at the flood window in a real watcher"
 }
 
+# Existing flood-cap behavior, driven through a real watcher: the span that first
+# crosses the cap wakes the captain once, and a later non-terminal span of the
+# SAME 600 s episode is folded (the watcher absorbs it) instead of re-announcing
+# the episode. The second round's span starts after the first wake committed its
+# classified offset, so this exercises the live episode dedupe, not a hand-set
+# marker.
+test_flood_episode_wakes_once_live() {
+  local dir state fakebin out status_file i pid wakes
+  dir=$(make_case flood-episode-live); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; status_file="$state/task.status"
+  # Twelve captain-relevant lines inside the 600 s window with a cap of 5: the
+  # first live span crosses the cap and surfaces the episode in one wake (one
+  # watcher exit; the grace rescan may enqueue duplicate rows for that exit).
+  for i in $(seq 1 12); do
+    printf 'checks green [at=%s]: step %s\n' "$((1000 + i * 5))" "$i" >> "$status_file"
+  done
+  watch_bg "$state" "$fakebin" "$out" env FM_STATUS_FLOOD_MAX=5
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "a fresh flooding span did not wake the captain live"; }
+  wakes=$(awk -F '\t' '$3 == "signal" && $4 == "task.status" { n++ } END { print n + 0 }' "$state/.wake-queue")
+  [ "$wakes" -ge 1 ] \
+    || fail "the flood episode was not queued as a signal wake: $(cat "$state/.wake-queue")"
+  # The supervisor consumes that wake between polls: drain and acknowledge it so
+  # the next watcher starts a fresh cycle instead of resurfacing the old rows.
+  ack_stopped_cycle "$state" || fail "could not acknowledge the flood episode wake"
+  # A later span of the same episode, all non-terminal and still inside the
+  # window, must stay folded: a provably-working crew leaves the watcher alive.
+  for i in 13 14 15 16; do
+    printf 'checks green [at=%s]: step %s\n' "$((1000 + i * 5))" "$i" >> "$status_file"
+  done
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  watch_bg "$state" "$fakebin" "$out" env FM_STATUS_FLOOD_MAX=5
+  pid=$!
+  wait_poll_cycle "$state" "$pid" \
+    || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "a later non-terminal span of the same flood episode woke the captain again: out=$(cat "$out") queue=$(cat "$state/.wake-queue")"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  [ ! -s "$state/.wake-queue" ] \
+    || fail "a later span of the same flood episode queued another wake: $(cat "$state/.wake-queue")"
+  pass "a live flood episode wakes the captain once and folds a later span"
+}
+
+# A terminal line (done/failed/blocked/needs-decision) appended after a flood
+# episode was already announced must still surface: the cap folds only the
+# non-terminal chatter, so the supervisor gets the real completion. Driven
+# through a real watcher across two rounds of the same status file.
+test_terminal_line_wakes_after_a_folded_episode_live() {
+  local dir state fakebin out status_file i pid wakes
+  dir=$(make_case flood-terminal-live); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; status_file="$state/task.status"
+  for i in $(seq 1 12); do
+    printf 'checks green [at=%s]: step %s\n' "$((1000 + i * 5))" "$i" >> "$status_file"
+  done
+  watch_bg "$state" "$fakebin" "$out" env FM_STATUS_FLOOD_MAX=5
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "a fresh flooding span did not wake the captain live"; }
+  wakes=$(awk -F '\t' '$3 == "signal" && $4 == "task.status" { n++ } END { print n + 0 }' "$state/.wake-queue")
+  [ "$wakes" -ge 1 ] \
+    || fail "the flood episode was not queued as a signal wake: $(cat "$state/.wake-queue")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the flood episode wake"
+  # The folded episode keeps absorbing chatter, but the terminal completion is
+  # not chatter: it must wake the captain even past the cap.
+  printf 'checks green [at=%s]: step 13\n' "$((1000 + 13 * 5))" >> "$status_file"
+  printf 'done [at=%s]: finished\n' "$((1000 + 14 * 5))" >> "$status_file"
+  watch_bg "$state" "$fakebin" "$out" env FM_STATUS_FLOOD_MAX=5
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "a terminal line after a folded flood episode did not wake the captain"; }
+  wakes=$(awk -F '\t' '$3 == "signal" && $4 == "task.status" { n++ } END { print n + 0 }' "$state/.wake-queue")
+  [ "$wakes" -ge 1 ] \
+    || fail "the terminal line after the folded episode queued no signal wake: $(cat "$state/.wake-queue")"
+  pass "a terminal line still surfaces after a flood episode was folded"
+}
+
 # The captain-reported completion shape of the same masking, end to end.
 test_release_completion_survives_a_later_routine_append() {
   local dir state fakebin out drain_out status_file sig pid
@@ -5864,6 +5940,8 @@ fm_test_run \
   test_actionable_signal_survives_a_later_routine_append \
   test_flood_episode_past_the_seed_window_wakes_once \
   test_flood_seed_growth_stays_within_the_flood_window \
+  test_flood_episode_wakes_once_live \
+  test_terminal_line_wakes_after_a_folded_episode_live \
   test_keyed_decision_signal_reads_only_the_new_span \
   test_release_completion_survives_a_later_routine_append \
   test_routine_appends_after_a_classified_event_stay_absorbed \

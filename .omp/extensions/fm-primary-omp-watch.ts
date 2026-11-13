@@ -20,12 +20,12 @@
 //     successor generation commits its own arm, so omp keeps the plain
 //     teardown-and-rearm replacement shape.
 //   - Continuity is also self-healing while idle: one unref'd reconcile tick
-//     (FM_OMP_WATCH_RECONCILE_SECS, default 60) asks
-//     bin/fm-watcher-beat-check.sh whether supervision is needed and the beacon
-//     is stale, and starts one ordinary arm only on its alarm exit, while the
-//     live generation owns the lock, no restoration or pending wake is in
-//     flight, no live child or retry is owned, and no away/quiet daemon owns
-//     supervision.
+//     (FM_OMP_WATCH_RECONCILE_SECS, default 60) runs the ordinary delivery path
+//     for an actionable a dead-but-unclosed arm left undelivered; otherwise,
+//     while the live generation owns the lock, no restoration is in flight, no
+//     live child or retry is owned, and no away/quiet daemon owns supervision,
+//     it asks bin/fm-watcher-beat-check.sh whether supervision is needed and the
+//     beacon is stale, and starts one ordinary arm only on its alarm exit.
 //   - On session_start a recorded lock owner the shared
 //     fm_session_lock_pid_blocks_reclaim verdict proves stale is reclaimed
 //     through bin/fm-lock.sh before arming, so a resumed process re-arms with
@@ -714,18 +714,29 @@ export default function (pi: ExtensionAPI) {
     return generation;
   }
 
-  // Idle self-healing: only when the bound generation is live, this session
-  // owns the lock, no restoration or pending wake is in flight, no live arm
-  // child or scheduled retry exists, and no away/quiet daemon owns supervision.
-  // A stale beacon with supervision needed starts exactly one ordinary arm;
-  // healthy, idle, or unowned homes change nothing. This never runs in a
-  // stopped generation and never arms from a session that does not hold the
-  // lock, so it cannot resurrect a shut-down or superseded session.
+  // Idle self-healing: only when the bound generation is live, no restoration
+  // is in flight, and no live arm child or scheduled retry exists. An
+  // undelivered actionable left by a dead-but-unclosed arm goes through the
+  // ordinary delivery path; otherwise, when this session owns the lock and no
+  // away/quiet daemon owns supervision, a stale beacon with supervision needed
+  // starts exactly one ordinary arm. Healthy, idle, or unowned homes change
+  // nothing. This never runs in a stopped generation and never arms from a
+  // session that does not hold the lock, so it cannot resurrect a shut-down or
+  // superseded session.
   function reconcileSupervision(): void {
     const owner = activeGeneration;
     if (!owner || !generationIsLive(owner)) return;
-    if (owner.restoring || owner.pendingActionables.length > 0) return;
+    if (owner.restoring) return;
     if (liveArmChild(owner) || owner.retryTimer) return;
+    // A dead-but-unclosed arm child that already printed an actionable line
+    // leaves that wake stranded: no close event will ever run the delivery
+    // path. Recover it here through the same delivery path, which retires the
+    // dead slot and restores a verified successor; only when nothing is left
+    // undelivered may the beacon check below start its own arm.
+    if (owner.pendingActionables.some((pending) => !pending.delivered && !owner.unconsumedWakes.has(pending.token))) {
+      void processPendingActionables(owner);
+      return;
+    }
     if (lockOwnership() !== "owned") return;
     if (awayDaemonOwnsSupervision()) return;
     const check = spawnSync("bash", [beatCheckScript], {

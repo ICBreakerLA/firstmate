@@ -47,8 +47,9 @@ A failed follow-up never cancels continuity restoration.
 
 omp also re-checks liveness while idle and recovers a resumed session without a model turn:
 
-- One unref'd reconcile tick, default 60 seconds (`FM_OMP_WATCH_RECONCILE_SECS`), runs only while the bound generation is live, the session owns the lock, and no restoration, pending wake, live arm child, retry timer, or away/quiet daemon owns supervision.
-- The tick asks `bin/fm-watcher-beat-check.sh` whether supervision is needed and the beacon is stale, and starts one ordinary arm only on its alarm exit.
+- One unref'd reconcile tick, default 60 seconds (`FM_OMP_WATCH_RECONCILE_SECS`), runs only while the bound generation is live, no restoration is in flight, and no live arm child or retry timer owns the slot.
+- An actionable an arm child printed just before dying with its stdio pipes still open reaches main through the ordinary delivery path on that tick; the tick does not stand down on a pending wake.
+- Otherwise the tick, while the session owns the lock and no away/quiet daemon owns supervision, asks `bin/fm-watcher-beat-check.sh` whether supervision is needed and the beacon is stale, and starts one ordinary arm only on its alarm exit.
 - On `session_start`, a lock the shared `fm_session_lock_pid_blocks_reclaim` verdict proves reclaimable is taken through `bin/fm-lock.sh`, so a resumed omp process arms before its first prompt; a live owner or an unreadable record is left untouched.
 
 The extension header owns the exact gating and ordering.

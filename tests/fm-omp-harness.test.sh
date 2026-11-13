@@ -32,8 +32,9 @@
 #      actionable close as one follow-up; an explicit repair revives a
 #      generation a shutdown left stopped with no later session_start.
 #   8. The watch extension treats a dead-but-unclosed arm child as an empty
-#      slot, reclaims a provably stale session lock on session_start, and its
-#      idle reconcile arms only on a stale beacon with supervision needed.
+#      slot, reclaims a provably stale session lock on session_start, delivers
+#      a wake such a child stranded, and otherwise arms from its idle reconcile
+#      only on a stale beacon with supervision needed.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -907,6 +908,85 @@ EOF
   pass ".omp watch extension: an idle reconcile arms one cycle on a stale beacon and never overlaps an owned arm"
 }
 
+# An arm child that prints an actionable line and exits behind a straggler that
+# keeps its stdio pipes open never fires a close event, so the ordinary
+# delivery path cannot run. The stranded wake must still reach main from the
+# idle reconcile, which also restores and owns a verified successor.
+test_watch_extension_reconciles_a_stranded_actionable() {
+  local repo home log out status
+  repo="$TMP_ROOT/watch-stranded/repo"; home="$TMP_ROOT/watch-stranded/home"; log="$TMP_ROOT/watch-stranded/arm.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  cat > "$repo/bin/fm-watcher-beat-check.sh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$repo/bin/fm-wake-lib.sh" <<'SH'
+#!/usr/bin/env bash
+fm_afk_daemon_owns_supervision() { return 1; }
+SH
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+if [ ! -e "${FM_HOME:?}/state/.stranded-fired" ]; then
+  : > "$FM_HOME/state/.stranded-fired"
+  printf 'signal: stranded wake\n'
+  # Keep stdout/stderr open after this arm exits, so no close event can run
+  # the delivery path: only the liveness check and idle reconcile can.
+  sleep 20 &
+  exit 0
+fi
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-stranded\n' "$$"
+sleep 30
+SH
+  chmod +x "$repo/bin/"*.sh
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_WATCH_RECONCILE_SECS=1 FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, existsSync, readFileSync } from "node:fs";
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const sent = []; let tool = null;
+const pi = {
+  on() {},
+  registerCommand() {},
+  registerTool(t) { tool = t; },
+  sendUserMessage(m, o) { sent.push({ m, o }); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const waitFor = async (cond, label) => {
+  for (let i = 0; i < 120; i += 1) {
+    if (cond()) return;
+    await sleep(50);
+  }
+  throw new Error(label);
+};
+const armRows = () => existsSync(process.env.FM_ARM_LOG)
+  ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").filter(Boolean)
+  : [];
+const first = await tool.execute();
+if (!/^watcher: started omp extension arm child 1;/.test(first.content[0].text)) throw new Error(`the first arm did not start: ${first.content[0].text}`);
+await waitFor(() => armRows().length === 1, "the first arm child never launched");
+// No close event ever fires for this arm; only the idle reconcile can deliver.
+await waitFor(() => sent.length === 1, `the idle reconcile never delivered the stranded wake (arms: ${armRows().join(" | ")})`);
+if (!sent[0].m.includes("signal: stranded wake")) throw new Error(`unexpected wake text: ${sent[0].m}`);
+if (sent[0].o?.deliverAs !== "followUp") throw new Error("the stranded wake must be delivered as a follow-up");
+await waitFor(() => armRows().length === 2, `the reconcile did not restore a successor arm: ${armRows().join(" | ")}`);
+const again = await tool.execute();
+if (!/^watcher: unchanged - omp extension already owns an arm child/.test(again.content[0].text)) {
+  throw new Error(`the reconcile did not own a successor arm: ${again.content[0].text}`);
+}
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension stranded actionable: $out"
+  [ -z "$out" ] || fail "omp watch extension stranded actionable test printed output: $out"
+  pass ".omp watch extension: the idle reconcile delivers a dead-but-unclosed arm's stranded wake and owns its successor"
+}
+
 # Away and quiet mode hand triage and arming to their daemon: while the shared
 # fm_afk_daemon_owns_supervision test says it owns supervision, the idle
 # reconcile must stand down even with a stale beacon.
@@ -1420,6 +1500,7 @@ test_watch_extension_arms_and_delivers
 test_watch_extension_repairs_a_dead_but_unclosed_arm_child
 test_watch_extension_reclaims_a_stale_lock_on_session_start
 test_watch_extension_reconciles_idle_supervision
+test_watch_extension_reconciles_a_stranded_actionable
 test_watch_extension_reconcile_stands_down_for_the_away_owner
 test_watch_extension_recovers_from_a_shutdown_without_session_start
 test_watch_extension_superseded_delivery_has_no_rejection_appendix

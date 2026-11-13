@@ -15,7 +15,7 @@ When this session owns supervision and away mode is not active:
    The generation-owner contract and in-flight actionable-close handoff live in `.omp/extensions/fm-primary-omp-watch.ts`; because omp reports no shutdown reason, every shutdown with a pending actionable close persists the handoff, and the next owning `session_start` in any process replays it.
 7. After an actionable child close, the extension rechecks session-lock ownership and verifies one successor before it delivers the follow-up wake; its bounded fallback is defined in `docs/watcher-continuity.md`.
 8. Ordinary work, turn completion, and ordinary signal, stale, check, heartbeat, or other wake handling: do not call `fm_watch_arm_omp` again because continuity is extension-owned rather than model-memory-owned.
-   An idle reconcile tick re-checks the watcher beacon and re-arms without a model turn; it does not remove the item 10 repair path.
+   An idle reconcile tick delivers a wake an arm child printed just before dying with its pipes still open, then re-checks the watcher beacon and re-arms without a model turn; it does not remove the item 10 repair path.
 9. An unexpected child close enters bounded exponential retry, and an exhausted retry or lost session lock is surfaced as a watcher failure instead of disappearing.
 10. Missing, failed, or unhealthy cycle only: if a later notification explicitly reports one of those repair conditions, drain queued wakes, inspect the failure text, call `fm_watch_arm_omp`, and __FM_OMP_RESTART_SHORT__ if the extensions are not loaded.
    A redundant call while the extension owns an arm child or scheduled retry is an ownership-based `watcher: unchanged` no-op, not an independent health claim.

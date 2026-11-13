@@ -2049,6 +2049,42 @@ test_actionable_signal_survives_a_later_routine_append() {
   pass "a captain event hidden behind a later routine append is still surfaced (queue + exit)"
 }
 
+# The reported duplicate flood alarm, driven through a real watcher: a later span
+# in one 600 s episode starts after a flood prefix larger than the 32 KiB seed
+# window. Replaying only the newest slice undercounts the episode, ranks the
+# span's first line past the cap again, and wakes the captain twice. The seed
+# must replay enough of the prefix that the span stays folded and the poll
+# absorbs instead of exiting on a second noisy wake.
+test_flood_episode_past_the_seed_window_wakes_once() {
+  local dir state fakebin out status_file sig pad i pid
+  dir=$(make_case flood-seed-episode); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; status_file="$state/task.status"
+  pad=$(printf 'x%.0s' $(seq 1 5500))
+  for i in 1 2 3 4 5 6; do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 5))" "$i" "$pad" >> "$status_file"
+  done
+  # The prefix above is the part of the episode the watcher already classified;
+  # the tail below is a later span of the SAME episode.
+  sig=$(seen_sig "$status_file"); printf '%s' "$sig" > "$state/.seen-task_status"
+  [ "$(size_of "$status_file")" -gt 32768 ] \
+    || fail "fixture flood prefix is not past the 32 KiB seed window"
+  for i in 7 8 9 10; do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 5))" "$i" "$pad" >> "$status_file"
+  done
+  # A provably-working crew makes the folded span absorbable, so a correct replay
+  # leaves the watcher alive; the duplicate wake would still exit first.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  watch_bg "$state" "$fakebin" "$out" env FM_STATUS_FLOOD_MAX=5
+  pid=$!
+  wait_poll_cycle "$state" "$pid" \
+    || { reap "$pid"; fail "a later span in the same flood episode raised the noisy wake again"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  ! grep -F "noisy: task" "$state/.wake-queue" 2>/dev/null >/dev/null \
+    || fail "the same flood episode was announced twice: $(cat "$state/.wake-queue")"
+  pass "a later span in a flood past the 32 KiB seed window wakes the captain once"
+}
+
 # A status log only grows: a remote second mate's mirrored parent channel passes a
 # megabyte and thousands of keyed decisions. Deciding whether a newly appended
 # keyed decision is still open must cost the new span, not the log's lifetime.
@@ -2090,6 +2126,50 @@ SH
       || fail "classifying a ${appended}-byte span read ${length} bytes from offset ${start} of a ${prior}-byte history"
   done < "$reads"
   pass "a keyed decision signal reads only the newly appended span, not the whole log"
+}
+
+# A non-flooding span whose prelude is far larger than the starting seed window
+# must not replay the whole prefix: growth stops once the replayed stamps are a
+# full flood window older than the span's first line. Every classification read
+# goes through the span-reader seam, so recording them pins the bound in a real
+# watcher, independent of machine speed.
+test_flood_seed_growth_stays_within_the_flood_window() {
+  local dir state fakebin out status_file reader reads sig pad i pid start length seed_reads=0 offset
+  dir=$(make_case flood-window-bound); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; status_file="$state/task.status"
+  reads="$dir/span-reads"; reader="$dir/recording-span-reader"
+  pad=$(printf 'x%.0s' $(seq 1 2000))
+  # One captain-relevant line a minute: the rolling window holds well under the
+  # default cap, so the episode never becomes noisy and growth must stop on age.
+  for i in $(seq 1 100); do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 60))" "$i" "$pad" >> "$status_file"
+  done
+  sig=$(seen_sig "$status_file"); printf '%s' "$sig" > "$state/.seen-task_status"
+  offset=$(size_of "$status_file")
+  [ "$offset" -gt "$FM_STATUS_FLOOD_SEED_BYTES" ] || fail "fixture prelude is not past the start window"
+  printf 'checks green [at=%s]: span\n' "$((1000 + 101 * 60))" >> "$status_file"
+  cat > "$reader" <<'SH'
+#!/usr/bin/env bash
+printf '%s\t%s\n' "$2" "$3" >> "$FM_TEST_SPAN_READS"
+exec perl -e 'open my $f, "<", $ARGV[0] or exit 1; seek $f, $ARGV[1], 0 or exit 1; defined(read $f, my $b, $ARGV[2]) or exit 1; print $b or exit 1' "$1" "$2" "$3"
+SH
+  chmod +x "$reader"
+  export FM_STATUS_SPAN_READER="$reader" FM_TEST_SPAN_READS="$reads"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 || { unset FM_STATUS_SPAN_READER FM_TEST_SPAN_READS; reap "$pid"; fail "watcher did not classify the appended span"; }
+  unset FM_STATUS_SPAN_READER FM_TEST_SPAN_READS
+  [ -s "$reads" ] || fail "the classification made no read through the span reader"
+  while IFS=$(printf '\t') read -r start length; do
+    [ "$start" -lt "$offset" ] || continue
+    seed_reads=$((seed_reads + 1))
+    [ "$start" -gt 0 ] \
+      || fail "a non-flooding span replayed the whole ${offset}-byte prefix"
+    [ "$length" -le "$FM_STATUS_FLOOD_SEED_BYTES" ] \
+      || fail "seed growth read ${length} bytes from offset ${start}, past the ${FM_STATUS_FLOOD_SEED_BYTES}-byte start window"
+  done < "$reads"
+  [ "$seed_reads" -gt 0 ] || fail "the seed was never replayed, so the window bound was not exercised"
+  pass "seed growth for a non-flooding span stops at the flood window in a real watcher"
 }
 
 # The captain-reported completion shape of the same masking, end to end.
@@ -5782,6 +5862,8 @@ fm_test_run \
   test_ordinary_blocked_signal_payload_remains_branch_eligible \
   test_routine_signal_payload_not_marked_needs_decision \
   test_actionable_signal_survives_a_later_routine_append \
+  test_flood_episode_past_the_seed_window_wakes_once \
+  test_flood_seed_growth_stays_within_the_flood_window \
   test_keyed_decision_signal_reads_only_the_new_span \
   test_release_completion_survives_a_later_routine_append \
   test_routine_appends_after_a_classified_event_stay_absorbed \

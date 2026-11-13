@@ -164,6 +164,34 @@ test_episode_dedupe_survives_a_seed_past_32_kib() {
   pass "a later span inside a flood whose seed prefix exceeds 32 KiB stays folded"
 }
 
+test_seed_growth_stops_at_the_flood_window() {
+  local f="$TMP_ROOT/window-bound.status" reader="$TMP_ROOT/window-bound-reader" reads="$TMP_ROOT/window-bound-reads"
+  local offset pad i start length seed_reads=0
+  : > "$f"; : > "$reads"
+  pad=$(printf 'x%.0s' $(seq 1 2000))
+  for i in $(seq 1 100); do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 60))" "$i" "$pad" >> "$f"
+  done
+  offset=$(wc -c < "$f" | tr -d ' ')
+  [ "$offset" -gt "$FM_STATUS_FLOOD_SEED_BYTES" ] || fail "fixture prelude is not past the seed window: $offset"
+  printf 'checks green [at=%s]: span\n' "$((1000 + 101 * 60))" >> "$f"
+  cat > "$reader" <<'SH'
+#!/usr/bin/env bash
+printf '%s\t%s\n' "$2" "$3" >> "$FM_TEST_SPAN_READS"
+exec perl -e 'open my $f, "<", $ARGV[0] or exit 1; seek $f, $ARGV[1], 0 or exit 1; defined(read $f, my $b, $ARGV[2]) or exit 1; print $b or exit 1' "$1" "$2" "$3"
+SH
+  chmod +x "$reader"
+  FM_STATUS_SPAN_READER="$reader" FM_TEST_SPAN_READS="$reads" fold_events "$f" "$offset" >/dev/null || true
+  [ -s "$reads" ] || fail "the classification made no read through the span reader"
+  while IFS=$(printf '\t') read -r start length; do
+    [ "$start" -lt "$offset" ] && seed_reads=$((seed_reads + 1))
+    [ "$length" -le "$FM_STATUS_FLOOD_SEED_BYTES" ] \
+      || fail "a non-flooding span replayed ${length} bytes from offset ${start}, past the ${FM_STATUS_FLOOD_SEED_BYTES}-byte start window"
+  done < "$reads"
+  [ "$seed_reads" -gt 0 ] || fail "the seed was never replayed, so the window bound was not exercised"
+  pass "seed growth for a non-flooding span stops at the flood window"
+}
+
 test_unstamped_lines_are_never_counted() {
   local f="$TMP_ROOT/untimed.status" events i
   : > "$f"
@@ -214,6 +242,7 @@ test_verdict_is_independent_of_the_span_start
 test_noisy_event_lands_in_the_span_that_crosses_the_cap
 test_seed_window_crossing_folds_the_span
 test_episode_dedupe_survives_a_seed_past_32_kib
+test_seed_growth_stops_at_the_flood_window
 test_unstamped_lines_are_never_counted
 test_zero_disables_the_cap
 test_default_cap_is_well_above_a_busy_task

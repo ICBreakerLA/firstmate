@@ -1,0 +1,7 @@
+=== base libs + new live-ladder test (slice 77) ===
+1..139
+not ok - the live escalation did not arm R2's backoff marker
+
+=== base libs + changed gate test (slice 136) ===
+1..139
+not ok - a delivered outcome under an unrelated resolved line did not arm R2

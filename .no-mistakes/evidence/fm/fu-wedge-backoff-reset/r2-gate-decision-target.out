@@ -1,0 +1,4 @@
+1..139
+ok - R2 allows then backs off a declared-wait recheck, doubling to the gap, and resets on a new status line or endpoint
+ok - the gate emits working/non-stale wakes (including a no-meta lane) and backs off a declared-wait recheck (R2), reading past a resolved line for another key
+FM_TEST_COMPLETE

@@ -1,0 +1,6 @@
+reported-k2-hold                               declared-wait=wait (expected wait) PASS
+done-under-unrelated-resolve                   declared-wait=wait (expected wait) PASS
+done-under-own-resolve                         declared-wait=answered (expected answered) PASS
+paused-under-unrelated-resolve                 declared-wait=wait (expected wait) PASS
+paused-under-own-resolve                       declared-wait=answered (expected answered) PASS
+gate-emit-then-back-off                        first=emit marker=written second=suppress PASS

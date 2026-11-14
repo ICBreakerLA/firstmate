@@ -42,8 +42,17 @@ Each adapter:
 - Preserves one child or scheduled retry at a time.
 - Applies bounded exponential retry after an unexpected or failed close.
 
-Pi treats an arm child whose process is already gone as an empty slot even while its close event is still pending, so a repair call or a scheduled retry starts a fresh arm instead of answering unchanged.
+Pi and omp treat an arm child whose process is already gone as an empty slot even while its close event is still pending, so a repair call or a scheduled retry starts a fresh arm instead of answering unchanged.
 A failed follow-up never cancels continuity restoration.
+
+omp also re-checks liveness while idle and recovers a resumed session without a model turn:
+
+- One unref'd reconcile tick (`FM_OMP_WATCH_RECONCILE_SECS`; [configuration](configuration.md#environment-variables) owns its default) runs only while the bound generation is live, no restoration is in flight, and no live arm child or retry timer owns the slot.
+- An actionable wake an arm child printed just before dying with its stdio pipes still open reaches main through the ordinary delivery path on that tick; a pending wake does not stand the tick down.
+- Otherwise the tick, while the session owns the lock and no away/quiet daemon owns supervision, asks `bin/fm-watcher-beat-check.sh` whether supervision is needed and the beacon is stale, and starts one ordinary arm only on its alarm exit.
+- On `session_start`, a lock the shared `fm_session_lock_pid_blocks_reclaim` verdict proves reclaimable is taken through `bin/fm-lock.sh`, so a resumed omp process arms before its first prompt; a live owner or an unreadable record is left untouched.
+
+The extension header owns the exact gating and ordering.
 
 ### Pi session replacement
 
@@ -477,6 +486,18 @@ The same suite covers ordinary same-process session replacement for `/new`, `/re
 
 The guard and session-start suites prove that active generation evidence tolerates a fresh-beacon handoff.
 They also prove that a legacy or handoff-phase watcher marker from an absent replacement extension still raises the outage diagnostic.
+
+### omp watch extension
+
+`tests/fm-omp-harness.test.sh` drives the omp extension over a fake omp API and proves:
+
+- A dead-but-unclosed arm child is an empty slot for a repair call, and its abandoned close starts no stale retry.
+- `session_start` reclaims only a lock the shared verdict proves stale, leaves a live foreign owner untouched, and arms before any model turn.
+- The idle reconcile stays quiet on a healthy or idle home, starts one arm on a stale beacon with supervision needed, and never overlaps an arm it owns.
+- The idle reconcile delivers a dead-but-unclosed arm's stranded actionable as one follow-up and owns a verified successor.
+- The idle reconcile stands down while an away/quiet daemon owns supervision.
+
+Its header also lists the remaining load-bearing contracts the suite pins.
 
 ### Arm, recovery, triage, and lock suites
 

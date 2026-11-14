@@ -2461,8 +2461,11 @@ _fm_status_open_decision_origins() {  # <status-file> [<kind>]
 # [at=<epoch>] stamps, so the watcher, the heartbeat backstop, and the daemon
 # read the same verdict for the same bytes, whatever offset each starts from; a
 # line with no well-formed stamp has unknown time and is never counted. A rank
-# only needs the lines just before the span, so the seed reads at most
-# FM_STATUS_FLOOD_SEED_BYTES of them. 0 disables the cap.
+# needs every line the cap counted before the span, so FM_STATUS_FLOOD_SEED_BYTES
+# is only the starting seed window: it grows until the replay reaches the file
+# start, already ranks the span's first line past the cap, or its earliest
+# replayed stamp is a full flood window older than that line. A zero or invalid
+# size replays from the file start.
 FM_STATUS_FLOOD_WINDOW_SECS=600
 FM_STATUS_FLOOD_MAX_DEFAULT=20
 FM_STATUS_FLOOD_SEED_BYTES=32768
@@ -2495,23 +2498,52 @@ _fm_flood_count() {  # <status-line> <max>
   _fm_flood_epochs=$kept
 }
 
-# Replay the captain-relevant lines just before <start> into the window.
-_fm_flood_seed() {  # <status-file> <start-offset> <max>
-  local f=$1 start=$2 max=$3 from=0 chunk line first=1
+# Replay the captain-relevant lines just before <start> into the window. The
+# starting window must not weaken the verdict: a later span whose seed is cut
+# short would see a lower rank and raise the same episode's noisy event again.
+# Grow the window until the replay reaches the file start, until it already
+# keeps more than <max> stamped lines, which ranks the span's first line past
+# the cap exactly as a full-file replay would, or until the earliest replayed
+# stamp is a full window older than the span's first line: lines older than
+# that can never enter the span's rolling window, so stopping there keeps the
+# rank exact without replaying an unbounded prefix.
+_fm_flood_seed() {  # <status-file> <start-offset> <max> <span-epoch>
+  local f=$1 start=$2 max=$3 span_at=$4 from=0 window chunk line first kept_n e oldest
   _fm_flood_epochs=''
   [ "$start" -gt 0 ] || return 0
-  [ "$start" -le "$FM_STATUS_FLOOD_SEED_BYTES" ] || from=$((start - FM_STATUS_FLOOD_SEED_BYTES))
-  chunk=$(_fm_status_read_span "$f" "$from" "$((start - from))" 2>/dev/null) || return 0
-  while IFS= read -r line || [ -n "$line" ]; do
-    if [ "$first" -eq 1 ] && [ "$from" -gt 0 ]; then first=0; continue; fi
-    first=0
-    case "$line" in *[![:space:]]*) ;; *) continue ;; esac
-    status_is_captain_held "$line" && continue
-    status_is_captain_relevant "$line" || continue
-    _fm_flood_count "$line" "$max"
-  done <<EOF
+  window=$FM_STATUS_FLOOD_SEED_BYTES
+  case "$window" in
+    ''|*[!0-9]*) window=$start ;;
+    *) window=$((10#$window)); [ "$window" -gt 0 ] || window=$start ;;
+  esac
+  while :; do
+    if [ "$start" -gt "$window" ]; then from=$((start - window)); else from=0; fi
+    chunk=$(_fm_status_read_span "$f" "$from" "$((start - from))" 2>/dev/null) || return 0
+    _fm_flood_epochs=''
+    first=1
+    oldest=''
+    while IFS= read -r line || [ -n "$line" ]; do
+      if [ "$first" -eq 1 ] && [ "$from" -gt 0 ]; then first=0; continue; fi
+      first=0
+      case "$line" in *[![:space:]]*) ;; *) continue ;; esac
+      if _fm_status_at_epoch "$line" e; then
+        if [ -z "$oldest" ] || [ "$e" -lt "$oldest" ]; then oldest=$e; fi
+      fi
+      status_is_captain_held "$line" && continue
+      status_is_captain_relevant "$line" || continue
+      _fm_flood_count "$line" "$max"
+    done <<EOF
 $chunk
 EOF
+    [ "$from" -eq 0 ] && return 0
+    kept_n=0
+    for e in $_fm_flood_epochs; do kept_n=$((kept_n + 1)); done
+    [ "$kept_n" -gt "$max" ] && return 0
+    if [ -n "$oldest" ] && [ $((span_at - oldest)) -ge "$FM_STATUS_FLOOD_WINDOW_SECS" ]; then
+      return 0
+    fi
+    window=$((window * 2))
+  done
 }
 
 status_span_first_actionable_record() {  # <status-file> <start-offset> [record-var] [needs-decision-var]
@@ -2561,7 +2593,7 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
     if [ "$flood_max" -gt 0 ]; then
       if [ "$flood_seeded" -eq 0 ] && _fm_status_at_epoch "$line" _fm_flood_probe; then
         flood_seeded=1
-        _fm_flood_seed "$f" "$start" "$flood_max"
+        _fm_flood_seed "$f" "$start" "$flood_max" "$_fm_flood_probe"
       fi
       _fm_flood_count "$line" "$flood_max"
       if [ "$_fm_flood_rank" -eq $((flood_max + 1)) ]; then

@@ -143,6 +143,99 @@ test_seed_window_crossing_folds_the_span() {
   pass "a span past the 32 KiB seed window still folds its own lines past the cap"
 }
 
+test_episode_dedupe_survives_a_seed_past_32_kib() {
+  local f="$TMP_ROOT/seed-episode.status" whole tail_events offset pad i
+  : > "$f"
+  pad=$(printf 'x%.0s' $(seq 1 5500))
+  for i in 1 2 3 4 5 6; do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 5))" "$i" "$pad" >> "$f"
+  done
+  whole=$(FM_STATUS_FLOOD_MAX=5 fold_events "$f") || fail "the flood episode produced no noisy event"
+  [ "$(count_of "$whole" 'noisy: seed-episode')" -eq 1 ] || fail "expected exactly one noisy event: $whole"
+  offset=$(wc -c < "$f" | tr -d ' ')
+  [ "$offset" -gt 32768 ] || fail "fixture prelude is not past the seed window: $offset"
+  for i in 7 8 9 10; do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 5))" "$i" "$pad" >> "$f"
+  done
+  tail_events=$(FM_STATUS_FLOOD_MAX=5 fold_events "$f" "$offset") || true
+  case "$tail_events" in
+    *noisy*) fail "the same flood episode was announced twice; the second span replayed a truncated seed: $tail_events" ;;
+  esac
+  pass "a later span inside a flood whose seed prefix exceeds 32 KiB stays folded"
+}
+
+test_seed_growth_stops_at_the_flood_window() {
+  local f="$TMP_ROOT/window-bound.status" reader="$TMP_ROOT/window-bound-reader" reads="$TMP_ROOT/window-bound-reads"
+  local offset pad i start length seed_reads=0
+  : > "$f"; : > "$reads"
+  pad=$(printf 'x%.0s' $(seq 1 2000))
+  for i in $(seq 1 100); do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 60))" "$i" "$pad" >> "$f"
+  done
+  offset=$(wc -c < "$f" | tr -d ' ')
+  [ "$offset" -gt "$FM_STATUS_FLOOD_SEED_BYTES" ] || fail "fixture prelude is not past the seed window: $offset"
+  printf 'checks green [at=%s]: span\n' "$((1000 + 101 * 60))" >> "$f"
+  cat > "$reader" <<'SH'
+#!/usr/bin/env bash
+printf '%s\t%s\n' "$2" "$3" >> "$FM_TEST_SPAN_READS"
+exec perl -e 'open my $f, "<", $ARGV[0] or exit 1; seek $f, $ARGV[1], 0 or exit 1; defined(read $f, my $b, $ARGV[2]) or exit 1; print $b or exit 1' "$1" "$2" "$3"
+SH
+  chmod +x "$reader"
+  FM_STATUS_SPAN_READER="$reader" FM_TEST_SPAN_READS="$reads" fold_events "$f" "$offset" >/dev/null || true
+  [ -s "$reads" ] || fail "the classification made no read through the span reader"
+  while IFS=$(printf '\t') read -r start length; do
+    [ "$start" -lt "$offset" ] && seed_reads=$((seed_reads + 1))
+    [ "$length" -le "$FM_STATUS_FLOOD_SEED_BYTES" ] \
+      || fail "a non-flooding span replayed ${length} bytes from offset ${start}, past the ${FM_STATUS_FLOOD_SEED_BYTES}-byte start window"
+  done < "$reads"
+  [ "$seed_reads" -gt 0 ] || fail "the seed was never replayed, so the window bound was not exercised"
+  pass "seed growth for a non-flooding span stops at the flood window"
+}
+
+test_zero_seed_bytes_replays_from_the_file_start() {
+  local f="$TMP_ROOT/zero-seed.status" driver="$TMP_ROOT/zero-seed-driver.sh"
+  local seed out done_marker offset events fold_rc pid i
+  : > "$f"
+  append_lines "$f" 8 1000 5 'checks green'
+  offset=$(head -n 6 "$f" | wc -c | tr -d ' ')
+  append_lines "$f" 1 1040 1 'checks green'
+  cat > "$driver" <<'SH'
+#!/usr/bin/env bash
+set -u
+. "$1/bin/fm-classify-lib.sh"
+FM_STATUS_FLOOD_SEED_BYTES=$5
+FM_STATUS_FLOOD_MAX=4
+record=$(status_span_first_actionable_record "$2" "$3")
+fold_rc=$?
+if [ "$fold_rc" -eq 0 ]; then
+  rest=${record#*$'\t'}
+  printf '%s' "${rest#*$'\t'}"
+fi
+printf '%s' "$fold_rc" > "$4"
+SH
+  chmod +x "$driver"
+  for seed in 0 00 000; do
+    out="$TMP_ROOT/zero-seed-$seed.out"
+    done_marker="$TMP_ROOT/zero-seed-$seed.done"
+    rm -f "$done_marker"; i=0
+    "$driver" "$ROOT" "$f" "$offset" "$done_marker" "$seed" > "$out" 2>&1 &
+    pid=$!
+    while [ ! -e "$done_marker" ] && kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do
+      sleep 0.1; i=$((i + 1))
+    done
+    if [ ! -e "$done_marker" ]; then
+      kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+      fail "seed '$seed' hung the classification instead of replaying from the file start"
+    fi
+    wait "$pid" || fail "seed '$seed' failed to classify the span"
+    events=$(cat "$out")
+    fold_rc=$(cat "$done_marker")
+    [ "$fold_rc" -eq 1 ] || fail "seed '$seed' did not rank the span past the cap (fold rc $fold_rc): $events"
+    [ -z "$events" ] || fail "seed '$seed' surfaced span lines instead of replaying the whole prefix: $events"
+  done
+  pass "zero-valued seed spellings replay from the file start and terminate"
+}
+
 test_unstamped_lines_are_never_counted() {
   local f="$TMP_ROOT/untimed.status" events i
   : > "$f"
@@ -192,6 +285,9 @@ test_window_resets_after_ten_minutes
 test_verdict_is_independent_of_the_span_start
 test_noisy_event_lands_in_the_span_that_crosses_the_cap
 test_seed_window_crossing_folds_the_span
+test_episode_dedupe_survives_a_seed_past_32_kib
+test_seed_growth_stops_at_the_flood_window
+test_zero_seed_bytes_replays_from_the_file_start
 test_unstamped_lines_are_never_counted
 test_zero_disables_the_cap
 test_default_cap_is_well_above_a_busy_task

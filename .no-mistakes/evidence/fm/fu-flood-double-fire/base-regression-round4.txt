@@ -1,0 +1,16 @@
+=== base d369eee1: new classifier regression test ===
+ok - more than N lines in the window fold into one noisy event
+ok - a span at the cap surfaces every line and is not noisy
+ok - needs-decision, blocked, failed and done lines surface through a flood
+ok - a terminal line that crosses the cap still produces the one noisy event
+ok - lines spaced beyond the window never trip the cap
+ok - a later span start sees the same verdict, so the noisy wake fires once
+ok - the span that crosses the cap reports the noisy event once
+ok - a span past the 32 KiB seed window still folds its own lines past the cap
+not ok - the same flood episode was announced twice; the second span replayed a truncated seed: noisy: seed-episode appended more than 5 captain-relevant status lines within 10 minutes, so later lines other than done, failed, blocked and needs-decision are folded into this event
+exit=1
+
+=== base d369eee1: new watcher regression test (real fm-watch.sh) ===
+1..142
+not ok - a later span in the same flood episode raised the noisy wake again
+exit=1

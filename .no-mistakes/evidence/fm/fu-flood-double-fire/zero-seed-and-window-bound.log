@@ -1,0 +1,13 @@
+=== zero-valued seed spellings through the real classifier (head 4f604901) ===
+seed=0   rc=1 events=''
+  elapsed_ms=106
+seed=00  rc=1 events=''
+  elapsed_ms=106
+seed=000 rc=1 events=''
+  elapsed_ms=106
+
+=== seed growth read bound for a non-flooding span (100 lines, one per minute) ===
+prelude_bytes=203292  start_window=32768  flood_window_secs=600  span_at=7060
+read offset=203292 length=29
+read offset=170524 length=32768
+max_read_length=32768  earliest_read_offset=170524  replayed_whole_prefix=no

@@ -1,0 +1,6 @@
+=== watcher test slice 68 on base d369eee1 ===
+not ok - a later span in the same flood episode raised the noisy wake again
+exit=1
+=== watcher test slice 69 on base d369eee1 ===
+ok - seed growth for a non-flooding span stops at the flood window in a real watcher
+exit=0

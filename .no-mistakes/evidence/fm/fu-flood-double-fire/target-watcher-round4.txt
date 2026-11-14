@@ -1,0 +1,9 @@
+1..142
+ok - a captain event hidden behind a later routine append is still surfaced (queue + exit)
+ok - a later span in a flood past the 32 KiB seed window wakes the captain once
+ok - seed growth for a non-flooding span stops at the flood window in a real watcher
+ok - a live flood episode wakes the captain once and folds a later span
+ok - a terminal line still surfaces after a flood episode was folded
+ok - a keyed decision signal reads only the newly appended span, not the whole log
+FM_TEST_COMPLETE
+exit=0

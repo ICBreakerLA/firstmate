@@ -1,0 +1,15 @@
+ok - more than N lines in the window fold into one noisy event
+ok - a span at the cap surfaces every line and is not noisy
+ok - needs-decision, blocked, failed and done lines surface through a flood
+ok - a terminal line that crosses the cap still produces the one noisy event
+ok - lines spaced beyond the window never trip the cap
+ok - a later span start sees the same verdict, so the noisy wake fires once
+ok - the span that crosses the cap reports the noisy event once
+ok - a span past the 32 KiB seed window still folds its own lines past the cap
+ok - a later span inside a flood whose seed prefix exceeds 32 KiB stays folded
+ok - seed growth for a non-flooding span stops at the flood window
+ok - zero-valued seed spellings replay from the file start and terminate
+ok - a line with no usable time stamp is never counted or suppressed
+ok - FM_STATUS_FLOOD_MAX=0 disables the cap
+ok - the default cap tolerates a busy task and catches a burst
+ok - an invalid cap falls back to the default instead of disabling the guard

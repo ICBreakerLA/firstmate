@@ -1,0 +1,4 @@
+1..140
+ok - a later span in a flood past the 32 KiB seed window wakes the captain once
+ok - seed growth for a non-flooding span stops at the flood window in a real watcher
+FM_TEST_COMPLETE

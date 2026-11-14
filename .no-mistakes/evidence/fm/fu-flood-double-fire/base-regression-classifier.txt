@@ -1,0 +1,9 @@
+=== classifier test slice 9 on base d369eee1 ===
+not ok - the same flood episode was announced twice; the second span replayed a truncated seed: noisy: seed-episode appended more than 5 captain-relevant status lines within 10 minutes, so later lines other than done, failed, blocked and needs-decision are folded into this event
+exit=1
+=== classifier test slice 10 on base d369eee1 ===
+ok - seed growth for a non-flooding span stops at the flood window
+exit=0
+=== classifier test slice 11 on base d369eee1 ===
+not ok - seed '0' did not rank the span past the cap (fold rc 0): checks green [at=1030]: step 7 ; checks green [at=1035]: step 8 ; checks green [at=1040]: step 1
+exit=1

@@ -122,18 +122,27 @@ test_answered_and_reported_gate_is_left_alone() {
   run_check "$dir" t1 test_fm-t1 >/dev/null && fail "an answered gate produced a wake for a stale snapshot"
   [ ! -s "$dir/send.log" ] || fail "an answered gate nudged the worker"
 
-  # A blocked report bound to the run is the worker's own report: firstmate was
-  # already woken by that line, so the check adds nothing.
-  printf 'blocked [at=%s] [key=nm-run-7-lint]: lint gate parked, host lint needed\n' "$now" > "$dir/state/t2.status"
-  run_check "$dir" t2 test_fm-t2 >/dev/null && fail "a run-blocked gate produced a second wake"
+  # A blocked report for this same gate step is the worker's own report:
+  # firstmate was already woken by that line, so the check adds nothing.
+  printf 'blocked [at=%s] [key=nm-run-7-awaiting_approval]: lint gate parked, host lint needed\n' "$now" > "$dir/state/t2.status"
+  run_check "$dir" t2 test_fm-t2 >/dev/null && fail "a gate-step-blocked run produced a second wake"
   [ ! -s "$dir/send.log" ] || fail "a run-blocked worker was nudged"
 
-  # Genuinely unanswered: no report and no answer for this run still wakes.
-  printf 'working [at=%s]: validating\n' "$now" > "$dir/state/t3.status"
-  run_check "$dir" t3 test_fm-t3 >/dev/null || fail "a genuinely unanswered gate did not wake"
-  [ "$(wc -l < "$dir/send.log")" -eq 1 ] || fail "the unanswered gate was not nudged exactly once"
+  # An answer or report for a different step of the same run is not evidence
+  # about this parked gate: it is a live gate and must still wake.
+  printf 'resolved [at=%s] [key=nm-run-7-review]: approved: earlier step\n' "$now" > "$dir/state/t3.status"
+  run_check "$dir" t3 test_fm-t3 >/dev/null || fail "a resolved answer for another step silenced a live gate"
+  [ "$(wc -l < "$dir/send.log")" -eq 1 ] || fail "the gate with a different-step answer was not nudged exactly once"
+  printf 'blocked [at=%s] [key=nm-run-7-lint]: an earlier step was blocked\n' "$now" > "$dir/state/t4.status"
+  run_check "$dir" t4 test_fm-t4 >/dev/null || fail "a blocked report for another step silenced a live gate"
+  [ "$(wc -l < "$dir/send.log")" -eq 2 ] || fail "the gate with a different-step report was not nudged exactly once"
+
+  # Genuinely unanswered: no report and no answer for this gate still wakes.
+  printf 'working [at=%s]: validating\n' "$now" > "$dir/state/t5.status"
+  run_check "$dir" t5 test_fm-t5 >/dev/null || fail "a genuinely unanswered gate did not wake"
+  [ "$(wc -l < "$dir/send.log")" -eq 3 ] || fail "the unanswered gate was not nudged exactly once"
   unset FM_FAKE_CREW_STATE
-  pass "a gate firstmate already answered or the worker already reported is left alone; an unanswered gate still wakes"
+  pass "a gate firstmate already answered or the worker already reported is left alone; a different-step answer or report and a genuinely unanswered gate still wake"
 }
 
 test_cadence_and_non_gate_states() {

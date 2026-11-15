@@ -27,12 +27,14 @@
 //     owns supervision, it asks bin/fm-watcher-beat-check.sh whether
 //     supervision is needed and the beacon is stale, and starts one ordinary
 //     arm only on its alarm exit.
-//   - Delivery is bounded so one persistent alert cannot take a supervisor turn
-//     per watcher cycle: consecutive deliveries of the same actionable event
-//     stop after FM_OMP_WAKE_FOLLOWUP_CEILING (default 6) with one plain
-//     ceiling notice, and a replayed replacement-handoff batch is coalesced
-//     into one session-start summary. Every suppressed row stays durable in the
-//     wake queue for bin/fm-wake-drain.sh, and a captain turn resets the streak.
+//   - Delivery is bounded so a persistent or rotating set of alerts cannot take
+//     a supervisor turn per watcher cycle: a per-event count inside a rolling
+//     window (FM_OMP_WAKE_FOLLOWUP_CEILING, default 6) and a global cap on
+//     consecutive deliveries of any event each emit one plain ceiling notice and
+//     then suppress delivery, so interleaved events cannot reset each other.
+//     A replayed replacement-handoff batch is coalesced into one session-start
+//     summary. Every suppressed row stays durable in the wake queue for
+//     bin/fm-wake-drain.sh, and a captain turn clears both bounds.
 //   - Each delivery journals its close-to-delivery wait as a `delivered` event
 //     in the handoff journal, so bin/fm-handoff-latency.sh can report a flood.
 //   - On session_start a recorded lock owner the shared
@@ -164,14 +166,21 @@ type SessionGeneration = {
   // still delivering the wake it was started for; its bounded retry runs once
   // that delivery settles instead of being skipped by the single-flight guard.
   deferredClose: { message: string; predecessorArmPid: string } | null;
-  // Consecutive follow-up deliveries of the same underlying event. When the
-  // streak passes FM_OMP_WAKE_FOLLOWUP_CEILING the extension stops delivering
-  // that event after one plain ceiling notice, so a persistent alert cannot
-  // occupy a supervisor turn per watcher cycle. A different event line resets
-  // the streak; the durable queue keeps every suppressed row.
-  wakeStreakKey: string;
-  wakeStreakCount: number;
-  wakeCeilingReached: boolean;
+  // Follow-up delivery times inside the rolling window, per actionable event.
+  // A key that recurs past FM_OMP_WAKE_FOLLOWUP_CEILING times in the window
+  // gets one plain ceiling notice and is then suppressed until the window
+  // rolls, so interleaved recurring events cannot each reset the other's
+  // count. A separate count of consecutive deliveries of ANY event caps
+  // rotation outright; only a captain turn clears it. The durable queue keeps
+  // every suppressed row.
+  wakeKeyDeliveries: Map<string, number[]>;
+  wakeKeyCeilingNotified: Set<string>;
+  wakeDeliveryStreak: number;
+  wakeGlobalCeilingReached: boolean;
+  // Wake text this generation already consumed. An idle main raises
+  // before_agent_start and then message_start for the same follow-up, so the
+  // second event must not be mistaken for a captain steer.
+  consumedWakeTexts: Set<string>;
 };
 
 const extensionFile = fileURLToPath(import.meta.url);
@@ -211,10 +220,18 @@ const beatCheckScript = `${fmRoot}/bin/fm-watcher-beat-check.sh`;
 const afkRecord = `${state}/.afk`;
 const repairOnlyHint = "call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
-// Consecutive deliveries of one event before automatic delivery of it stops.
+// Deliveries of one event allowed inside the rolling window before automatic
+// delivery of it stops, and the window length that forgets those deliveries.
 // The watcher keeps appending to the durable queue; only the follow-up turn is
-// bounded, so a persistent alert costs one turn plus one ceiling notice.
+// bounded, so a persistent alert costs one notice plus a bounded number of
+// turns per window.
 const followUpCeiling = positiveInteger("FM_OMP_WAKE_FOLLOWUP_CEILING", 6);
+const followUpWindowMs = positiveInteger("FM_OMP_WAKE_FOLLOWUP_WINDOW_SECS", 300) * 1000;
+// Consecutive deliveries of any event, across keys, allowed before delivery
+// stops entirely. Strictly above the per-event bound so the per-event window
+// still governs a single recurring source while the global cap catches a
+// rotation of distinct ones.
+const globalFollowUpCeiling = followUpCeiling * 2;
 const wakeQueueFile = `${state}/.wake-queue`;
 
 let nextGenerationId = 0;
@@ -400,24 +417,73 @@ function completedActionableLine(output: string): string {
   return newline < 0 ? "" : actionableLine(output.slice(0, newline + 1));
 }
 
-// The identity the follow-up ceiling counts: the wake's actionable reason line,
-// so a stale timer, a parked-gate check, and a turn-ended signal are three
-// different events rather than one bucket.
-function wakeEventKey(message: string): string {
-  const line = message
-    .split(/\r?\n/)
-    .find((candidate) => /^(signal:|stale:|check:|heartbeat($|:))/.test(candidate));
-  return line || message.split(/\r?\n/)[0] || message;
+// The stable identity of an actionable line: its kind plus the subject that
+// persists across repeats of one alert. Volatile detail (a stale timer's idle
+// seconds, a check's changing output) is dropped, so one recurring alert counts
+// as the same event instead of as a new one on every cycle.
+type WakeIdentity = {
+  kind: "signal" | "stale" | "check" | "heartbeat" | "wake";
+  subject: string;
+  line: string;
+  task: string;
+};
+
+function wakeIdentity(message: string): WakeIdentity {
+  const lines = message.split(/\r?\n/);
+  const line =
+    lines.find((candidate) => /^(signal:|stale:|check:|heartbeat($|:))/.test(candidate)) ||
+    lines[0] ||
+    message;
+  if (/^heartbeat($|:)/.test(line)) return { kind: "heartbeat", subject: "heartbeat", line, task: "" };
+  const stale = line.match(/^stale:\s*(\S+)/);
+  if (stale) return { kind: "stale", subject: stale[1], line, task: "" };
+  const signal = line.match(/^signal:?\s*(.*)$/);
+  if (signal) {
+    const files = signal[1].trim().split(/\s+/).filter(Boolean).sort();
+    return { kind: "signal", subject: files.join(" ") || "-", line, task: "" };
+  }
+  const check = line.match(/^check:?\s*(.*)$/);
+  if (check) {
+    const rest = check[1].trim();
+    const colon = rest.indexOf(":");
+    const name = (colon >= 0 ? rest.slice(0, colon) : rest.split(/\s+/)[0] || rest).trim();
+    const detail = colon >= 0 ? rest.slice(colon + 1).trim() : "";
+    const subject = detail.split(/\s+/).find(Boolean) || "";
+    if (name === "gate-parked" && subject) {
+      return { kind: "check", subject: `${name}: ${subject}`, line, task: subject };
+    }
+    return { kind: "check", subject: subject ? `${name}: ${subject}` : name || "check", line, task: "" };
+  }
+  return { kind: "wake", subject: line, line, task: "" };
 }
 
-// The journal identity of a delivered wake: its kind word plus the first token
-// of its subject. fm-handoff-journal-lib.sh resolves a stale window key to its
-// task, so only this pair is needed for a latency record.
-function wakeJournalIdentity(message: string): { kind: string; key: string } {
-  const line = wakeEventKey(message);
-  const match = line.match(/^(signal|stale|check|heartbeat)\b:?\s*([^\s:(]+)?/);
-  if (!match) return { kind: "wake", key: "-" };
-  return { kind: match[1], key: match[1] === "heartbeat" ? "heartbeat" : match[2] || "-" };
+// The identity the follow-up ceiling counts, stable across repeats of one
+// alert so a stale timer, a parked-gate check, and a turn-ended signal are
+// three different events rather than one bucket, and a timer's changing idle
+// seconds do not read as a new event each cycle.
+function wakeEventKey(message: string): string {
+  const identity = wakeIdentity(message);
+  return identity.kind === "wake" ? identity.line : `${identity.kind}: ${identity.subject}`;
+}
+
+// The journal identity of a delivered wake: its kind word plus the stable
+// subject, and the task when the line names one directly. fm-handoff-journal-lib.sh
+// resolves a stale window key to its task, so only this pair is needed for a
+// latency record.
+function wakeJournalIdentity(message: string): { kind: string; key: string; task: string } {
+  const identity = wakeIdentity(message);
+  switch (identity.kind) {
+    case "heartbeat":
+      return { kind: "heartbeat", key: "heartbeat", task: "" };
+    case "signal":
+      return { kind: "signal", key: identity.subject.split(/\s+/)[0] || "-", task: "" };
+    case "stale":
+      return { kind: "stale", key: identity.subject, task: "" };
+    case "check":
+      return { kind: "check", key: identity.subject.replace(/: /g, ":"), task: identity.task };
+    default:
+      return { kind: "wake", key: "-", task: "" };
+  }
 }
 
 // Record how long a wake waited between the watcher close and this delivery in
@@ -431,13 +497,15 @@ function recordDeliveryLatency(pending: PendingActionableClose, message: string)
       "bash",
       [
         "-c",
-        '. "$1"; STATE="$2"; fm_hj_record delivered 0 "$3" "$4" "$5"',
+        '. "$1"; . "$2"; STATE="$3"; task="$7"; [ -n "$task" ] || task=$(fm_hj_task_of_key "$4" "$5"); [ -n "$task" ] || task="-"; fm_hj_record delivered 0 "$4" "$5" "$6" "$task"',
         "fm-hj-delivered",
         `${fmRoot}/bin/fm-handoff-journal-lib.sh`,
+        `${fmRoot}/bin/fm-classify-lib.sh`,
         state,
         identity.kind,
         identity.key,
         String(Math.floor(pending.observedAt / 1000)),
+        identity.task,
       ],
       { cwd: fmRoot, detached: true, stdio: "ignore", env: bashWithHomeEnv() },
     );
@@ -450,12 +518,22 @@ function recordDeliveryLatency(pending: PendingActionableClose, message: string)
   }
 }
 
-// The one notice that replaces the raw event at the ceiling: it says plainly
-// that automatic delivery of this event stopped, keeps the drain command and
-// its WAKE_ACK_REQUIRED obligation visible, and names how supervision resumes.
-function wakeCeilingNotice(streak: number, event: string): string {
+// The one notice that replaces the raw event at a per-event ceiling: it says
+// plainly that automatic delivery of this event stopped inside the window,
+// keeps the drain command and its WAKE_ACK_REQUIRED obligation visible, and
+// names how supervision resumes.
+function wakeKeyCeilingNotice(count: number, event: string): string {
   return [
-    `FIRSTMATE SUPERVISION FOLLOW-UP CEILING REACHED - this session has taken ${streak} consecutive follow-up wakes for the same event (${event}), so automatic delivery of that event stops here to bound the loop. Queued wakes stay durable: run bin/fm-wake-drain.sh, handle them, and run its exact WAKE_ACK_REQUIRED command. Supervision resumes automatically when a different wake arrives or after the captain's next message.`,
+    `FIRSTMATE SUPERVISION FOLLOW-UP CEILING REACHED - this session has taken ${count} follow-up wakes for the same event (${event}) inside the delivery window, so automatic delivery of that event stops here to bound the loop. Queued wakes stay durable: run bin/fm-wake-drain.sh, handle them, and run its exact WAKE_ACK_REQUIRED command. Supervision resumes after the captain's next message or once the window rolls over.`,
+  ].join("\n");
+}
+
+// The notice for the global bound that catches a rotation of distinct events:
+// one plain notice, then every automatic delivery stops until the captain
+// speaks. The durable drain obligation stays visible.
+function wakeGlobalCeilingNotice(count: number): string {
+  return [
+    `FIRSTMATE SUPERVISION FOLLOW-UP CEILING REACHED - this session has taken ${count} consecutive follow-up wakes since the captain's last message, so automatic delivery of every wake stops here to bound the loop. Queued wakes stay durable: run bin/fm-wake-drain.sh, handle them, and run its exact WAKE_ACK_REQUIRED command. Supervision resumes after the captain's next message.`,
   ].join("\n");
 }
 
@@ -490,9 +568,12 @@ function queuedWakeSummary(): { count: number; ackThrough: number } {
 function coalesceSessionStartPending(pending: PendingActionableClose[]): PendingActionableClose[] {
   if (pending.length <= 1) return pending;
   const reasons: string[] = [];
+  const seen = new Set<string>();
   for (const item of pending) {
-    const reason = wakeEventKey(item.message);
-    if (!reasons.includes(reason)) reasons.push(reason);
+    const key = wakeEventKey(item.message);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    reasons.push(wakeIdentity(item.message).line);
   }
   const shown = reasons.slice(0, 25);
   const omitted = reasons.length - shown.length;
@@ -785,9 +866,11 @@ function createGeneration(): SessionGeneration {
     cleanupFailure: "",
     unconsumedWakes: new Map(),
     deferredClose: null,
-    wakeStreakKey: "",
-    wakeStreakCount: 0,
-    wakeCeilingReached: false,
+    wakeKeyDeliveries: new Map(),
+    wakeKeyCeilingNotified: new Set(),
+    wakeDeliveryStreak: 0,
+    wakeGlobalCeilingReached: false,
+    consumedWakeTexts: new Set(),
   };
 }
 
@@ -946,6 +1029,13 @@ export default function (pi: ExtensionAPI) {
     for (const [token, wake] of owner.unconsumedWakes) {
       if (wake.content !== text) continue;
       owner.unconsumedWakes.delete(token);
+      if (text) {
+        owner.consumedWakeTexts.add(text);
+        if (owner.consumedWakeTexts.size > 8) {
+          const oldest = owner.consumedWakeTexts.values().next().value;
+          if (oldest !== undefined) owner.consumedWakeTexts.delete(oldest);
+        }
+      }
       wake.pending.delivered = true;
       try {
         finishPendingActionable(owner, wake.pending);
@@ -955,12 +1045,17 @@ export default function (pi: ExtensionAPI) {
       }
       return;
     }
-    // Not one of this extension's follow-ups, so the captain just steered. The
-    // follow-up ceiling counts consecutive deliveries since then, so the next
-    // identical event is delivered normally again.
-    owner.wakeStreakKey = "";
-    owner.wakeStreakCount = 0;
-    owner.wakeCeilingReached = false;
+    // An idle main consumes a follow-up at before_agent_start and then raises
+    // message_start with the same text. That second event is the same
+    // consumption, not a captain steer, so it must not clear the delivery
+    // bound the first event's follower is enforcing.
+    if (text && owner.consumedWakeTexts.has(text)) return;
+    // Not one of this extension's follow-ups, so the captain just steered: the
+    // bound counts deliveries since then, so delivery restarts from zero.
+    owner.wakeKeyDeliveries.clear();
+    owner.wakeKeyCeilingNotified.clear();
+    owner.wakeDeliveryStreak = 0;
+    owner.wakeGlobalCeilingReached = false;
   }
 
   function confirmHandlingDelivery(recovery: { generation: string; watcherPid: string }): {
@@ -1158,21 +1253,38 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           const message = restoration.failure ? `${pending.message}\n\n${restoration.failure}` : pending.message;
-          // Count consecutive deliveries of this same event. Past the ceiling a
-          // persistent alert no longer takes a supervisor turn per watcher
-          // cycle: one plain ceiling notice goes out in place of the event, and
-          // every later delivery of it is suppressed here. The durable queue is
-          // untouched either way, so the supervisor's drain still presents
-          // every suppressed row and its acknowledgement still clears them.
+          // Bound delivery so a persistent or rotating set of recurring alerts
+          // cannot take one supervisor turn per watcher cycle. Each event is
+          // counted inside a rolling window, so interleaving distinct events
+          // cannot reset one another; independently, the total consecutive
+          // deliveries since the captain last spoke are capped. A suppressed
+          // record is settled here, but its durable queue row is untouched, so
+          // the drain still presents it and its acknowledgement still clears it.
           const eventKey = wakeEventKey(pending.message);
-          if (owner.wakeStreakKey !== eventKey) {
-            owner.wakeStreakKey = eventKey;
-            owner.wakeStreakCount = 0;
-            owner.wakeCeilingReached = false;
+          const now = Date.now();
+          const recent = (owner.wakeKeyDeliveries.get(eventKey) ?? []).filter(
+            (at) => now - at < followUpWindowMs,
+          );
+          let notice = "";
+          let globalNotice = false;
+          let suppress = false;
+          if (owner.wakeGlobalCeilingReached) {
+            suppress = true;
+          } else if (owner.wakeDeliveryStreak >= globalFollowUpCeiling) {
+            globalNotice = true;
+            notice = wakeGlobalCeilingNotice(owner.wakeDeliveryStreak + 1);
+          } else if (recent.length >= followUpCeiling) {
+            if (owner.wakeKeyCeilingNotified.has(eventKey)) {
+              suppress = true;
+            } else {
+              notice = wakeKeyCeilingNotice(recent.length + 1, eventKey);
+            }
+          } else {
+            owner.wakeKeyCeilingNotified.delete(eventKey);
+            recent.push(now);
           }
-          owner.wakeStreakCount += 1;
-          const pastCeiling = owner.wakeStreakCount > followUpCeiling;
-          if (pastCeiling && owner.wakeCeilingReached) {
+          owner.wakeKeyDeliveries.set(eventKey, recent);
+          if (suppress) {
             settleClaim("delivered");
             pending.delivered = true;
             try {
@@ -1185,7 +1297,7 @@ export default function (pi: ExtensionAPI) {
           }
           const delivered = await deliverActionableWake(
             owner,
-            pastCeiling ? wakeCeilingNotice(owner.wakeStreakCount, eventKey) : message,
+            notice || message,
             pending,
             restoration.recovery,
           );
@@ -1196,7 +1308,12 @@ export default function (pi: ExtensionAPI) {
           }
           // Only a delivered notice closes the event: a failed one is retried
           // by the next identical close instead of suppressing silently.
-          if (pastCeiling) owner.wakeCeilingReached = true;
+          owner.wakeDeliveryStreak += 1;
+          if (globalNotice) {
+            owner.wakeGlobalCeilingReached = true;
+          } else if (notice) {
+            owner.wakeKeyCeilingNotified.add(eventKey);
+          }
           recordDeliveryLatency(pending, message);
           const awaitingConsumption = owner.unconsumedWakes.has(pending.token);
           if (awaitingConsumption && !generationIsLive(owner)) {

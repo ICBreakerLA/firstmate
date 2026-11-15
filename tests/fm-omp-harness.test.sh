@@ -35,11 +35,12 @@
 #      slot, reclaims a provably stale session lock on session_start, delivers
 #      a wake such a child stranded, and otherwise arms from its idle reconcile
 #      only on a stale beacon with supervision needed.
-#   9. The watch extension bounds repeated delivery: consecutive wakes for the
-#      same event stop after FM_OMP_WAKE_FOLLOWUP_CEILING with one ceiling
-#      notice, a replayed handoff batch arrives as one summary wake, and every
-#      delivery is journaled for bin/fm-handoff-latency.sh. Suppressed rows stay
-#      durable in the wake queue.
+#   9. The watch extension bounds repeated delivery: wakes for the same event
+#      stop after FM_OMP_WAKE_FOLLOWUP_CEILING inside the rolling window, and a
+#      rotation of distinct recurring events trips the global cap; each bound
+#      sends one ceiling notice. A replayed handoff batch arrives as one summary
+#      wake, and every delivery is journaled for bin/fm-handoff-latency.sh.
+#      Suppressed rows stay durable in the wake queue.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -655,7 +656,7 @@ install_omp_extension_fixture() {  # <repo>
   cp "$ROOT/.omp/extensions/fm-primary-turnend-guard.ts" "$ROOT/.omp/extensions/fm-primary-omp-watch.ts" "$repo/.omp/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$ROOT/.pi/extensions/lib/fm-sessionstart-supervisor.mjs" "$repo/.pi/extensions/lib/"
   cp "$ROOT/bin/fm-operational-input.sh" "$ROOT/bin/fm-supervision-engine-lib.sh" "$repo/bin/"
-  cp "$ROOT/bin/fm-handoff-journal-lib.sh" "$repo/bin/"
+  cp "$ROOT/bin/fm-handoff-journal-lib.sh" "$ROOT/bin/fm-classify-lib.sh" "$repo/bin/"
   chmod +x "$repo/bin/fm-operational-input.sh"
   printf '{"name":"typebox","type":"module","exports":"./index.js"}\n' > "$repo/node_modules/typebox/package.json"
   printf 'export const Type = { Object(p) { return { type: "object", properties: p }; } };\n' > "$repo/node_modules/typebox/index.js"
@@ -1594,11 +1595,11 @@ ack_home_queue() {  # <home>
 }
 
 # One persistent alert must not take a supervisor turn per watcher cycle. Past a
-# bounded number of consecutive deliveries of the same event the extension sends
-# one plain ceiling notice instead, suppresses every later delivery of that
-# event, and leaves every durable queue row to the supervisor's drain. The
-# close-to-delivery wait is journaled for each delivered wake so a future flood
-# is measurable.
+# bounded number of deliveries of the same event inside the rolling window the
+# extension sends one plain ceiling notice instead, suppresses every later
+# delivery of that event until the window rolls, and leaves every durable queue
+# row to the supervisor's drain. The close-to-delivery wait is journaled for
+# each delivered wake so a future flood is measurable.
 test_watch_extension_bounds_repeated_wakes_and_journals_latency() {
   local repo home log out status
   repo="$TMP_ROOT/watch-ceiling/repo"; home="$TMP_ROOT/watch-ceiling/home"; log="$TMP_ROOT/watch-ceiling/arm.log"
@@ -1649,7 +1650,11 @@ while (Date.now() < deadline) {
   if (sent.length > consumed) {
     const item = sent[consumed];
     consumed += 1;
+    // An idle main consumes at before_agent_start and then raises
+    // message_start with the same text: both drive consumption, and the second
+    // must not be read as a captain steer that clears the bound.
     await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: item.m }, {});
+    await handlers.get("message_start")({ type: "message_start", message: { role: "user", content: item.m } }, {});
   } else {
     await sleep(50);
   }
@@ -1667,8 +1672,8 @@ if (sent.length !== 3) throw new Error(`deliveries continued past the ceiling: $
 if (!ceilings[0].m.includes("bin/fm-wake-drain.sh") || !ceilings[0].m.includes("WAKE_ACK_REQUIRED")) {
   throw new Error(`the ceiling notice dropped the durable drain obligation: ${ceilings[0].m}`);
 }
-// A different event or a captain turn resets the streak; this run has neither,
-// so suppression must survive every later identical close.
+// This run never has a captain turn, so suppression must survive every later
+// identical close even though both consumption events fire for each wake.
 await sleep(1500);
 if (sent.length !== 3) throw new Error(`a suppressed event was delivered again: ${JSON.stringify(sent)}`);
 let journal = "";
@@ -1695,6 +1700,174 @@ EOF
   [ "$(wc -l < "$home/state/.wake-queue")" -eq 9 ] || fail "the ceiling dropped durable queue rows: $(cat "$home/state/.wake-queue")"
   ack_home_queue "$home"
   pass ".omp watch extension: a repeated wake stops after the follow-up ceiling, keeps every queue row, and journals close-to-delivery latency"
+}
+
+# The observed flood interleaved one stale wake, one gate-parked check, and one
+# turn-ended signal. A per-event consecutive counter resets on every different
+# event, so it never bounds that rotation; the per-event rolling window plus the
+# global cap must. Three keys cycle with volatile stale detail, the bound trips
+# exactly once, and every durable row remains for the drain.
+test_watch_extension_bounds_interleaved_recurring_wakes() {
+  local repo home log out status
+  repo="$TMP_ROOT/watch-interleave/repo"; home="$TMP_ROOT/watch-interleave/home"; log="$TMP_ROOT/watch-interleave/arm.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+n=$(grep -c '^arm=' "$FM_ARM_LOG")
+seq=$(( $(cat "${FM_HOME:?}/state/.queue-seq" 2>/dev/null || echo 0) + 1 ))
+printf '%s\n' "$seq" > "$FM_HOME/state/.queue-seq"
+printf '%s\t%s\tcheck\tinterleave-%s\trecurring\n' "$(date +%s)" "$seq" "$$" >> "$FM_HOME/state/.wake-queue"
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-%s\n' "$$" "$n"
+sleep 0.2
+case $(( n % 3 )) in
+  1) printf 'check: gate-parked: t1 parked at awaiting_approval\n' ;;
+  2) printf 'stale: test:fm-t2 (idle %ss, possible wedge)\n' "$n" ;;
+  0) printf 'signal: fm-t3.turn-ended\n' ;;
+esac
+exit 0
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_WAKE_FOLLOWUP_CEILING=2 FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
+const home = process.env.FM_HOME;
+writeFileSync(`${home}/state/.lock`, `${process.pid}\n`);
+const handlers = new Map(); let tool = null; const sent = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool(t) { tool = t; },
+  sendUserMessage(m, o) { sent.push({ m, o }); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const armRows = () => existsSync(process.env.FM_ARM_LOG)
+  ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").filter(Boolean) : [];
+await tool.execute();
+let consumed = 0;
+const deadline = Date.now() + 25000;
+while (Date.now() < deadline) {
+  if (sent.length > consumed) {
+    const item = sent[consumed];
+    consumed += 1;
+    await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: item.m }, {});
+    await handlers.get("message_start")({ type: "message_start", message: { role: "user", content: item.m } }, {});
+  } else {
+    await sleep(50);
+  }
+  if (armRows().length >= 9 && sent.length >= 5) {
+    await sleep(1500);
+    break;
+  }
+}
+if (armRows().length < 9) throw new Error(`the fixture did not run its cycles: ${armRows().join(" | ")}`);
+const raws = sent.filter((item) => /WATCHER WAKE: (check|stale|signal|heartbeat)/.test(item.m));
+const ceilings = sent.filter((item) => item.m.includes("FOLLOW-UP CEILING REACHED"));
+if (raws.length !== 4) throw new Error(`expected 4 raw deliveries before the bound, saw ${raws.length}: ${JSON.stringify(sent)}`);
+if (ceilings.length !== 1) throw new Error(`the interleaved rotation did not trip exactly one notice, saw ${ceilings.length}: ${JSON.stringify(sent)}`);
+if (sent.length !== 5) throw new Error(`deliveries continued past the bound: ${JSON.stringify(sent)}`);
+if (!ceilings[0].m.includes("bin/fm-wake-drain.sh") || !ceilings[0].m.includes("WAKE_ACK_REQUIRED")) {
+  throw new Error(`the ceiling notice dropped the durable drain obligation: ${ceilings[0].m}`);
+}
+await sleep(1500);
+if (sent.length !== 5) throw new Error(`a suppressed interleaved wake was delivered again: ${JSON.stringify(sent)}`);
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension interleaved wake bound: $out"
+  [ -z "$out" ] || fail "omp watch extension interleaved wake bound test printed output: $out"
+  [ "$(wc -l < "$home/state/.wake-queue")" -eq "$(wc -l < "$log")" ] \
+    || fail "the bound dropped durable queue rows: $(cat "$home/state/.wake-queue")"
+  pass ".omp watch extension: an interleaved rotation of recurring wakes trips the bound once and keeps every queue row"
+}
+
+# A delivered wake must journal the identity the latency report needs for the
+# two flood sources the intent names: a gate-parked check keeps its task and a
+# colon-bearing gate key, and a volatile stale line resolves its window to the
+# task with a stable key.
+test_watch_extension_journals_flood_source_identity() {
+  local repo home log out status
+  repo="$TMP_ROOT/watch-journal-id/repo"; home="$TMP_ROOT/watch-journal-id/home"; log="$TMP_ROOT/watch-journal-id/arm.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+n=$(grep -c '^arm=' "$FM_ARM_LOG")
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-%s\n' "$$" "$n"
+sleep 0.2
+case "$n" in
+  1) printf 'check: gate-parked: t1 parked at awaiting_approval\n' ;;
+  2) printf 'stale: test:fm-t2 (idle 130s, possible wedge)\n' ;;
+esac
+exit 0
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
+const home = process.env.FM_HOME;
+writeFileSync(`${home}/state/.lock`, `${process.pid}\n`);
+const handlers = new Map(); let tool = null; const sent = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool(t) { tool = t; },
+  sendUserMessage(m, o) { sent.push({ m, o }); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+await tool.execute();
+let consumed = 0;
+const deadline = Date.now() + 20000;
+while (Date.now() < deadline && sent.length < 2) {
+  if (sent.length > consumed) {
+    const item = sent[consumed];
+    consumed += 1;
+    await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: item.m }, {});
+    await handlers.get("message_start")({ type: "message_start", message: { role: "user", content: item.m } }, {});
+  } else {
+    await sleep(50);
+  }
+}
+let delivered = [];
+for (let i = 0; i < 100; i += 1) {
+  const path = `${home}/state/.handoff-journal`;
+  const journal = existsSync(path) ? readFileSync(path, "utf8") : "";
+  delivered = journal.split("\n").filter((row) => row.split("\t")[2] === "delivered");
+  if (delivered.length >= 2) break;
+  await sleep(50);
+}
+if (delivered.length < 2) throw new Error(`deliveries were not journaled: ${JSON.stringify(delivered)}`);
+const gate = delivered.map((row) => row.split("\t")).find((fields) => fields[5] === "check");
+const stale = delivered.map((row) => row.split("\t")).find((fields) => fields[5] === "stale");
+if (!gate) throw new Error(`the gate-parked delivery was not journaled: ${JSON.stringify(delivered)}`);
+if (gate[3] !== "t1" || gate[6] !== "gate-parked:t1") {
+  throw new Error(`the gate-parked journal identity is wrong: ${gate.join(" | ")}`);
+}
+if (!/^[0-9]+$/.test(gate[7] ?? "")) throw new Error(`the gate delivery lost its close epoch: ${gate.join(" | ")}`);
+if (!stale) throw new Error(`the stale delivery was not journaled: ${JSON.stringify(delivered)}`);
+if (stale[3] !== "t2" || stale[6] !== "test:fm-t2") {
+  throw new Error(`the stale journal identity is wrong: ${stale.join(" | ")}`);
+}
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension flood-source journal identity: $out"
+  [ -z "$out" ] || fail "omp watch extension flood-source journal identity test printed output: $out"
+  pass ".omp watch extension: gate-parked and stale deliveries journal a stable key and their task"
 }
 
 # A replacement handoff can hold one record per watcher close that fired while
@@ -1799,4 +1972,6 @@ test_watch_extension_keeps_the_arm_without_the_file_or_with_off
 test_watch_extension_replays_a_host_only_boundary_across_replacement
 test_watch_extension_delivers_a_split_host_close_whole
 test_watch_extension_bounds_repeated_wakes_and_journals_latency
+test_watch_extension_bounds_interleaved_recurring_wakes
+test_watch_extension_journals_flood_source_identity
 test_watch_extension_coalesces_a_session_start_batch

@@ -1,0 +1,11 @@
+== base gate-park with the change's new test file ==
+ok - a new parked gate sends one reattach nudge and wakes firstmate with the gate and owner
+ok - a parked gate is nudged once per interval, again after it, and an identical re-park after it is nudged
+ok - a slow current-state read is bounded and never wakes or nudges
+ok - a gate whose run the worker already reported is left alone; another run's decision does not count
+not ok - an answered gate produced a wake for a stale snapshot
+
+== base handoff-latency with the change's new test file ==
+ok - the drain journals a presented row at presentation and an acked row at acknowledgement
+ok - the report derives each stage's gap from the status log and the journal
+not ok - the close->delivered gap (240s to 180s) is wrong: handoff latency  window=24h00m  now=22:56:18

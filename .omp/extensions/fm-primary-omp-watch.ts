@@ -565,8 +565,9 @@ function queuedWakeSummary(): { count: number; ackThrough: number } {
 // At session start the replacement handoff can hold one record per watcher
 // close that fired while main was away. Replaying them one at a time gives main
 // one turn per row, which is the wake-delivery flood after a session outage.
-// Coalesce them into one summary wake: the reasons are listed in the message,
-// the durable queue still holds every row, and the summary names the ack-through
+// Coalesce them into one summary wake: the distinct reasons are listed in the
+// message up to a bounded count (the rest are reported only as omitted, and the
+// durable queue still holds every row), and the summary names the ack-through
 // sequence that clears them. The coalesced record replaces the originals in the
 // handoff so a later shutdown replays the summary, never the whole batch.
 function coalesceSessionStartPending(pending: PendingActionableClose[]): PendingActionableClose[] {

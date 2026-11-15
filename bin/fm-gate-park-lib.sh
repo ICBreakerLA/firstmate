@@ -37,6 +37,8 @@
 #     The key's verb comes from the one order-aware decision fold, and every
 #     check is a positive match, so unreadable state fails open and the wake
 #     is delivered anyway.
+#   - when a `done` or `failed` terminal retired the key, the task declared its
+#     own end, so the parked snapshot is stale and nothing is added.
 # The nudge is the one mechanical reaction and carries no decision: it never
 # answers, approves, merges or discards, and tells the worker so. It is sent at
 # most once per interval per task, the last-nudge time being the only record, so

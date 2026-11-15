@@ -1,5 +1,5 @@
 Supervision host: on for this home (`config/supervision-host-off` turns it off; [`supervision-host.md`](../supervision-host.md) owns the design).
-{claude} The Stop hook runs the supervision host in the arm's place, and everything above still holds with these additions:
+{claude} The Stop/StopFailure hook runs the supervision host in the arm's place, and everything above still holds with these additions:
 {cursor} The `stop` hook park runs the supervision host in the arm's place, and everything above still holds with these additions:
 {agy} The Stop-hook park runs the supervision host in the arm's place, and everything above still holds with these additions:
 {opencode} The OpenCode TUI plugin runs the supervision host in the arm's place, and everything above still holds with these additions:

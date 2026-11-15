@@ -26,10 +26,10 @@ set -u
 WATCH="$ROOT/bin/fm-watch.sh"
 
 WINDOW="test:fm-wedge"
-KEY="test_fm-wedge"
 LOCAL_MODEL="qwen3.8-27b-gsq-rco"
 
 TMP_ROOT=$(fm_test_tmproot fm-watch-local-model-defer-tests)
+KEY=$(watch_window_key "$WINDOW")
 
 # The /slots body the stub server would answer with: the profile's single slot,
 # whose is_processing is the one wire signal the probe reads.
@@ -53,14 +53,14 @@ run_local_model_round() {  # <name> <model> <slots-url>
 
   out="$dir/round.out"
   FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=1 FM_PAUSE_RESURFACE_SECS=999 \
-    FM_LOCAL_LLM_SLOTS_URL="$slots_url" \
+    FM_LOCAL_LLM_SLOTS_URL="$slots_url" FM_TEST_WEDGE_KEY="$KEY" \
     bash -c '
       # shellcheck disable=SC1090,SC1091
       . "$1"
       wake() { :; }
       fm_backend_agent_state() { printf alive; }
-      wedge_timer_check "test:fm-wedge" "$FM_STATE_OVERRIDE/.stale-since-test_fm-wedge" \
-        "non-terminal stale" "$FM_STATE_OVERRIDE/.wedge-escalations-test_fm-wedge" wedge \
+      wedge_timer_check "test:fm-wedge" "$FM_STATE_OVERRIDE/.stale-since-$FM_TEST_WEDGE_KEY" \
+        "non-terminal stale" "$FM_STATE_OVERRIDE/.wedge-escalations-$FM_TEST_WEDGE_KEY" wedge \
         local-model-pane
     ' _ "$WATCH" > "$out" 2>&1 \
     || fail "the wedge timer failed on the local-model lane ($name): $(cat "$out")"

@@ -16,12 +16,19 @@
 # THE RULE. For one idle task, read the authoritative current state
 # ($FM_CREW_STATE_BIN). Only a `parked` verdict from a run step is a gate. For
 # a task not nudged within the last FM_GATE_PARK_NUDGE_SECS (default 300):
-#   - when the task's own status log holds no open needs-decision bound to that
-#     run, nobody has been told: send the worker the reattach nudge (read the
-#     gate with `no-mistakes axi run` and report it as its brief says) and wake
+#   - when the task's own status log holds no open needs-decision and no open
+#     blocked record bound to that run, and no resolved answer for that run,
+#     nobody has been told: send the worker the reattach nudge (read the gate
+#     with `no-mistakes axi run` and report it as its brief says) and wake
 #     firstmate;
 #   - when the worker already reported it, firstmate was already woken by that
-#     status line, so nothing is added.
+#     status line, so nothing is added;
+#   - when firstmate already answered it, the closed decision is the record
+#     that the gate is done, and the run-step snapshot is only stale: nothing
+#     is added. The snapshot refreshes only when the worker touches the run,
+#     so a resolved answer is the positive evidence that a parked verdict is
+#     no longer a live gate. Every check is a positive match, so unreadable
+#     state fails open and the wake is delivered anyway.
 # The nudge is the one mechanical reaction and carries no decision: it never
 # answers, approves, merges or discards, and tells the worker so. It is sent at
 # most once per interval per task, the last-nudge time being the only record, so
@@ -103,7 +110,16 @@ gate_park_check() {
   done
   case "$run" in ''|*[[:space:]]*) return 1 ;; esac
   [ -n "$gate" ] || gate=gate
-  if status_has_open_needs_decision "$statusf" "$run"; then
+  # Only a gate nobody has reported and nobody has answered is news. The
+  # worker's own open needs-decision or blocked line bound to this run means
+  # firstmate was already woken when it landed; a resolved answer for this run
+  # means firstmate decided it, and the run-step snapshot can still name the
+  # gate because it refreshes only when the worker touches the run. Every check
+  # above is a positive match, so an unreadable status log fails open and the
+  # wake still goes out.
+  if status_has_open_needs_decision "$statusf" "$run" \
+    || status_has_open_run_blocker "$statusf" "$run" \
+    || status_has_resolved_run_decision "$statusf" "$run"; then
     return 1
   fi
   : > "$STATE/.gate-park-nudged-$key" || return 1

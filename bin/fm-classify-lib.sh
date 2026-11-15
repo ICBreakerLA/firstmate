@@ -1158,6 +1158,46 @@ EOF
   return 1
 }
 
+# 0 when the fold still holds an OPEN `blocked` record bound to <run-id> (key
+# shape `nm-<run-id>-<step>`). A blocked line is the worker's own report that
+# this run's gate needs action, so the parked-gate check has nothing to add: the
+# status line already woke firstmate when it landed. Unreadable, missing or
+# symlinked status files answer 1, the caller's "no positive report" answer.
+status_has_open_run_blocker() {  # <status-file> <run-id>
+  local run=${2-} open line key verb
+  [ -n "$run" ] || return 1
+  open=$(status_open_decisions "$1")
+  [ -n "$open" ] || return 1
+  while IFS= read -r line; do
+    key=${line%%$'\t'*}
+    verb=${line#*$'\t'}; verb=${verb%%$'\t'*}
+    [ "$verb" = blocked ] || continue
+    case "$key" in "nm-$run-"?*) return 0 ;; esac
+  done <<EOF
+$open
+EOF
+  return 1
+}
+
+# 0 when the status log records a `resolved` answer bound to <run-id> (key shape
+# `nm-<run-id>-<step>`). fm-send --resolve-key appends that closing line at
+# answer time, and the run-step snapshot a parked verdict comes from refreshes
+# only when the worker touches the run, so a snapshot still naming an
+# already-answered gate is stale evidence, not a live gate. Unreadable, missing
+# or symlinked status files answer 1, which fails open for a caller that wakes.
+status_has_resolved_run_decision() {  # <status-file> <run-id>
+  local run=${2-} line key verb
+  [ -n "$run" ] || return 1
+  [ -f "$1" ] && [ -r "$1" ] && [ ! -L "$1" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    status_line_verb "$line" verb
+    [ "$verb" = resolved ] || continue
+    key=$(_fm_decision_key "$line") || continue
+    case "$key" in "nm-$run-"?*) return 0 ;; esac
+  done < "$1"
+  return 1
+}
+
 # 0, printing `blocked` or `needs-decision`, when the task's newest status event
 # is a line of that verb that the worker wrote and that is still open: its key
 # must hold that verb in status_own_open_decisions, so a supervisor-reserved key

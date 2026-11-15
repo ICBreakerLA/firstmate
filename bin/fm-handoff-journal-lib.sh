@@ -14,9 +14,13 @@
 # with O_APPEND so concurrent writers interleave whole lines:
 #   v1 <TAB> epoch-ms <TAB> event <TAB> task <TAB> seq <TAB> kind <TAB> key <TAB> queued-epoch
 # event is `presented` (the drain printed the row to firstmate), `acked` (the
-# acknowledgement consumed it) or `nudge` (the watcher sent a worker the
-# reattach nudge for a parked run). queued-epoch is the row's own epoch, so a
-# reader needs no join against a queue that no longer holds the row.
+# acknowledgement consumed it), `nudge` (the watcher sent a worker the reattach
+# nudge for a parked run) or `delivered` (the omp primary extension handed the
+# wake to main). For `delivered` the queued-epoch field carries the epoch at
+# which the watcher close was observed, not a queue row's epoch, so a reader can
+# measure how long the wake waited between the close and its delivery.
+# queued-epoch is otherwise the row's own epoch, so a reader needs no join
+# against a queue that no longer holds the row.
 #
 # INERT. A failed append is discarded: losing a diagnostic line must never
 # change what the drain or the watcher does or how it exits. The file is

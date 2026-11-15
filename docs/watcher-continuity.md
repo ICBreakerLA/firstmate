@@ -55,6 +55,12 @@ omp also re-checks liveness while idle and recovers a resumed session without a 
 - Otherwise the tick, while the session owns the lock and no away/quiet daemon owns supervision, asks `bin/fm-watcher-beat-check.sh` whether supervision is needed and the beacon is stale, and starts one ordinary arm only on its alarm exit.
 - On `session_start`, a lock the shared `fm_session_lock_pid_blocks_reclaim` verdict proves reclaimable is taken through `bin/fm-lock.sh`, so a resumed omp process arms before its first prompt; a live owner or an unreadable record is left untouched.
 
+omp also bounds delivery so one persistent alert cannot occupy a supervisor turn per watcher cycle:
+
+- After `FM_OMP_WAKE_FOLLOWUP_CEILING` consecutive deliveries of the same actionable line ([configuration](configuration.md#environment-variables) owns its default), one plain ceiling notice replaces the event and later deliveries of it are suppressed until a different event arrives or the captain's next message. Every suppressed row stays durable in `state/.wake-queue`, and the notice keeps `bin/fm-wake-drain.sh` and its `WAKE_ACK_REQUIRED` obligation visible.
+- A replacement handoff that holds more than one record is coalesced into one session-start summary wake naming every reason and the queue's highest sequence, so a batch replayed after a session outage is one turn rather than one per row.
+- Each delivery appends a `delivered` event to `state/.handoff-journal`, so `bin/fm-handoff-latency.sh` reports the watcher-close-to-delivery wait.
+
 The extension header owns the exact gating and ordering.
 
 ### Pi session replacement

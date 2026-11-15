@@ -108,6 +108,34 @@ test_reported_gate_is_left_alone() {
   pass "a gate whose run the worker already reported is left alone; another run's decision does not count"
 }
 
+test_answered_and_reported_gate_is_left_alone() {
+  local dir now
+  dir=$(make_case gp-answered); make_send_stub "$dir" >/dev/null
+  now=$(date +%s)
+  export FM_FAKE_CREW_STATE="$PARKED_HUMAN"
+
+  # firstmate answered this run's gate: fm-send --resolve-key appended the
+  # closing resolved line. The run-step snapshot still says parked because the
+  # worker has not touched the run, so the stale verdict must not wake.
+  printf 'needs-decision [at=%s] [key=nm-run-7-awaiting_approval]: ask-user findings=a file=/x\n' "$now" > "$dir/state/t1.status"
+  printf 'resolved [at=%s] [key=nm-run-7-awaiting_approval]: approved: your answer\n' "$now" >> "$dir/state/t1.status"
+  run_check "$dir" t1 test_fm-t1 >/dev/null && fail "an answered gate produced a wake for a stale snapshot"
+  [ ! -s "$dir/send.log" ] || fail "an answered gate nudged the worker"
+
+  # A blocked report bound to the run is the worker's own report: firstmate was
+  # already woken by that line, so the check adds nothing.
+  printf 'blocked [at=%s] [key=nm-run-7-lint]: lint gate parked, host lint needed\n' "$now" > "$dir/state/t2.status"
+  run_check "$dir" t2 test_fm-t2 >/dev/null && fail "a run-blocked gate produced a second wake"
+  [ ! -s "$dir/send.log" ] || fail "a run-blocked worker was nudged"
+
+  # Genuinely unanswered: no report and no answer for this run still wakes.
+  printf 'working [at=%s]: validating\n' "$now" > "$dir/state/t3.status"
+  run_check "$dir" t3 test_fm-t3 >/dev/null || fail "a genuinely unanswered gate did not wake"
+  [ "$(wc -l < "$dir/send.log")" -eq 1 ] || fail "the unanswered gate was not nudged exactly once"
+  unset FM_FAKE_CREW_STATE
+  pass "a gate firstmate already answered or the worker already reported is left alone; an unanswered gate still wakes"
+}
+
 test_cadence_and_non_gate_states() {
   local dir
   dir=$(make_case gp-cadence); make_send_stub "$dir" >/dev/null
@@ -194,6 +222,7 @@ test_new_gate_nudges_once_and_wakes
 test_nudge_is_bounded_to_one_per_interval
 test_slow_state_read_is_bounded
 test_reported_gate_is_left_alone
+test_answered_and_reported_gate_is_left_alone
 test_cadence_and_non_gate_states
 test_failed_send_still_wakes_and_says_so
 test_watcher_wakes_on_idle_parked_worker

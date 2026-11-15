@@ -3988,6 +3988,7 @@ FM_ARM_ATTACH_POLL=0.5  # seconds between checks while fm-watch-arm follows an a
 FM_OPENCODE_ARM_READY_TIMEOUT_MS=12000   # milliseconds the OpenCode primary watcher plugin waits for an arm attempt to report started, healthy, wake, or failure; default 35000 on Windows; independent of the fresh-child arm backstop
 FM_PI_ARM_READY_TIMEOUT_MS=12000   # milliseconds the Pi watcher extension waits for a successor arm to report started or attached; default 35000 on Windows; independent of the fresh-child arm backstop
 FM_OMP_WATCH_RECONCILE_SECS=60   # seconds between omp watch extension idle liveness rechecks: deliver a dead-but-unclosed arm's stranded actionable, or start one arm on a stale beacon while supervision is needed (docs/watcher-continuity.md "Pi, omp, and OpenCode adapters")
+FM_OMP_WAKE_FOLLOWUP_CEILING=6   # consecutive omp deliveries of the same actionable wake before automatic delivery of it stops with one ceiling notice; suppressed rows stay durable in the wake queue (docs/watcher-continuity.md "Pi, omp, and OpenCode adapters")
 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=1000   # milliseconds Pi/OpenCode wait for an unready successor arm to exit before abandoning retries
 FM_WATCH_REARM_RETRY_BASE_MS=250   # Pi/OpenCode adapter base delay for continuity restoration retries
 FM_WATCH_REARM_RETRY_MAX_MS=4000   # Pi/OpenCode adapter cap for exponential continuity retry delay

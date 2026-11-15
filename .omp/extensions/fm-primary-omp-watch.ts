@@ -27,6 +27,14 @@
 //     owns supervision, it asks bin/fm-watcher-beat-check.sh whether
 //     supervision is needed and the beacon is stale, and starts one ordinary
 //     arm only on its alarm exit.
+//   - Delivery is bounded so one persistent alert cannot take a supervisor turn
+//     per watcher cycle: consecutive deliveries of the same actionable event
+//     stop after FM_OMP_WAKE_FOLLOWUP_CEILING (default 6) with one plain
+//     ceiling notice, and a replayed replacement-handoff batch is coalesced
+//     into one session-start summary. Every suppressed row stays durable in the
+//     wake queue for bin/fm-wake-drain.sh, and a captain turn resets the streak.
+//   - Each delivery journals its close-to-delivery wait as a `delivered` event
+//     in the handoff journal, so bin/fm-handoff-latency.sh can report a flood.
 //   - On session_start a recorded lock owner the shared
 //     fm_session_lock_pid_blocks_reclaim verdict proves stale is reclaimed
 //     through bin/fm-lock.sh before arming, so a resumed process re-arms with
@@ -119,6 +127,10 @@ type PendingActionableClose = {
   message: string;
   predecessorArmPid: string;
   delivered?: true;
+  // Epoch ms at which the watcher close that produced this wake was observed.
+  // The delivery path logs close-to-delivery latency from it; a record loaded
+  // from an older handoff without the field simply has no latency to log.
+  observedAt?: number;
 };
 
 type ReplacementActionableHandoff = {
@@ -152,6 +164,14 @@ type SessionGeneration = {
   // still delivering the wake it was started for; its bounded retry runs once
   // that delivery settles instead of being skipped by the single-flight guard.
   deferredClose: { message: string; predecessorArmPid: string } | null;
+  // Consecutive follow-up deliveries of the same underlying event. When the
+  // streak passes FM_OMP_WAKE_FOLLOWUP_CEILING the extension stops delivering
+  // that event after one plain ceiling notice, so a persistent alert cannot
+  // occupy a supervisor turn per watcher cycle. A different event line resets
+  // the streak; the durable queue keeps every suppressed row.
+  wakeStreakKey: string;
+  wakeStreakCount: number;
+  wakeCeilingReached: boolean;
 };
 
 const extensionFile = fileURLToPath(import.meta.url);
@@ -191,6 +211,11 @@ const beatCheckScript = `${fmRoot}/bin/fm-watcher-beat-check.sh`;
 const afkRecord = `${state}/.afk`;
 const repairOnlyHint = "call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
+// Consecutive deliveries of one event before automatic delivery of it stops.
+// The watcher keeps appending to the durable queue; only the follow-up turn is
+// bounded, so a persistent alert costs one turn plus one ceiling notice.
+const followUpCeiling = positiveInteger("FM_OMP_WAKE_FOLLOWUP_CEILING", 6);
+const wakeQueueFile = `${state}/.wake-queue`;
 
 let nextGenerationId = 0;
 let nextHandoffId = 0;
@@ -375,6 +400,132 @@ function completedActionableLine(output: string): string {
   return newline < 0 ? "" : actionableLine(output.slice(0, newline + 1));
 }
 
+// The identity the follow-up ceiling counts: the wake's actionable reason line,
+// so a stale timer, a parked-gate check, and a turn-ended signal are three
+// different events rather than one bucket.
+function wakeEventKey(message: string): string {
+  const line = message
+    .split(/\r?\n/)
+    .find((candidate) => /^(signal:|stale:|check:|heartbeat($|:))/.test(candidate));
+  return line || message.split(/\r?\n/)[0] || message;
+}
+
+// The journal identity of a delivered wake: its kind word plus the first token
+// of its subject. fm-handoff-journal-lib.sh resolves a stale window key to its
+// task, so only this pair is needed for a latency record.
+function wakeJournalIdentity(message: string): { kind: string; key: string } {
+  const line = wakeEventKey(message);
+  const match = line.match(/^(signal|stale|check|heartbeat)\b:?\s*([^\s:(]+)?/);
+  if (!match) return { kind: "wake", key: "-" };
+  return { kind: match[1], key: match[1] === "heartbeat" ? "heartbeat" : match[2] || "-" };
+}
+
+// Record how long a wake waited between the watcher close and this delivery in
+// the home's handoff journal, so a future flood is measurable rather than
+// anecdotal. Diagnostic only: a failure never changes supervision behavior.
+function recordDeliveryLatency(pending: PendingActionableClose, message: string): void {
+  if (pending.observedAt === undefined) return;
+  const identity = wakeJournalIdentity(message);
+  try {
+    const child = spawn(
+      "bash",
+      [
+        "-c",
+        '. "$1"; STATE="$2"; fm_hj_record delivered 0 "$3" "$4" "$5"',
+        "fm-hj-delivered",
+        `${fmRoot}/bin/fm-handoff-journal-lib.sh`,
+        state,
+        identity.kind,
+        identity.key,
+        String(Math.floor(pending.observedAt / 1000)),
+      ],
+      { cwd: fmRoot, detached: true, stdio: "ignore", env: bashWithHomeEnv() },
+    );
+    child.on("error", () => {
+      // Diagnostic only.
+    });
+    child.unref();
+  } catch {
+    // Diagnostic only.
+  }
+}
+
+// The one notice that replaces the raw event at the ceiling: it says plainly
+// that automatic delivery of this event stopped, keeps the drain command and
+// its WAKE_ACK_REQUIRED obligation visible, and names how supervision resumes.
+function wakeCeilingNotice(streak: number, event: string): string {
+  return [
+    `FIRSTMATE SUPERVISION FOLLOW-UP CEILING REACHED - this session has taken ${streak} consecutive follow-up wakes for the same event (${event}), so automatic delivery of that event stops here to bound the loop. Queued wakes stay durable: run bin/fm-wake-drain.sh, handle them, and run its exact WAKE_ACK_REQUIRED command. Supervision resumes automatically when a different wake arrives or after the captain's next message.`,
+  ].join("\n");
+}
+
+// The durable queue's highest unacknowledged sequence and row count. A
+// session-start summary names the sequence so the supervisor's ack-through
+// clears every row it coalesced; an unreadable queue simply reports none.
+function queuedWakeSummary(): { count: number; ackThrough: number } {
+  let rows: string[] = [];
+  try {
+    rows = readFileSync(wakeQueueFile, "utf8").split(/\r?\n/);
+  } catch {
+    return { count: 0, ackThrough: 0 };
+  }
+  let count = 0;
+  let ackThrough = 0;
+  for (const row of rows) {
+    const fields = row.split("\t");
+    if (fields.length < 5 || !/^[0-9]+$/.test(fields[1])) continue;
+    count += 1;
+    ackThrough = Math.max(ackThrough, Number(fields[1]));
+  }
+  return { count, ackThrough };
+}
+
+// At session start the replacement handoff can hold one record per watcher
+// close that fired while main was away. Replaying them one at a time gives main
+// one turn per row, which is the wake-delivery flood after a session outage.
+// Coalesce them into one summary wake: the reasons are listed in the message,
+// the durable queue still holds every row, and the summary names the ack-through
+// sequence that clears them. The coalesced record replaces the originals in the
+// handoff so a later shutdown replays the summary, never the whole batch.
+function coalesceSessionStartPending(pending: PendingActionableClose[]): PendingActionableClose[] {
+  if (pending.length <= 1) return pending;
+  const reasons: string[] = [];
+  for (const item of pending) {
+    const reason = wakeEventKey(item.message);
+    if (!reasons.includes(reason)) reasons.push(reason);
+  }
+  const shown = reasons.slice(0, 25);
+  const omitted = reasons.length - shown.length;
+  const queue = queuedWakeSummary();
+  const ackLine = queue.ackThrough > 0
+    ? `The durable queue's highest unacknowledged sequence is ${queue.ackThrough}, so run bin/fm-wake-drain.sh and then its exact WAKE_ACK_REQUIRED command at that sequence (a newer wake raises it; use the number the drain prints).`
+    : "The durable queue still holds whatever this session has not acknowledged; run bin/fm-wake-drain.sh and its exact WAKE_ACK_REQUIRED command.";
+  const summary: PendingActionableClose = {
+    version: 1,
+    token: `${process.pid}-${Date.now()}-${++replacementCoordinator.nextTokenId}`,
+    // The reason lines stay verbatim and unindented: an actionable line at the
+    // start of a line is also what validatePendingActionable accepts, so a
+    // summary reloaded after a replacement still validates.
+    message: [
+      `FIRSTMATE SESSION-START WAKE SUMMARY: ${pending.length} watcher wakes were pending when this session started; they are coalesced into this one turn instead of one turn per wake.`,
+      "",
+      ...shown,
+      ...(omitted > 0 ? [`${omitted} further wake reason(s) are not listed; bin/fm-wake-drain.sh presents every queued row.`] : []),
+      "",
+      ackLine,
+    ].join("\n"),
+    predecessorArmPid: pending[0].predecessorArmPid,
+    observedAt: Math.min(...pending.map((item) => item.observedAt ?? Date.now())),
+  };
+  try {
+    writeReplacementHandoff([summary]);
+  } catch {
+    // The in-memory summary still bounds this session's deliveries; a failed
+    // persistence is retried through the ordinary replacement handoff path.
+  }
+  return [summary];
+}
+
 // An away record, never quiet mode's (bin/fm-afk-contract.sh mode owns that
 // reading): a record whose mode cannot be read as quiet reads as away.
 function awayRecordPresent(): boolean {
@@ -469,6 +620,7 @@ function createPendingActionable(message: string, predecessorArmPid: string): Pe
     token: `${process.pid}-${Date.now()}-${++replacementCoordinator.nextTokenId}`,
     message,
     predecessorArmPid,
+    observedAt: Date.now(),
   };
 }
 
@@ -484,7 +636,10 @@ function validatePendingActionable(value: unknown): PendingActionableClose {
     typeof (value as { predecessorArmPid?: unknown }).predecessorArmPid !== "string" ||
     !/^[0-9]*$/.test((value as { predecessorArmPid: string }).predecessorArmPid) ||
     ((value as { delivered?: unknown }).delivered !== undefined &&
-      (value as { delivered?: unknown }).delivered !== true)
+      (value as { delivered?: unknown }).delivered !== true) ||
+    ((value as { observedAt?: unknown }).observedAt !== undefined &&
+      (typeof (value as { observedAt?: unknown }).observedAt !== "number" ||
+        !Number.isFinite((value as { observedAt: number }).observedAt)))
   ) {
     throw new Error(`invalid omp replacement actionable handoff at ${actionableHandoff}`);
   }
@@ -630,6 +785,9 @@ function createGeneration(): SessionGeneration {
     cleanupFailure: "",
     unconsumedWakes: new Map(),
     deferredClose: null,
+    wakeStreakKey: "",
+    wakeStreakCount: 0,
+    wakeCeilingReached: false,
   };
 }
 
@@ -797,6 +955,12 @@ export default function (pi: ExtensionAPI) {
       }
       return;
     }
+    // Not one of this extension's follow-ups, so the captain just steered. The
+    // follow-up ceiling counts consecutive deliveries since then, so the next
+    // identical event is delivered normally again.
+    owner.wakeStreakKey = "";
+    owner.wakeStreakCount = 0;
+    owner.wakeCeilingReached = false;
   }
 
   function confirmHandlingDelivery(recovery: { generation: string; watcherPid: string }): {
@@ -994,12 +1158,46 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           const message = restoration.failure ? `${pending.message}\n\n${restoration.failure}` : pending.message;
-          const delivered = await deliverActionableWake(owner, message, pending, restoration.recovery);
+          // Count consecutive deliveries of this same event. Past the ceiling a
+          // persistent alert no longer takes a supervisor turn per watcher
+          // cycle: one plain ceiling notice goes out in place of the event, and
+          // every later delivery of it is suppressed here. The durable queue is
+          // untouched either way, so the supervisor's drain still presents
+          // every suppressed row and its acknowledgement still clears them.
+          const eventKey = wakeEventKey(pending.message);
+          if (owner.wakeStreakKey !== eventKey) {
+            owner.wakeStreakKey = eventKey;
+            owner.wakeStreakCount = 0;
+            owner.wakeCeilingReached = false;
+          }
+          owner.wakeStreakCount += 1;
+          const pastCeiling = owner.wakeStreakCount > followUpCeiling;
+          if (pastCeiling && owner.wakeCeilingReached) {
+            settleClaim("delivered");
+            pending.delivered = true;
+            try {
+              finishPendingActionable(owner, pending);
+            } catch (error) {
+              surfaceCleanupFailure(owner, error);
+            }
+            releaseClaim();
+            continue;
+          }
+          const delivered = await deliverActionableWake(
+            owner,
+            pastCeiling ? wakeCeilingNotice(owner.wakeStreakCount, eventKey) : message,
+            pending,
+            restoration.recovery,
+          );
           if (!delivered) {
             settleClaim("failed");
             releaseClaim();
             return;
           }
+          // Only a delivered notice closes the event: a failed one is retried
+          // by the next identical close instead of suppressing silently.
+          if (pastCeiling) owner.wakeCeilingReached = true;
+          recordDeliveryLatency(pending, message);
           const awaitingConsumption = owner.unconsumedWakes.has(pending.token);
           if (awaitingConsumption && !generationIsLive(owner)) {
             // omp accepted the follow-up, then the session was replaced before
@@ -1311,7 +1509,8 @@ export default function (pi: ExtensionAPI) {
       loadFailure = `watcher: FAILED - omp extension could not load a replacement-session actionable wake\n${detail}`;
     }
     const inProcessPending = replacementCoordinator.pending.splice(0);
-    for (const actionable of [...pending, ...inProcessPending]) {
+    // One summary wake for a whole replayed batch, never one turn per row.
+    for (const actionable of coalesceSessionStartPending([...pending, ...inProcessPending])) {
       enqueuePendingActionable(owner, actionable);
     }
     if (owner.pendingActionables.length > 0) {

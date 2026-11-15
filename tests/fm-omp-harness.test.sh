@@ -35,6 +35,11 @@
 #      slot, reclaims a provably stale session lock on session_start, delivers
 #      a wake such a child stranded, and otherwise arms from its idle reconcile
 #      only on a stale beacon with supervision needed.
+#   9. The watch extension bounds repeated delivery: consecutive wakes for the
+#      same event stop after FM_OMP_WAKE_FOLLOWUP_CEILING with one ceiling
+#      notice, a replayed handoff batch arrives as one summary wake, and every
+#      delivery is journaled for bin/fm-handoff-latency.sh. Suppressed rows stay
+#      durable in the wake queue.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -650,6 +655,7 @@ install_omp_extension_fixture() {  # <repo>
   cp "$ROOT/.omp/extensions/fm-primary-turnend-guard.ts" "$ROOT/.omp/extensions/fm-primary-omp-watch.ts" "$repo/.omp/extensions/"
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$ROOT/.pi/extensions/lib/fm-sessionstart-supervisor.mjs" "$repo/.pi/extensions/lib/"
   cp "$ROOT/bin/fm-operational-input.sh" "$ROOT/bin/fm-supervision-engine-lib.sh" "$repo/bin/"
+  cp "$ROOT/bin/fm-handoff-journal-lib.sh" "$repo/bin/"
   chmod +x "$repo/bin/fm-operational-input.sh"
   printf '{"name":"typebox","type":"module","exports":"./index.js"}\n' > "$repo/node_modules/typebox/package.json"
   printf 'export const Type = { Object(p) { return { type: "object", properties: p }; } };\n' > "$repo/node_modules/typebox/index.js"
@@ -1573,6 +1579,197 @@ EOF
   pass ".omp watch extension: a host close split across stream chunks reaches main as one whole follow-up"
 }
 
+# Drain <home>'s durable queue with the real drain, run the exact
+# WAKE_ACK_REQUIRED command it prints, and prove the queue is empty after it.
+ack_home_queue() {  # <home>
+  local home=$1 ack_line seq gen
+  ack_line=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-wake-drain.sh" 2>&1 >"$home/drain.out" | grep '^WAKE_ACK_REQUIRED:' | head -n 1)
+  [ -n "$ack_line" ] || fail "the drain printed no acknowledgement command: $(cat "$home/drain.out")"
+  seq=$(printf '%s\n' "$ack_line" | sed -n 's/.*--ack-through \([0-9][0-9]*\).*/\1/p')
+  gen=$(printf '%s\n' "$ack_line" | sed -n 's/.*--recovery-generation \([A-Za-z0-9._-]*\).*/\1/p')
+  [ -n "$seq" ] && [ -n "$gen" ] || fail "the printed acknowledgement command is unreadable: $ack_line"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-wake-drain.sh" --ack-through "$seq" --recovery-generation "$gen" >/dev/null 2>&1 \
+    || fail "the printed acknowledgement failed"
+  [ ! -s "$home/state/.wake-queue" ] || fail "the acknowledgement left queue rows behind: $(cat "$home/state/.wake-queue")"
+}
+
+# One persistent alert must not take a supervisor turn per watcher cycle. Past a
+# bounded number of consecutive deliveries of the same event the extension sends
+# one plain ceiling notice instead, suppresses every later delivery of that
+# event, and leaves every durable queue row to the supervisor's drain. The
+# close-to-delivery wait is journaled for each delivered wake so a future flood
+# is measurable.
+test_watch_extension_bounds_repeated_wakes_and_journals_latency() {
+  local repo home log out status
+  repo="$TMP_ROOT/watch-ceiling/repo"; home="$TMP_ROOT/watch-ceiling/home"; log="$TMP_ROOT/watch-ceiling/arm.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  # Every arm launch queues one durable row and closes with the same actionable
+  # event, so the fixture reproduces the observed flood: one alert per cycle.
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+n=$(grep -c '^arm=' "$FM_ARM_LOG")
+seq=$(( $(cat "${FM_HOME:?}/state/.queue-seq" 2>/dev/null || echo 0) + 1 ))
+printf '%s\n' "$seq" > "$FM_HOME/state/.queue-seq"
+printf '%s\t%s\tcheck\tceiling-gate:t1\trecurring\n' "$(date +%s)" "$seq" >> "$FM_HOME/state/.wake-queue"
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-%s\n' "$$" "$n"
+if [ "$n" -le 8 ]; then
+  sleep 0.2
+  printf 'check: ceiling-gate t1 parked at awaiting_approval\n'
+  exit 0
+fi
+sleep 30
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_WAKE_FOLLOWUP_CEILING=2 FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
+const home = process.env.FM_HOME;
+writeFileSync(`${home}/state/.lock`, `${process.pid}\n`);
+const handlers = new Map(); let tool = null; const sent = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool(t) { tool = t; },
+  sendUserMessage(m, o) { sent.push({ m, o }); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const armRows = () => existsSync(process.env.FM_ARM_LOG)
+  ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").filter(Boolean)
+  : [];
+await tool.execute();
+let consumed = 0;
+const deadline = Date.now() + 20000;
+while (Date.now() < deadline) {
+  if (sent.length > consumed) {
+    const item = sent[consumed];
+    consumed += 1;
+    await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: item.m }, {});
+  } else {
+    await sleep(50);
+  }
+  if (armRows().length >= 8 && sent.length === 3) {
+    await sleep(1500);
+    break;
+  }
+}
+if (armRows().length < 8) throw new Error(`the fixture did not run its cycles: ${armRows().join(" | ")}`);
+const events = sent.filter((item) => item.m.includes("WATCHER WAKE: check: ceiling-gate"));
+const ceilings = sent.filter((item) => item.m.includes("FOLLOW-UP CEILING REACHED"));
+if (events.length !== 2) throw new Error(`expected exactly 2 raw deliveries before the ceiling, saw ${events.length}: ${JSON.stringify(sent)}`);
+if (ceilings.length !== 1) throw new Error(`expected exactly one ceiling notice, saw ${ceilings.length}: ${JSON.stringify(sent)}`);
+if (sent.length !== 3) throw new Error(`deliveries continued past the ceiling: ${JSON.stringify(sent)}`);
+if (!ceilings[0].m.includes("bin/fm-wake-drain.sh") || !ceilings[0].m.includes("WAKE_ACK_REQUIRED")) {
+  throw new Error(`the ceiling notice dropped the durable drain obligation: ${ceilings[0].m}`);
+}
+// A different event or a captain turn resets the streak; this run has neither,
+// so suppression must survive every later identical close.
+await sleep(1500);
+if (sent.length !== 3) throw new Error(`a suppressed event was delivered again: ${JSON.stringify(sent)}`);
+let journal = "";
+for (let i = 0; i < 60; i += 1) {
+  const path = `${home}/state/.handoff-journal`;
+  journal = existsSync(path) ? readFileSync(path, "utf8") : "";
+  if (journal.split("\n").filter((row) => row.split("\t")[2] === "delivered").length >= 2) break;
+  await sleep(50);
+}
+const delivered = journal.split("\n").filter((row) => row.split("\t")[2] === "delivered");
+if (delivered.length < 2) throw new Error(`deliveries were not journaled: ${journal}`);
+const fields = delivered[0].split("\t");
+if (fields[0] !== "v1" || fields[5] !== "check" || fields[6] !== "ceiling-gate") {
+  throw new Error(`the delivered journal row lost its wake identity: ${delivered[0]}`);
+}
+if (!/^[0-9]+$/.test(fields[7] ?? "")) throw new Error(`the delivered journal row lost its close epoch: ${delivered[0]}`);
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension follow-up ceiling: $out"
+  [ -z "$out" ] || fail "omp watch extension ceiling test printed output: $out"
+  [ "$(wc -l < "$home/state/.wake-queue")" -eq 9 ] || fail "the ceiling dropped durable queue rows: $(cat "$home/state/.wake-queue")"
+  ack_home_queue "$home"
+  pass ".omp watch extension: a repeated wake stops after the follow-up ceiling, keeps every queue row, and journals close-to-delivery latency"
+}
+
+# A replacement handoff can hold one record per watcher close that fired while
+# main was away. They must arrive as one summary wake, never one turn per row,
+# and the summary must name the queue's sequence so ack-through still clears
+# every row it coalesced.
+test_watch_extension_coalesces_a_session_start_batch() {
+  local repo home log out status
+  repo="$TMP_ROOT/watch-coalesce/repo"; home="$TMP_ROOT/watch-coalesce/home"; log="$TMP_ROOT/watch-coalesce/arm.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state/extensions/omp-primary-watch"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-1\n' "$$"
+sleep 30
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  cat > "$home/state/extensions/omp-primary-watch/session-replacement-actionable.json" <<'JSON'
+{"version":2,"pending":[
+{"version":1,"token":"1-1-1","message":"check: gate-parked: t1 parked at awaiting_approval","predecessorArmPid":""},
+{"version":1,"token":"1-1-2","message":"stale: test:fm-t2 idle","predecessorArmPid":""},
+{"version":1,"token":"1-1-3","message":"signal: t3 done","predecessorArmPid":""}]}
+JSON
+  {
+    printf '1\t1\tcheck\tgate-parked:t1:run-7\tpayload\n'
+    printf '2\t2\tstale\ttest:fm-t2\tpayload\n'
+    printf '3\t3\tsignal\tt3\tpayload\n'
+  } >> "$home/state/.wake-queue"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
+const home = process.env.FM_HOME;
+writeFileSync(`${home}/state/.lock`, `${process.pid}\n`);
+const handoff = `${home}/state/extensions/omp-primary-watch/session-replacement-actionable.json`;
+const handlers = new Map(); let tool = null; const sent = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool(t) { tool = t; },
+  sendUserMessage(m, o) { sent.push({ m, o }); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+await tool.execute();
+for (let i = 0; i < 100 && sent.length < 1; i += 1) await new Promise((r) => setTimeout(r, 50));
+await new Promise((r) => setTimeout(r, 1500));
+if (sent.length !== 1) throw new Error(`expected one summary wake for the replayed batch, saw ${sent.length}: ${JSON.stringify(sent)}`);
+const summary = sent[0].m;
+if (!summary.includes("SESSION-START WAKE SUMMARY: 3 watcher wakes")) throw new Error(`no coalesced summary: ${summary}`);
+for (const needle of ["check: gate-parked: t1 parked at awaiting_approval", "stale: test:fm-t2 idle", "signal: t3 done"]) {
+  if (!summary.includes(needle)) throw new Error(`the summary omitted '${needle}': ${summary}`);
+}
+if (!summary.includes("highest unacknowledged sequence is 3")) throw new Error(`the summary did not name the acknowledgement sequence: ${summary}`);
+// The coalesced record replaced the batch in the handoff, so a later shutdown
+// replays the summary rather than every original row.
+const stored = JSON.parse(readFileSync(handoff, "utf8"));
+if (stored.pending.length !== 1 || !stored.pending[0].message.includes("SESSION-START WAKE SUMMARY")) {
+  throw new Error(`the original batch was not replaced by its summary: ${JSON.stringify(stored)}`);
+}
+await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: sent[0].m }, {});
+await handlers.get("session_shutdown")({}, {});
+if (existsSync(handoff)) throw new Error("a consumed summary must not ride the replacement handoff");
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension session-start coalescing: $out"
+  [ -z "$out" ] || fail "omp watch extension session-start coalescing test printed output: $out"
+  ack_home_queue "$home"
+  pass ".omp watch extension: a replayed batch arrives as one summary wake and its sequence still clears the queue"
+}
+
 test_detection_anchored_name_and_marker_precedence
 test_lock_identity_and_liveness_classification
 test_bun_package_omp_identity_unit_shapes
@@ -1601,3 +1798,5 @@ test_watch_extension_runs_the_supervision_host quiet
 test_watch_extension_keeps_the_arm_without_the_file_or_with_off
 test_watch_extension_replays_a_host_only_boundary_across_replacement
 test_watch_extension_delivers_a_split_host_close_whole
+test_watch_extension_bounds_repeated_wakes_and_journals_latency
+test_watch_extension_coalesces_a_session_start_batch

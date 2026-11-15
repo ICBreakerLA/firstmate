@@ -15,7 +15,9 @@
 #
 # The key is spend-limited and is read on the host only, from the key file. It
 # is sent to curl on stdin (never in an argument), never enters the sandbox,
-# and is never printed, logged or recorded. The sandbox holds only
+# and is never printed, logged or recorded. Its value must be the OpenRouter
+# key charset (A-Za-z0-9._-), because that value is interpolated into the curl
+# config. The sandbox holds only
 # FM_OPENROUTER_AUTH_PLACEHOLDER, and a sandbox-scoped sbx custom secret lets
 # the proxy substitute the real key on requests to openrouter.ai.
 #
@@ -24,7 +26,10 @@
 #                            ~/.config/firstmate/openrouter-worker-key)
 #   FM_OPENROUTER_API_URL    the host-side API base (default
 #                            https://openrouter.ai/api)
+# Operator tunables:
 #   FM_OPENROUTER_PROBE_TIMEOUT   seconds one probe is given (default 30)
+#   FM_OPENROUTER_CHAIN_BUDGET    seconds the whole chain probe may take
+#                                 (default 120)
 # This tree never changes the global sbx policy and never passes the key's
 # value to any sbx argument; the proxy reads it on demand from the key file.
 
@@ -71,8 +76,9 @@ fm_openrouter_key_file() {
 
 # fm_openrouter_key
 # Prints the key (whitespace stripped); a clear refusal on stderr and 1 when
-# the file is absent, a symlink, or empty. The key is only ever printed to a
-# command substitution that stores it in a variable.
+# the file is absent, a symlink, empty, or holds a character outside the
+# OpenRouter key charset. The key is only ever printed to a command
+# substitution that stores it in a variable.
 fm_openrouter_key() {
   local f key
   f=$(fm_openrouter_key_file)
@@ -85,6 +91,12 @@ fm_openrouter_key() {
     echo "error: the OpenRouter key file $f is empty" >&2
     return 1
   }
+  case "$key" in
+  *[!A-Za-z0-9._-]*)
+    echo "error: the OpenRouter key file $f holds a character outside A-Za-z0-9._-, so the key is refused" >&2
+    return 1
+    ;;
+  esac
   printf '%s\n' "$key"
 }
 
@@ -97,18 +109,20 @@ fm_openrouter_valid_id() {
   return 1
 }
 
-# fm_openrouter_curl <key> <method> <path> [json-body]
+# fm_openrouter_curl <key> <method> <path> [json-body] [max-time]
 # One host-side request. The key, URL and body travel as a curl config on
 # stdin so nothing secret is in an argument. Prints the HTTP status, or 000.
 # A GET prints the response body first, then the status on its own last line.
+# max-time defaults to FM_OPENROUTER_PROBE_TIMEOUT.
 fm_openrouter_curl() {
-  local key=$1 method=$2 path=$3 body=${4-} esc cfg
+  local key=$1 method=$2 path=$3 body=${4-} max_time=${5-} esc cfg
   command -v curl >/dev/null 2>&1 || {
     echo "error: the OpenRouter profile needs curl" >&2
     return 1
   }
+  [ -n "$max_time" ] || max_time=${FM_OPENROUTER_PROBE_TIMEOUT:-30}
   cfg=$(printf 'url = "%s%s"\nheader = "Authorization: Bearer %s"\nsilent\nmax-time = %s\nwrite-out = "\\n%%{http_code}"\n' \
-    "$(fm_openrouter_api_url)" "$path" "$key" "${FM_OPENROUTER_PROBE_TIMEOUT:-30}")
+    "$(fm_openrouter_api_url)" "$path" "$key" "$max_time")
   if [ "$method" = POST ]; then
     esc=$(printf '%s' "$body" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
     cfg=$cfg$(printf '\nheader = "Content-Type: application/json"\ndata = "%s"\noutput = "/dev/null"' "$esc")
@@ -120,9 +134,10 @@ fm_openrouter_curl() {
 # The HTTP status of a 1-token request to the model that only a zero-retention
 # endpoint may answer (provider zdr true, data_collection deny).
 fm_openrouter_status() {
-  local key=$1 id=$2 out
+  local key=$1 id=$2 max_time=${3-} out
   out=$(fm_openrouter_curl "$key" POST /v1/chat/completions \
-    "{\"model\":\"$id\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"provider\":{\"zdr\":true,\"data_collection\":\"deny\"}}") || out=
+    "{\"model\":\"$id\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"provider\":{\"zdr\":true,\"data_collection\":\"deny\"}}" \
+    "$max_time") || out=
   out=${out##*$'\n'}
   case "$out" in
   [0-9][0-9][0-9]) printf '%s\n' "$out" ;;
@@ -159,12 +174,14 @@ fm_openrouter_chain() {
 # fm_openrouter_resolve <config-dir> <or:model>
 # Resolves the spawn's model to one answering OpenRouter id and prints
 # "<alias>\t<id>" (the alias is empty for a direct id). Refusals, before
-# anything exists: an unusable model id, a :free id, a missing key, an alias
-# with no chain, a key OpenRouter rejects, or no model of the chain answering a
-# 1-token zero-retention request. Each chain id is probed in order and a 402,
-# 429, 5xx, "no endpoint" or timeout skips to the next.
+# anything exists: an unusable model id, a :free id, a missing key, no curl,
+# an alias with no chain, a key OpenRouter rejects, a spent chain probe
+# budget, or no model of the chain answering a 1-token zero-retention request.
+# Each chain id is probed in order within FM_OPENROUTER_CHAIN_BUDGET seconds
+# and a 402, 429, 5xx, "no endpoint" or timeout skips to the next.
 fm_openrouter_resolve() {
   local cfg=$1 arg=${2#"$FM_OPENROUTER_PREFIX"} alias='' ids id key code tried=''
+  local budget deadline remaining max_time probe_time budget_spent=''
   if [ -z "$arg" ]; then
     echo "error: the OpenRouter profile needs a model after or: (or:<vendor>/<model>, or an alias from config/openrouter-models.list)" >&2
     return 1
@@ -196,8 +213,26 @@ fm_openrouter_resolve() {
     }
   done <<<"$ids"
   key=$(fm_openrouter_key) || return 1
+  command -v curl >/dev/null 2>&1 || {
+    echo "error: the OpenRouter profile needs curl to probe the model chain; install it and retry" >&2
+    return 1
+  }
+  budget=${FM_OPENROUTER_CHAIN_BUDGET:-120}
+  case "$budget" in '' | *[!0-9]*) budget=120 ;; esac
+  [ "$budget" -gt 0 ] || budget=120
+  budget=$((10#$budget))
+  max_time=${FM_OPENROUTER_PROBE_TIMEOUT:-30}
+  case "$max_time" in '' | *[!0-9]*) max_time=30 ;; esac
+  [ "$max_time" -gt 0 ] || max_time=30
+  deadline=$((SECONDS + budget))
   while IFS= read -r id; do
-    code=$(fm_openrouter_status "$key" "$id")
+    remaining=$((deadline - SECONDS))
+    if [ "$remaining" -le 0 ]; then
+      budget_spent=1
+      break
+    fi
+    if [ "$max_time" -gt "$remaining" ]; then probe_time=$remaining; else probe_time=$max_time; fi
+    code=$(fm_openrouter_status "$key" "$id" "$probe_time")
     case "$code" in
     200)
       printf '%s\t%s\n' "$alias" "$id"
@@ -210,6 +245,10 @@ fm_openrouter_resolve() {
     esac
     tried="${tried:+$tried, }$id (HTTP $code)"
   done <<<"$ids"
+  if [ -n "$budget_spent" ]; then
+    echo "error: the ${budget}s chain probe budget (FM_OPENROUTER_CHAIN_BUDGET) ran out before every id was tried: $tried" >&2
+    return 1
+  fi
   echo "error: no OpenRouter model answered a 1-token zero-retention request: $tried; a zero-retention endpoint, credit, or capacity is missing" >&2
   return 1
 }
@@ -237,12 +276,32 @@ fm_openrouter_env() {
 }
 
 # fm_openrouter_usage
-# The key's lifetime spend in USD from /api/v1/key, or nothing when it cannot
-# be read. Used before and after a task for its cost line.
+# The key's lifetime spend in USD from the top-level data.usage field of
+# /api/v1/key (or the first usage field when jq is absent), or nothing when it
+# cannot be read. Used before and after a task for its cost line.
 fm_openrouter_usage() {
-  local key out
+  local key out body v
   key=$(fm_openrouter_key 2>/dev/null) || return 1
   out=$(fm_openrouter_curl "$key" GET /v1/key) || return 1
   [ "${out##*$'\n'}" = 200 ] || return 1
-  printf '%s\n' "$out" | tr -d '\n' | sed -n 's/.*"usage"[[:space:]]*:[[:space:]]*\([0-9][0-9.eE+-]*\).*/\1/p' | head -n 1 | grep . || return 1
+  body=${out%$'\n'*}
+  if command -v jq >/dev/null 2>&1; then
+    v=$(printf '%s' "$body" | jq -er '.data.usage | numbers' 2>/dev/null) || return 1
+    printf '%s\n' "$v"
+    return 0
+  fi
+  printf '%s' "$body" | tr -d '\n' | awk '
+    {
+      if (match($0, /"usage"[[:space:]]*:[[:space:]]*[^,}[:space:]]+/)) {
+        s = substr($0, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*/, "", s)
+        if (s ~ /^[0-9][0-9.eE+-]*$/) {
+          print s
+          found = 1
+        }
+        exit
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  '
 }

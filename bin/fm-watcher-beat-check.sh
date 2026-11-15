@@ -12,8 +12,9 @@
 # polled for that long and nothing is delivering wakes. bin/fm-guard.sh already
 # prints a banner, but only when some other guarded command happens to run, so an
 # idle session can sit unwatched for hours; this check has no such dependency and
-# is meant to be run by something that ticks independently of the watcher (a cron
-# entry or the away daemon). A registered state/*.check.sh is not enough, because
+# is meant to be run by something that ticks independently of the watcher - the
+# away daemon, or the omp watch extension's idle reconcile between model turns.
+# A registered state/*.check.sh is not enough, because
 # the watcher runs those and cannot report its own absence. It reads the beacon
 # and whether this home needs a watcher at all (bin/fm-supervision-lib.sh), so a
 # home with nothing in flight stays quiet.

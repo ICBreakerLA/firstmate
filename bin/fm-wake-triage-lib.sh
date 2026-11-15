@@ -10,11 +10,15 @@
 #   R1  never emit a stale: for a task with no state/<task>.meta (torn down).
 #       The backbone is meta-backed (recorded_windows), so this guards the
 #       teardown race - a meta removed between the window listing and the emit.
-#   R2  a stale: for a task whose latest status line is a declared wait
-#       (done / paused / blocked-for-captain) backs off exponentially: the next
-#       allow is after double the previous gap, starting at the current gap and
-#       capped at 2 hours (7200s). A new status line or a changed endpoint
-#       (window key) resets the backoff. State:
+#   R2  a stale: for a task standing in a declared wait backs off
+#       exponentially: the next allow is after double the previous gap, starting
+#       at the current gap and capped at 2 hours (7200s). Standing in a wait is
+#       the supervisor's declared-wait read for a pause (status_declared_wait_line,
+#       so a resolved line answering an unrelated decision does not retract it),
+#       or a status outcome that stands as the newest unretracted event (a
+#       captain-held / done / needs-decision / blocked / failed line, even when a
+#       later resolved line answered some other key). A new status line or a
+#       changed endpoint (window key) resets the backoff. State:
 #         state/.wake-backoff-<task>      "<interval> <next-allowed> <key>"
 #         state/.wake-backoff-sig-<task>  the latest status line it was set for
 #   R3  a repeated identical check: result for the same key adds no new wake.
@@ -79,16 +83,28 @@ wake_triage_log() {
   return 0
 }
 
-# R2 predicate: 0 iff <status-file>'s latest status line is a declared wait -
-# done / blocked / needs-decision / failed (captain-relevant) or paused /
-# captain-held. A blank or absent log is not a declared wait.
+# R2 predicate: 0 iff <status-file> is a declared wait, read in two parts.
+# First the shared declared-wait reader the supervisor routes on
+# (status_declared_wait_line: a pause kept across a resolved line for another
+# phase key, or a captain-held line while it is the latest event). Then a
+# status outcome
+# (captain-held / done / needs-decision / blocked / failed, or a legacy captain
+# token) that is still the newest unretracted event - read past a trailing
+# resolved line that answered an unrelated, older decision, because firstmate's
+# answer to a different key is not the worker's state. The outcome check also
+# covers a captain-held line: the shared reader retracts it behind any later
+# event, so an answer for another key must not hide the hold. A blank or absent
+# log is not a declared wait.
 wake_triage_declared_wait() {
   local f=$1 last
+  last=$(status_declared_wait_line "$f" 2>/dev/null || true)
+  [ -n "$last" ] && return 0
   last=$(last_status_line "$f" 2>/dev/null || true)
   [ -n "$last" ] || return 1
-  status_is_paused_or_captain_held "$last" && return 0
   status_is_captain_relevant "$last" && return 0
-  return 1
+  last=$(status_latest_unretracted_event_line "$f" 2>/dev/null || true)
+  [ -n "$last" ] || return 1
+  status_is_captain_relevant "$last" || status_is_captain_held "$last"
 }
 
 # R2 backoff: 0 = allow (and advance the per-task marker), 1 = within backoff.

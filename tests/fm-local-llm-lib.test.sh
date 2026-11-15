@@ -17,10 +17,23 @@ export FM_LOCAL_LLM_URL=http://127.0.0.1:18080
 PATH="$FAKEBIN:$PATH"
 
 # A fake curl: a file holds the models answer, and its absence is a refused
-# connection.
+# connection. curl.delay makes it a slow server; the request's own --max-time
+# still wins, exiting the way curl does when the bound lapses.
 cat >"$FAKEBIN/curl" <<SH
 #!/usr/bin/env bash
 printf '%s\\n' "\$*" >>"$TMP_ROOT/curl.log"
+max= prev=
+for a in "\$@"; do
+  case "\$prev" in --max-time|-m) max=\$a ;; esac
+  prev=\$a
+done
+if [ -f "$TMP_ROOT/curl.delay" ]; then
+  delay=\$(cat "$TMP_ROOT/curl.delay")
+  if [ -n "\$max" ] && [ "\$delay" -gt "\$max" ]; then
+    exit 28
+  fi
+  sleep "\$delay"
+fi
 [ -f "$TMP_ROOT/models.json" ] || exit 7
 cat "$TMP_ROOT/models.json"
 SH
@@ -56,6 +69,30 @@ test_health_accepts_a_server_listing_the_model() {
   fm_local_llm_health || fail "a healthy server must pass"
   assert_contains "$(cat "$TMP_ROOT/curl.log")" "http://127.0.0.1:18080/v1/models" "the models route is checked"
   pass "a server listing the model passes"
+}
+
+test_health_uses_the_default_timeout_and_an_override() {
+  : >"$TMP_ROOT/curl.log"
+  rm -f "$TMP_ROOT/curl.delay"
+  printf '{"data":[{"id":"qwen3.8-27b-gsq-rco"}]}\n' >"$TMP_ROOT/models.json"
+  fm_local_llm_health || fail "a healthy server must pass with the default bound"
+  assert_contains "$(tail -n 1 "$TMP_ROOT/curl.log")" "--max-time 5" "the pre-launch check defaults to 5 seconds"
+  FM_LOCAL_LLM_HEALTH_TIMEOUT=9 fm_local_llm_health || fail "a healthy server must pass with an override"
+  assert_contains "$(tail -n 1 "$TMP_ROOT/curl.log")" "--max-time 9" "the override sets the bound"
+  pass "the health check uses 5 seconds by default and honours the override"
+}
+
+test_health_refuses_an_invalid_timeout() {
+  local out t
+  : >"$TMP_ROOT/curl.log"
+  rm -f "$TMP_ROOT/curl.delay"
+  printf '{"data":[{"id":"qwen3.8-27b-gsq-rco"}]}\n' >"$TMP_ROOT/models.json"
+  for t in 0 00 fast 2.5 -1; do
+    out=$(FM_LOCAL_LLM_HEALTH_TIMEOUT="$t" fm_local_llm_health 2>&1) && fail "the bound '$t' must be refused"
+    assert_contains "$out" "FM_LOCAL_LLM_HEALTH_TIMEOUT must be a positive whole number of seconds, not '$t'" "the refusal names the bad value '$t'"
+  done
+  assert_equals "" "$(cat "$TMP_ROOT/curl.log")" "an invalid bound makes no request"
+  pass "an invalid health bound is refused before any request"
 }
 
 test_env_maps_every_tier_and_carries_no_host_secret() {
@@ -171,7 +208,7 @@ select_case() {
   fi
 }
 reset_world() {
-  rm -f "$TMP_ROOT/models.json" "$CFG/local-llm-start" "$TMP_ROOT/start.count"
+  rm -f "$TMP_ROOT/models.json" "$TMP_ROOT/curl.delay" "$CFG/local-llm-start" "$TMP_ROOT/start.count"
   GPU_BUSY=0
 }
 
@@ -182,6 +219,43 @@ test_select_uses_the_local_model_when_every_check_holds() {
   expect_code 0 "$RC" "a healthy host keeps the local model: $OUT"
   assert_equals "" "$OUT" "no notice when nothing fell back"
   pass "every check holding keeps the local model silently"
+}
+
+test_select_names_an_invalid_health_bound_and_falls_back() {
+  reset_world
+  printf '%s\n' "$SERVER_UP" >"$TMP_ROOT/models.json"
+  FM_LOCAL_LLM_HEALTH_TIMEOUT=0 select_case 1
+  expect_code 1 "$RC" "an invalid bound falls back"
+  assert_contains "$OUT" "FM_LOCAL_LLM_HEALTH_TIMEOUT must be a positive whole number of seconds" "the notice names the variable"
+  assert_contains "$OUT" "using claude-haiku-4-5 (effort low) instead" "the notice names the fallback model"
+  pass "an invalid health bound is named in the fallback notice"
+}
+
+test_select_keeps_the_local_model_when_the_server_is_slow_to_answer() {
+  reset_world
+  printf '%s\n' "$SERVER_UP" >"$TMP_ROOT/models.json"
+  printf '6\n' >"$TMP_ROOT/curl.delay"
+  ! fm_local_llm_health 2>/dev/null || fail "a 6s answer must exceed the pre-launch 5s bound"
+  select_case 1
+  expect_code 0 "$RC" "a server slower than the pre-launch bound is still alive for the dispatch check: $OUT"
+  assert_equals "" "$OUT" "a slow but alive server must not print a fallback notice"
+  pass "a server slower than the pre-launch health bound keeps its dispatch-chosen model"
+}
+
+test_select_starts_a_slow_but_alive_server_without_falling_back() {
+  reset_world
+  cat >"$CFG/start.sh" <<SH
+#!/bin/sh
+echo x >> "$TMP_ROOT/start.count"
+printf '%s\n' '$SERVER_UP' > "$TMP_ROOT/models.json"
+SH
+  chmod +x "$CFG/start.sh"
+  printf '%s\n' "$CFG/start.sh" >"$CFG/local-llm-start"
+  printf '6\n' >"$TMP_ROOT/curl.delay"
+  select_case 1
+  expect_code 0 "$RC" "a server that answers slower than 5s once started is still alive: $OUT"
+  assert_equals "" "$OUT" "a slow but alive started server must not print a fallback notice"
+  pass "the start path applies the dispatch health bound, so a slow server does not fall back"
 }
 
 test_select_checks_in_order_and_names_the_failed_check() {
@@ -291,6 +365,8 @@ test_the_model_id_alone_selects_the_profile
 test_health_refuses_when_the_server_is_not_answering
 test_health_refuses_a_server_without_the_model
 test_health_accepts_a_server_listing_the_model
+test_health_uses_the_default_timeout_and_an_override
+test_health_refuses_an_invalid_timeout
 test_env_maps_every_tier_and_carries_no_host_secret
 test_a_claim_refuses_a_second_and_names_its_task
 test_the_claiming_task_takes_over_and_its_exit_releases
@@ -298,6 +374,9 @@ test_another_task_or_no_claim_is_refused
 test_killing_the_holder_releases_the_claim
 test_a_background_job_without_the_descriptor_does_not_keep_the_claim
 test_select_uses_the_local_model_when_every_check_holds
+test_select_names_an_invalid_health_bound_and_falls_back
+test_select_keeps_the_local_model_when_the_server_is_slow_to_answer
+test_select_starts_a_slow_but_alive_server_without_falling_back
 test_select_checks_in_order_and_names_the_failed_check
 test_select_never_starts_anything_without_the_sandbox
 test_select_starts_the_server_once_then_rechecks

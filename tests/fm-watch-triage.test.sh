@@ -2049,6 +2049,42 @@ test_actionable_signal_survives_a_later_routine_append() {
   pass "a captain event hidden behind a later routine append is still surfaced (queue + exit)"
 }
 
+# The reported duplicate flood alarm, driven through a real watcher: a later span
+# in one 600 s episode starts after a flood prefix larger than the 32 KiB seed
+# window. Replaying only the newest slice undercounts the episode, ranks the
+# span's first line past the cap again, and wakes the captain twice. The seed
+# must replay enough of the prefix that the span stays folded and the poll
+# absorbs instead of exiting on a second noisy wake.
+test_flood_episode_past_the_seed_window_wakes_once() {
+  local dir state fakebin out status_file sig pad i pid
+  dir=$(make_case flood-seed-episode); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; status_file="$state/task.status"
+  pad=$(printf 'x%.0s' $(seq 1 5500))
+  for i in 1 2 3 4 5 6; do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 5))" "$i" "$pad" >> "$status_file"
+  done
+  # The prefix above is the part of the episode the watcher already classified;
+  # the tail below is a later span of the SAME episode.
+  sig=$(seen_sig "$status_file"); printf '%s' "$sig" > "$state/.seen-task_status"
+  [ "$(size_of "$status_file")" -gt 32768 ] \
+    || fail "fixture flood prefix is not past the 32 KiB seed window"
+  for i in 7 8 9 10; do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 5))" "$i" "$pad" >> "$status_file"
+  done
+  # A provably-working crew makes the folded span absorbable, so a correct replay
+  # leaves the watcher alive; the duplicate wake would still exit first.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  watch_bg "$state" "$fakebin" "$out" env FM_STATUS_FLOOD_MAX=5
+  pid=$!
+  wait_poll_cycle "$state" "$pid" \
+    || { reap "$pid"; fail "a later span in the same flood episode raised the noisy wake again"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  ! grep -F "noisy: task" "$state/.wake-queue" 2>/dev/null >/dev/null \
+    || fail "the same flood episode was announced twice: $(cat "$state/.wake-queue")"
+  pass "a later span in a flood past the 32 KiB seed window wakes the captain once"
+}
+
 # A status log only grows: a remote second mate's mirrored parent channel passes a
 # megabyte and thousands of keyed decisions. Deciding whether a newly appended
 # keyed decision is still open must cost the new span, not the log's lifetime.
@@ -2090,6 +2126,126 @@ SH
       || fail "classifying a ${appended}-byte span read ${length} bytes from offset ${start} of a ${prior}-byte history"
   done < "$reads"
   pass "a keyed decision signal reads only the newly appended span, not the whole log"
+}
+
+# A non-flooding span whose prelude is far larger than the starting seed window
+# must not replay the whole prefix: growth stops once the replayed stamps are a
+# full flood window older than the span's first line. Every classification read
+# goes through the span-reader seam, so recording them pins the bound in a real
+# watcher, independent of machine speed.
+test_flood_seed_growth_stays_within_the_flood_window() {
+  local dir state fakebin out status_file reader reads sig pad i pid start length seed_reads=0 offset
+  dir=$(make_case flood-window-bound); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; status_file="$state/task.status"
+  reads="$dir/span-reads"; reader="$dir/recording-span-reader"
+  pad=$(printf 'x%.0s' $(seq 1 2000))
+  # One captain-relevant line a minute: the rolling window holds well under the
+  # default cap, so the episode never becomes noisy and growth must stop on age.
+  for i in $(seq 1 100); do
+    printf 'checks green [at=%s]: step %s %s\n' "$((1000 + i * 60))" "$i" "$pad" >> "$status_file"
+  done
+  sig=$(seen_sig "$status_file"); printf '%s' "$sig" > "$state/.seen-task_status"
+  offset=$(size_of "$status_file")
+  [ "$offset" -gt "$FM_STATUS_FLOOD_SEED_BYTES" ] || fail "fixture prelude is not past the start window"
+  printf 'checks green [at=%s]: span\n' "$((1000 + 101 * 60))" >> "$status_file"
+  cat > "$reader" <<'SH'
+#!/usr/bin/env bash
+printf '%s\t%s\n' "$2" "$3" >> "$FM_TEST_SPAN_READS"
+exec perl -e 'open my $f, "<", $ARGV[0] or exit 1; seek $f, $ARGV[1], 0 or exit 1; defined(read $f, my $b, $ARGV[2]) or exit 1; print $b or exit 1' "$1" "$2" "$3"
+SH
+  chmod +x "$reader"
+  export FM_STATUS_SPAN_READER="$reader" FM_TEST_SPAN_READS="$reads"
+  watch_bg "$state" "$fakebin" "$out"
+  pid=$!
+  wait_for_exit "$pid" 100 || { unset FM_STATUS_SPAN_READER FM_TEST_SPAN_READS; reap "$pid"; fail "watcher did not classify the appended span"; }
+  unset FM_STATUS_SPAN_READER FM_TEST_SPAN_READS
+  [ -s "$reads" ] || fail "the classification made no read through the span reader"
+  while IFS=$(printf '\t') read -r start length; do
+    [ "$start" -lt "$offset" ] || continue
+    seed_reads=$((seed_reads + 1))
+    [ "$start" -gt 0 ] \
+      || fail "a non-flooding span replayed the whole ${offset}-byte prefix"
+    [ "$length" -le "$FM_STATUS_FLOOD_SEED_BYTES" ] \
+      || fail "seed growth read ${length} bytes from offset ${start}, past the ${FM_STATUS_FLOOD_SEED_BYTES}-byte start window"
+  done < "$reads"
+  [ "$seed_reads" -gt 0 ] || fail "the seed was never replayed, so the window bound was not exercised"
+  pass "seed growth for a non-flooding span stops at the flood window in a real watcher"
+}
+
+# Existing flood-cap behavior, driven through a real watcher: the span that first
+# crosses the cap wakes the captain once, and a later non-terminal span of the
+# SAME 600 s episode is folded (the watcher absorbs it) instead of re-announcing
+# the episode. The second round's span starts after the first wake committed its
+# classified offset, so this exercises the live episode dedupe, not a hand-set
+# marker.
+test_flood_episode_wakes_once_live() {
+  local dir state fakebin out status_file i pid wakes
+  dir=$(make_case flood-episode-live); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; status_file="$state/task.status"
+  # Twelve captain-relevant lines inside the 600 s window with a cap of 5: the
+  # first live span crosses the cap and surfaces the episode in one wake (one
+  # watcher exit; the grace rescan may enqueue duplicate rows for that exit).
+  for i in $(seq 1 12); do
+    printf 'checks green [at=%s]: step %s\n' "$((1000 + i * 5))" "$i" >> "$status_file"
+  done
+  watch_bg "$state" "$fakebin" "$out" env FM_STATUS_FLOOD_MAX=5
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "a fresh flooding span did not wake the captain live"; }
+  wakes=$(awk -F '\t' '$3 == "signal" && $4 == "task.status" { n++ } END { print n + 0 }' "$state/.wake-queue")
+  [ "$wakes" -ge 1 ] \
+    || fail "the flood episode was not queued as a signal wake: $(cat "$state/.wake-queue")"
+  # The supervisor consumes that wake between polls: drain and acknowledge it so
+  # the next watcher starts a fresh cycle instead of resurfacing the old rows.
+  ack_stopped_cycle "$state" || fail "could not acknowledge the flood episode wake"
+  # A later span of the same episode, all non-terminal and still inside the
+  # window, must stay folded: a provably-working crew leaves the watcher alive.
+  for i in 13 14 15 16; do
+    printf 'checks green [at=%s]: step %s\n' "$((1000 + i * 5))" "$i" >> "$status_file"
+  done
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+  watch_bg "$state" "$fakebin" "$out" env FM_STATUS_FLOOD_MAX=5
+  pid=$!
+  wait_poll_cycle "$state" "$pid" \
+    || { reap "$pid"; unset FM_FAKE_CREW_STATE; fail "a later non-terminal span of the same flood episode woke the captain again: out=$(cat "$out") queue=$(cat "$state/.wake-queue")"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  [ ! -s "$state/.wake-queue" ] \
+    || fail "a later span of the same flood episode queued another wake: $(cat "$state/.wake-queue")"
+  pass "a live flood episode wakes the captain once and folds a later span"
+}
+
+# A terminal line (done/failed/blocked/needs-decision) appended after a flood
+# episode was already announced must still surface: the cap folds only the
+# non-terminal chatter, so the supervisor gets the real completion. Driven
+# through a real watcher across two rounds of the same status file.
+test_terminal_line_wakes_after_a_folded_episode_live() {
+  local dir state fakebin out status_file i pid wakes
+  dir=$(make_case flood-terminal-live); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; status_file="$state/task.status"
+  for i in $(seq 1 12); do
+    printf 'checks green [at=%s]: step %s\n' "$((1000 + i * 5))" "$i" >> "$status_file"
+  done
+  watch_bg "$state" "$fakebin" "$out" env FM_STATUS_FLOOD_MAX=5
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "a fresh flooding span did not wake the captain live"; }
+  wakes=$(awk -F '\t' '$3 == "signal" && $4 == "task.status" { n++ } END { print n + 0 }' "$state/.wake-queue")
+  [ "$wakes" -ge 1 ] \
+    || fail "the flood episode was not queued as a signal wake: $(cat "$state/.wake-queue")"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the flood episode wake"
+  # The folded episode keeps absorbing chatter, but the terminal completion is
+  # not chatter: it must wake the captain even past the cap.
+  printf 'checks green [at=%s]: step 13\n' "$((1000 + 13 * 5))" >> "$status_file"
+  printf 'done [at=%s]: finished\n' "$((1000 + 14 * 5))" >> "$status_file"
+  watch_bg "$state" "$fakebin" "$out" env FM_STATUS_FLOOD_MAX=5
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "a terminal line after a folded flood episode did not wake the captain"; }
+  wakes=$(awk -F '\t' '$3 == "signal" && $4 == "task.status" { n++ } END { print n + 0 }' "$state/.wake-queue")
+  [ "$wakes" -ge 1 ] \
+    || fail "the terminal line after the folded episode queued no signal wake: $(cat "$state/.wake-queue")"
+  pass "a terminal line still surfaces after a flood episode was folded"
 }
 
 # The captain-reported completion shape of the same masking, end to end.
@@ -2899,6 +3055,95 @@ test_wedge_escalation_marks_demand_deep_inspection_after_threshold() {
   [ "$(cat "$state/.wedge-escalations-$key" 2>/dev/null || echo 0)" = 3 ] || fail "escalation counter did not persist across consecutive rounds"
   unset FM_FAKE_CREW_STATE
   pass "consecutive wedge escalations on the same pane accumulate and demand deep inspection at the threshold"
+}
+
+# The live ladder, not a direct gate call: a crew that delivered a green PR and
+# is held for the captain sits on a static pane, and firstmate's answer to an
+# unrelated, older decision is the newest line in its status log. Before R2 read
+# past that resolved tail, every threshold pass re-armed "possible wedge,
+# escalation N" on the fixed gap and no backoff marker was ever written.
+test_wedge_escalation_backs_off_a_held_delivery_after_a_resolved_answer() {
+  local dir state fakebin out capture_file window key pane_hash sig pid marker interval next
+  local status_f
+  dir=$(make_case wedge-declared-wait-backoff); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-held-delivery"; status_f="$state/held-delivery.status"
+  printf 'idle prompt output' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/held-delivery.meta"
+  printf 'done [at=1794000000]: PR https://example.test/pr/200 checks green\nresolved [at=1794000100] [key=older-decision]: answered by firstmate\n' \
+    > "$status_f"
+  sig=$(seen_sig "$status_f"); printf '%s' "$sig" > "$state/.seen-held-delivery_status"
+  key=$(watch_window_key "$window")
+  pane_hash=$(hash_text "idle prompt output")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  # The delivered crew's run still shows a live pipeline step, so the static
+  # pane is classified provably-working and reaches the wedge ladder.
+  export FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
+
+  # Priming round: first sighting of this stale hash is absorbed and starts the
+  # wedge timer without going through wedge_timer_check.
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher exited on the priming round (should absorb): $(cat "$out")"
+  fi
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the intentional wedge priming stop"
+
+  # Round 1: the crossed threshold emits one escalation and arms R2's marker.
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "the first threshold pass did not escalate the held delivery: $(cat "$out")"
+  grep -F "possible wedge, escalation 1" "$out" >/dev/null \
+    || fail "the first threshold pass did not report escalation 1: $(cat "$out")"
+  [ -e "$state/.wake-backoff-held-delivery" ] \
+    || fail "the live escalation did not arm R2's backoff marker"
+  marker=$(cat "$state/.wake-backoff-held-delivery")
+  ack_stopped_cycle "$state" || fail "could not acknowledge the first wedge escalation"
+
+  # Round 2: the same held delivery re-aged inside the backoff window raises no
+  # second escalation and leaves the marker untouched.
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher exited on a re-aged held delivery inside the R2 window: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || fail "a re-aged held delivery inside the R2 window still woke the supervisor: $(cat "$out")"
+  [ "$(cat "$state/.wake-backoff-held-delivery" 2>/dev/null || true)" = "$marker" ] \
+    || fail "the suppressed recheck rewrote R2's backoff marker"
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the suppressed wedge recheck"
+
+  # Round 3: once the window elapses one recheck is allowed again, and its
+  # interval doubles for the next wait.
+  read -r interval _ next < "$state/.wake-backoff-held-delivery"
+  printf '%s %s %s' "$interval" "$(( $(date +%s) - 1 ))" "$next" \
+    > "$state/.wake-backoff-held-delivery"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "the recheck after the R2 window did not fire: $(cat "$out")"
+  grep -F "possible wedge, escalation 2" "$out" >/dev/null \
+    || fail "the post-window recheck did not report escalation 2: $(cat "$out")"
+  read -r interval _ _ < "$state/.wake-backoff-held-delivery"
+  [ "$interval" = 480 ] || fail "R2 did not double the interval after the allowed recheck (got $interval)"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the post-window wedge recheck"
+  unset FM_FAKE_CREW_STATE
+  pass "the live wedge ladder arms R2 for a held delivery under an older decision's resolved line, suppresses inside the window, and rechecks on the doubled gap"
 }
 
 test_wedge_escalation_resets_when_pane_becomes_active() {
@@ -5428,7 +5673,45 @@ test_wake_triage_gate_decision() {
   [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "a declared-wait stale must be allowed on first sight"
   wake_triage_gate stale "$task" "$key" "stale: x" 240
   [ "$WAKE_TRIAGE_ACTION" = suppress ] || fail "a declared-wait stale within the backoff must be suppressed (R2)"
-  pass "the gate emits working/non-stale wakes (including a no-meta lane) and backs off a declared-wait recheck (R2)"
+  # A delivered outcome still stands while firstmate's answer to an UNRELATED,
+  # older decision is the newest line: the key it closes is not the delivery's
+  # keyless phase, so the gate must read the done line beneath it and back off
+  # exactly as it did before that answer landed.
+  task="delivered"; printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
+  printf 'done [at=1794000000]: PR https://example.test/pr/200 checks green\nresolved [at=1794000100] [key=older-decision]: answered by firstmate\n' \
+    > "$state/$task.status"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "a delivered outcome under an unrelated resolved line must be allowed on first sight"
+  [ -e "$state/.wake-backoff-$task" ] || fail "a delivered outcome under an unrelated resolved line did not arm R2"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = suppress ] || fail "a delivered outcome under an unrelated resolved line must back off (R2)"
+  # A resolved line that closes the outcome's OWN keyless phase does end it: the
+  # task is no longer standing in a wait, so the recheck is emitted at once.
+  task="answered"; printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
+  printf 'done [at=1794000000]: PR https://example.test/pr/200 checks green\nresolved [at=1794000100]: answered by firstmate\n' \
+    > "$state/$task.status"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "an answered delivery must not back off"
+  [ ! -e "$state/.wake-backoff-$task" ] || fail "an answered delivery armed a backoff marker"
+  # A captain-held hold under firstmate's answer to another key is still a
+  # standing wait: the shared declared-wait reader drops captain-held behind any
+  # later event, so R2 must read the held line as the newest unretracted one.
+  task="held-under-answer"; printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
+  printf 'captain-held [key=route]: tracked by route\nresolved [key=older-decision]: answered by firstmate\n' \
+    > "$state/$task.status"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "a captain-held wait under an unrelated resolved line must be allowed on first sight"
+  [ -e "$state/.wake-backoff-$task" ] || fail "a captain-held wait under an unrelated resolved line did not arm R2"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = suppress ] || fail "a captain-held wait under an unrelated resolved line must back off (R2)"
+  # An answer for the hold's own key ends it, so the recheck is emitted at once.
+  task="held-answered"; printf 'window=%s\nkind=ship\n' "$key" > "$state/$task.meta"
+  printf 'captain-held [key=route]: tracked by route\nresolved [key=route]: captain answered\n' \
+    > "$state/$task.status"
+  wake_triage_gate stale "$task" "$key" "stale: x" 240
+  [ "$WAKE_TRIAGE_ACTION" = emit ] || fail "an answered captain-held wait must not back off"
+  [ ! -e "$state/.wake-backoff-$task" ] || fail "an answered captain-held wait armed a backoff marker"
+  pass "the gate emits working/non-stale wakes (including a no-meta lane) and backs off a declared-wait recheck (R2), reading past a resolved line for another key"
 }
 
 # --- opt-in batching (Step 3): hold, flush, and the gate's hold branch --------
@@ -5641,6 +5924,205 @@ EOF
   pass "punctuation, percent escapes and Unicode have distinct stable filename keys"
 }
 
+# A wedge stale-wake append is ordinary transient I/O, so it routes through the
+# same bounded tick guard as the poll-loop ticks: with the durable queue
+# unwritable, the escalation alarms once and the cycle keeps polling instead of
+# exiting 1. The ladder's idle timer stays armed so the next poll retries, and
+# no wake is printed for a row that never reached the queue.
+test_wedge_stale_append_failure_alarms_and_survives() {
+  local dir state fakebin out err capture window key pid cycles alarm
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "wedge stale-wake append failure skipped (root ignores file modes)"
+    return 0
+  fi
+  dir=$(wedge_threshold_fixture wedge-stale-append-failure 'working: still compiling' 0)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; err="$dir/watch.err"
+  capture="$dir/pane.txt"; window="test:fm-wedge"
+  key=$(watch_window_key "$window")
+  : > "$state/.wake-queue"
+  chmod 444 "$state/.wake-queue"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_CONFIG_OVERRIDE="$dir/config" FM_FAKE_TMUX_CURRENT_COMMAND=grok \
+    FM_FAKE_CREW_STATE='state: working · source: run-step · ci running' \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_GATE_PARK_SECS=0 \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PAUSE_RESURFACE_SECS=999 FM_STALE_ESCALATE_SECS=1 FM_WATCH_TICK_ALARM_SECS=300 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$out" 2> "$err" &
+  pid=$!
+  cycles=0
+  while [ "$cycles" -lt 3 ]; do
+    wait_poll_cycle "$state" "$pid" 300 \
+      || { reap "$pid"; fail "the poll loop died on a wedge stale-wake append failure: $(cat "$err")"; }
+    cycles=$((cycles + 1))
+  done
+  reap "$pid"
+  chmod 644 "$state/.wake-queue"
+  alarm=$(grep -c -F 'watcher: wedge stale-wake append failed' "$err" || true)
+  [ "$alarm" -eq 1 ] \
+    || fail "a failing wedge append alarmed $alarm times, expected exactly one bounded alarm: $(cat "$err")"
+  [ ! -s "$out" ] || fail "a wake was printed for a row that never reached the queue: $(cat "$out")"
+  [ -s "$state/.stale-since-$key" ] \
+    || fail "the failed append consumed the ladder's idle timer instead of leaving it for a retry"
+  [ ! -s "$state/.wake-queue" ] || fail "a wake row reached an unwritable queue"
+  pass "a failed wedge stale-wake append alarms once and leaves the cycle alive to retry"
+}
+
+# The away-mode busy-bound handoff appends a plain stale wake for the daemon.
+# That append is the same transient I/O: with the queue unwritable, the handoff
+# alarms through the bounded tick guard instead of exiting 1 on the append, the
+# declaration suppressor stays unadvanced so the handoff is retried, and the
+# cycle ends on the durable re-arm handoff the failure leaves behind - a clean
+# rc 0 supervision handoff, never the append's rc 1.
+test_afk_busy_bound_stale_append_failure_alarms_and_survives() {
+  local dir state fakebin out err capture window key sig pid rc alarm statusf
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "away-mode busy-bound stale-wake append failure skipped (root ignores file modes)"
+    return 0
+  fi
+  dir=$(make_case afk-busy-bound-append-failure); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; err="$dir/watch.err"; capture="$dir/pane.txt"
+  window="test:fm-afk-bound-append"
+  statusf="$state/afk-bound-append.status"
+  printf 'Working... (7200.4s) lavish-axi poll' > "$capture"
+  printf 'window=%s\nkind=scout\nharness=pi\n' "$window" > "$state/afk-bound-append.meta"
+  record_pi_busy "$state" afk-bound-append
+  printf 'paused: hosting the Lavish review, awaiting captain feedback\n' > "$statusf"
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-afk-bound-append_status"
+  key=$(watch_window_key "$window")
+  touch -t 200001010000 "$state/afk-bound-append.meta"
+  date '+%s' > "$state/.afk"
+  : > "$state/.wake-queue"
+  chmod 444 "$state/.wake-queue"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_FAKE_CREW_STATE='state: working · source: pane · harness busy (pi-ext)' \
+    FM_BUSY_TURN_MAX_SECS=1 FM_STALE_ESCALATE_SECS=1 FM_PAUSE_RESURFACE_SECS=999 \
+    FM_WATCH_TICK_ALARM_SECS=300 FM_POLL=0.2 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2> "$err" &
+  pid=$!
+  rc=0
+  wait_for_exit "$pid" 150 || rc=$?
+  chmod 644 "$state/.wake-queue"
+  [ "$rc" -eq 0 ] \
+    || fail "the away-mode handoff died on a stale-wake append failure (rc=$rc): $(cat "$err")"
+  grep -Fx 'check: rearm-resurface' "$out" >/dev/null \
+    || fail "the failed append did not leave the durable re-arm handoff: $(cat "$out")"
+  ! grep -Fx "stale: $window" "$out" >/dev/null \
+    || fail "the away-mode handoff printed a wake that never reached the queue: $(cat "$out")"
+  alarm=$(grep -c -F 'watcher: wedge away-mode stale-wake append failed' "$err" || true)
+  [ "$alarm" -eq 1 ] \
+    || fail "a failing away-mode append alarmed $alarm times, expected exactly one bounded alarm: $(cat "$err")"
+  [ ! -e "$state/.stale-$key" ] \
+    || fail "the failed append advanced the declaration suppressor and would silence the retry"
+  [ ! -s "$state/.wake-queue" ] || fail "a wake row reached an unwritable queue"
+  pass "an away-mode busy-bound stale-wake append failure alarms once, retries later, and hands off on the re-arm"
+}
+
+# The wedge-timer's opt-in stream branch publishes through a guarded append
+# that can reject a stale snapshot (discard, no alarm) or fail transiently.
+# The transient failure is the same I/O class as the non-stream branch, so it
+# alarms once through the same guard and the cycle keeps polling; this route
+# charges its count only after a successful append, so nothing moves on a
+# failure and the next poll retries the same rung.
+test_wedge_stream_stale_append_failure_alarms_and_survives() {
+  local dir state fakebin out err capture window key gen pid cycles alarm
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "wedge stream stale-wake append failure skipped (root ignores file modes)"
+    return 0
+  fi
+  dir=$(make_case wedge-stream-append-failure); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; err="$dir/watch.err"; capture="$dir/pane.txt"
+  window="test:fm-wedge-stream"; key=$(watch_window_key "$window")
+  printf 'Working...' > "$capture"
+  printf 'window=%s\nkind=ship\nharness=pi\n' "$window" > "$state/wedge-stream.meta"
+  record_pi_busy "$state" wedge-stream
+  gen=$(cat "$state/wedge-stream.busy-gen")
+  "$ROOT/bin/fm-busy-event.sh" stream "$state" wedge-stream open --gen "$gen" --request 1
+  printf 'v1 gen=%s request=1 rev=1 ts=%s\n' "$gen" "$(( $(date +%s) - 600 ))" > "$state/wedge-stream.model-stream"
+  printf 'working: setup complete\n' > "$state/wedge-stream.status"
+  seen_sig "$state/wedge-stream.status" > "$state/.seen-wedge-stream_status"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STATE_OVERRIDE="$state" FM_STREAM_SILENT_MAX_SECS=300 FM_BUSY_TURN_MAX_SECS=99999 \
+    FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2> "$err" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" 300 || { reap "$pid"; fail "stream admission failed: $(cat "$err")"; }
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "stream admission acknowledgement failed"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$state/.wake-queue"
+  chmod 444 "$state/.wake-queue"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STATE_OVERRIDE="$state" FM_STREAM_SILENT_MAX_SECS=300 FM_BUSY_TURN_MAX_SECS=99999 \
+    FM_STALE_ESCALATE_SECS=240 FM_WATCH_TICK_ALARM_SECS=300 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2> "$err" &
+  pid=$!
+  cycles=0
+  while [ "$cycles" -lt 3 ]; do
+    wait_poll_cycle "$state" "$pid" 300 \
+      || { reap "$pid"; fail "the poll loop died on a stream stale-wake append failure: $(cat "$err")"; }
+    cycles=$((cycles + 1))
+  done
+  reap "$pid"
+  chmod 644 "$state/.wake-queue"
+  alarm=$(grep -c -F 'watcher: wedge stream stale-wake append failed' "$err" || true)
+  [ "$alarm" -eq 1 ] \
+    || fail "a failing stream append alarmed $alarm times, expected exactly one bounded alarm: $(cat "$err")"
+  [ ! -s "$out" ] || fail "a stream wake was printed for a row that never reached the queue: $(cat "$out")"
+  [ -s "$state/.stale-since-$key" ] \
+    || fail "the failed stream append consumed the ladder timer instead of leaving it for a retry"
+  [ ! -e "$state/.wedge-escalations-$key" ] \
+    || fail "the failed stream append charged an escalation count"
+  [ ! -s "$state/.wake-queue" ] || fail "a stream wake row reached an unwritable queue"
+  pass "a failed wedge stream stale-wake append alarms once and leaves the cycle alive to retry"
+}
+
+# A failed stale-wake append must not charge the escalation rung it retries:
+# the count is restored on failure, so the first delivered wake after the
+# queue recovers is escalation 1, not the next rung the failure consumed.
+test_wedge_stale_append_failure_restores_escalation_count() {
+  local dir state fakebin out err capture window key pid rc waited
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "wedge stale-wake count restore skipped (root ignores file modes)"
+    return 0
+  fi
+  dir=$(wedge_threshold_fixture wedge-stale-count-restore 'working: still compiling' 0)
+  state="$dir/state"; fakebin="$dir/fakebin"; out="$dir/watch.out"; err="$dir/watch.err"
+  capture="$dir/pane.txt"; window="test:fm-wedge"
+  key=$(watch_window_key "$window")
+  : > "$state/.wake-queue"
+  chmod 444 "$state/.wake-queue"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_CONFIG_OVERRIDE="$dir/config" FM_FAKE_TMUX_CURRENT_COMMAND=grok \
+    FM_FAKE_CREW_STATE='state: working · source: run-step · ci running' \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_GATE_PARK_SECS=0 \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_PAUSE_RESURFACE_SECS=999 FM_STALE_ESCALATE_SECS=1 FM_WATCH_TICK_ALARM_SECS=300 \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    "$WATCH" > "$out" 2> "$err" &
+  pid=$!
+  waited=0
+  while ! grep -q -F 'watcher: wedge stale-wake append failed' "$err" 2>/dev/null; do
+    wait_poll_cycle "$state" "$pid" 300 \
+      || { reap "$pid"; fail "the poll loop died before its failed append retry: $(cat "$err")"; }
+    waited=$((waited + 1))
+    [ "$waited" -lt 10 ] \
+      || { reap "$pid"; fail "no wedge append failure was exercised: $(cat "$err")"; }
+  done
+  chmod 644 "$state/.wake-queue"
+  rc=0
+  wait_for_exit "$pid" 60 || rc=$?
+  [ "$rc" -eq 0 ] || fail "the retried escalation did not complete cleanly (rc=$rc): $(cat "$err")"
+  grep -F 'escalation 1' "$out" >/dev/null \
+    || fail "the retried append did not deliver escalation 1: $(cat "$out")"
+  ! grep -F 'escalation 2' "$out" >/dev/null \
+    || fail "a failed append charged the rung it retried: $(cat "$out")"
+  [ "$(wedge_stale_wakes "$state" "$window")" -eq 1 ] \
+    || fail "the recovered queue did not receive exactly one wake row"
+  pass "a failed wedge append restores its count, so the retry delivers escalation 1"
+}
+
 # CI's stock macOS Bash lane sets FM_TEST_STOCK_BASH=1 to run just the bash-3.2
 # churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 # Adding another stock-bash case means adding it to this list, not to ci.yml.
@@ -5724,6 +6206,10 @@ fm_test_run \
   test_ordinary_blocked_signal_payload_remains_branch_eligible \
   test_routine_signal_payload_not_marked_needs_decision \
   test_actionable_signal_survives_a_later_routine_append \
+  test_flood_episode_past_the_seed_window_wakes_once \
+  test_flood_seed_growth_stays_within_the_flood_window \
+  test_flood_episode_wakes_once_live \
+  test_terminal_line_wakes_after_a_folded_episode_live \
   test_keyed_decision_signal_reads_only_the_new_span \
   test_release_completion_survives_a_later_routine_append \
   test_routine_appends_after_a_classified_event_stay_absorbed \
@@ -5733,6 +6219,7 @@ fm_test_run \
   test_stale_terminal_status_overridden_by_active_run \
   test_nonterminal_stale_provably_working_absorbed_then_escalated \
   test_wedge_escalation_marks_demand_deep_inspection_after_threshold \
+  test_wedge_escalation_backs_off_a_held_delivery_after_a_resolved_answer \
   test_wedge_escalation_resets_when_pane_becomes_active \
   test_gone_endpoint_reports_once_instead_of_escalating_forever \
   test_live_and_unproven_endpoints_still_wedge_escalate \
@@ -5756,6 +6243,10 @@ fm_test_run \
   test_busy_declared_pause_is_rechecked_not_wedge_escalated \
   test_afk_busy_declared_pause_hands_off_plain_stale \
   test_afk_busy_declared_pause_ticking_pane_hands_off_once \
+  test_wedge_stale_append_failure_alarms_and_survives \
+  test_afk_busy_bound_stale_append_failure_alarms_and_survives \
+  test_wedge_stream_stale_append_failure_alarms_and_survives \
+  test_wedge_stale_append_failure_restores_escalation_count \
   test_nonterminal_stale_repairs_missing_or_corrupt_timer \
   test_wedge_escalation_deferred_while_worktree_is_written \
   test_write_deferral_resurfaces_on_the_bounded_cadence \

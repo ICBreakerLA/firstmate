@@ -145,8 +145,60 @@ test_scout_batch_refuses_delivery_flags() {
   pass "scout batch refuses ship delivery flags instead of ignoring them"
 }
 
+# A batch that mixes a project at capacity (deferred, exit 75) with an ordinary
+# failure must still dispatch every pair, report both outcomes, and exit as a
+# failure: a deferral that leaves its task queued never masks a failed pair.
+# The deferral pair names a real capped project whose single place is held, and
+# the failure pair names a missing project, so each pair takes its own path.
+test_batch_mixed_failed_and_deferred_exit() {
+  local case_dir home project out status
+  case_dir="$TMP_ROOT/mixed"
+  home="$case_dir/home"
+  project="$case_dir/capped"
+  mkdir -p "$home/state" "$home/config" "$home/data"
+  printf '%s\n' codex > "$home/config/crew-harness"
+  printf '%s\n' 'capped 1' > "$home/config/project-capacity"
+  fm_git_init_commit "$project"
+  fm_git_add_origin "$project" "$project.origin.git"
+  fm_write_meta "$home/state/live-a.meta" \
+    "window=firstmate:fm-live-a" \
+    "endpoint_task_id=live-a" \
+    "worktree=$home/absent-worktree-live-a" \
+    "project=$project" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "yolo=off" \
+    "spawn_gen=s-live-a"
+
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
+    FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
+    "$SPAWN" defer-mixed-z13="$project" fail-mixed-z14=projects/none-mixed \
+    --mode no-mistakes --yolo off 2>&1)
+  status=$?
+  [ "$status" -eq 1 ] || fail "a FAILED+DEFERRED batch should exit 1, got $status: $out"
+  printf '%s\n' "$out" | grep -F 'batch: DEFERRED defer-mixed-z13 ' >/dev/null \
+    || fail "the deferred pair was not reported: $out"
+  printf '%s\n' "$out" | grep -F 'batch: FAILED to spawn fail-mixed-z14 ' >/dev/null \
+    || fail "the failed pair was not reported: $out"
+
+  # The reverse order pins the same verdict: failure outranks a deferral.
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
+    FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
+    "$SPAWN" fail-mixed-z15=projects/none-mixed defer-mixed-z16="$project" \
+    --mode no-mistakes --yolo off 2>&1)
+  status=$?
+  [ "$status" -eq 1 ] || fail "a DEFERRED+FAILED batch should exit 1, got $status: $out"
+  printf '%s\n' "$out" | grep -F 'batch: DEFERRED defer-mixed-z16 ' >/dev/null \
+    || fail "the deferred pair was not reported in the reverse order: $out"
+  printf '%s\n' "$out" | grep -F 'batch: FAILED to spawn fail-mixed-z15 ' >/dev/null \
+    || fail "the failed pair was not reported in the reverse order: $out"
+  pass "a batch mixing a deferral and a failure reports both and exits as a failure"
+}
+
 test_batch_dispatches_every_pair
 test_batch_mode_boundaries
 test_batch_requires_the_shared_delivery_contract
 test_scout_batch_refuses_delivery_flags
+test_batch_mixed_failed_and_deferred_exit
 test_projects_path_scoping

@@ -1142,9 +1142,9 @@ The file and every listed executable must be regular files owned by the watcher'
 
 ### When a guard defers an alarm
 
-Only at the wedge threshold, after the declared-wait, worktree-write, dead-endpoint, and opt-in validating-run checks have all let the escalation through, the watcher runs each guard as `<guard> --json` with `FM_GUARD_TASK` and `FM_GUARD_ENDPOINT` set, bounded by `FM_WEDGE_GUARD_TIMEOUT_SECS`.
+Only at the wedge threshold, after the declared-wait, worktree-write, dead-endpoint, and opt-in validating-run checks have all let the escalation through, the watcher runs each guard as `<guard> --json` with `FM_GUARD_TASK` and `FM_GUARD_ENDPOINT` set, bounded by `FM_WEDGE_GUARD_TIMEOUT_SECS` (default 5 seconds).
 The first guard that prints one JSON object with `status` `CRITICAL` and a non-empty `recommendation` defers that escalation by one window, without advancing the escalation count.
-After `FM_WEDGE_GUARD_DEFER_MAX` consecutive deferrals the escalation fires anyway, and its reason names the guard and the first line of its recommendation.
+After `FM_WEDGE_GUARD_DEFER_MAX` (default 3) consecutive deferrals the escalation fires anyway, and its reason names the guard and the first line of its recommendation.
 A timeout, non-zero exit, malformed output, `OK`, `WARNING`, or `UNKNOWN` changes nothing, and a dead or missing endpoint is reported before any guard is asked.
 A guard's answer is evidence only and never authorizes a decision, merge, cleanup, or any other action.
 
@@ -1671,7 +1671,7 @@ The file holds one line.
 
 `cpus` is 1 to 64 and defaults to 4, and `memory` is a whole number of gigabytes and defaults to `4g`.
 `allow` is a comma-separated list of further host names that every sandbox of this home may reach, each with an optional `:PORT` suffix that narrows the entry to that one port; a bare host name opens every port of that host.
-A host name may contain `*` wildcards, which the allow-list grammar passes to the sandbox's policy as written.
+A host name may contain `*` wildcards alongside letters, digits, dots, and dashes, and the allow-list grammar passes them to the sandbox's policy as written rather than expanding them against a local path.
 It is added to each sandbox's own network policy, never to the global one.
 `nm` pins the no-mistakes version a sandboxed validation ship may use, such as `nm=v1.79.0`, and a host binary of any other version refuses the launch.
 Without `nm`, the host's own no-mistakes version is used, and the copy installed in the VM must report that same version or the launch refuses.
@@ -1792,6 +1792,10 @@ A launch with that model refuses, before any endpoint, clone, or task record exi
 - The server at `http://127.0.0.1:8080` does not answer `/v1/models` with that model listed (`FM_LOCAL_LLM_URL` overrides only this host-side check, for tests; the sandbox always uses port 8080).
 - Another local-model spawn or worker holds the one local slot.
 
+`FM_LOCAL_LLM_HEALTH_TIMEOUT` sets how many seconds one `/v1/models` request may take, and must be a positive whole number.
+It defaults to 5 for the pre-launch refusal check above.
+An invalid value refuses an explicit launch with a message naming the variable; a dispatch-chosen launch instead falls back to the fallback model with a notice naming the variable and the model used.
+
 The server has one slot, so one local-model worker runs at a time across the whole host.
 The spawn claims that slot itself, with an exclusive non-blocking `flock` on `$XDG_STATE_HOME/firstmate/local-llm.lock` (`FM_LOCAL_LLM_LOCK`), before it creates anything, so of two spawns close together the second is refused and leaves no worktree, clone, or record.
 The claim names the task in the lock file and passes to a small detached holder, which keeps the lock until the task's `bin/fm-sbx-run.sh` has taken it over through the lock's `.handoff` FIFO and then ended, however it ends, including a crash.
@@ -1812,6 +1816,12 @@ Both fallback values are the named settings `FM_LOCAL_LLM_FALLBACK_MODEL` and `F
    `fm_local_llm_gpu_conflict` is the replaceable probe: on this PC it asks `powershell.exe` for a python process whose path is under `C:\ComfyUI\venv`; a missing `powershell.exe` means no conflict, but a probe that exists and fails, times out, or gives no number is treated as a conflict (unavailable, so the spawn falls back rather than risk running alongside ComfyUI).
    When the server is not answering and `config/local-llm-start` holds a command, it runs once and the spawn waits up to `FM_LOCAL_LLM_START_WAIT` seconds (default 120) for the server to answer, then rechecks the GPU; a command that exits non-zero or a wait that runs out falls back.
 3. The one local slot is free; the spawn claims it as above.
+
+The dispatch check in step 2, and every later `/v1/models` check on that same dispatch-chosen launch - the start wait, the wrapper's host recheck, and the sandbox's own reachability check - allows 30 seconds by default, not the pre-launch 5, so a server that is alive yet slow to answer is not treated as dead and does not silently replace a dispatch-chosen local model with `claude-haiku-4-5`.
+That bound covers a slow-but-alive answer, not a full compaction prefill; a server whose prefill keeps `/v1/models` slower than 30 seconds needs `FM_LOCAL_LLM_HEALTH_TIMEOUT` raised.
+`FM_LOCAL_LLM_HEALTH_TIMEOUT` overrides both bounds when it is set.
+`FM_LOCAL_LLM_SLOTS_URL` overrides the `/slots` endpoint the watcher reads to decide whether the server is mid-request, for tests; that read is given 3 seconds.
+`FM_LOCAL_LLM_GPU_PROBE_TIMEOUT` (default 15 seconds) bounds the ComfyUI GPU probe.
 
 Every fallback prints one line on stderr naming the failed check and the model used instead, and the task record carries the model actually used in `model=` plus `model_fallback_from=` naming the local model.
 
@@ -1861,6 +1871,7 @@ An id with a slash is a direct model id and an id without one is an alias.
 
 The spend-limited worker key lives in `~/.config/firstmate/openrouter-worker-key` (`FM_OPENROUTER_KEY_FILE` overrides it, for tests).
 It must be a regular file, not a symlink, and is read on the host only.
+Its value may hold only `A-Z`, `a-z`, `0-9`, `.`, `_`, and `-`, the characters an OpenRouter key uses, because the value is interpolated into the curl config sent on stdin; a key file with any other character is refused without being used.
 The key is sent to `curl` on stdin so it is never in a host argument list, it never enters the sandbox, and it is never printed, logged, or written into the task record, status, brief, or any test output.
 The sandbox instead holds the fixed placeholder `sk-or-placeholder-firstmate` as `ANTHROPIC_AUTH_TOKEN`, passed to `sbx create`, so the value exists in the VM from its first moment.
 Once the sandbox exists, the wrapper registers a sandbox-scoped secret with `sbx secret set-custom --sandbox <name> --host openrouter.ai --placeholder sk-or-placeholder-firstmate --command "tr -d '[:space:]' <'<absolute key file path>'"`, and a launch whose secret cannot be stored is removed.
@@ -1872,13 +1883,16 @@ The key file path must be absolute, because the command runs in the sbx daemon r
 A launch with an `or:` model refuses, before any endpoint, clone, or task record exists, when any of these holds:
 
 - The worker is not a task worker on the claude harness with `config/worker-sandbox` set to `sbx`.
-- The key file is missing, a symlink, or empty, its path is not absolute, or OpenRouter rejects the key.
+- The key file is missing, a symlink, empty, or holds a character outside `A-Za-z0-9._-`, its path is not absolute, or OpenRouter rejects the key.
+- `curl` is not installed, because the profile probes the chain with it.
 - An id is `:free`, because free models cannot meet the zero-retention requirement, or an id is not a plain `vendor/model`.
 - The alias has no line in `config/openrouter-models.list`.
 - No id of the chain answers a 1-token request to `/api/v1/chat/completions` that demands a zero-retention endpoint (`provider.zdr` true and `provider.data_collection` `deny`).
 
 The ids are probed in order and the first that answers wins.
 A 402, 429, 5xx, no zero-retention endpoint, or a timeout skips to the next id; a 401 or 403 stops at once.
+Each probe is given `FM_OPENROUTER_PROBE_TIMEOUT` seconds (default 30) and the whole chain `FM_OPENROUTER_CHAIN_BUDGET` seconds (default 120), after which a launch refuses naming the ids it tried; a nonpositive or invalid value falls back to its default.
+`FM_OPENROUTER_API_URL` overrides the host-side API base for tests; the sandbox always uses `https://openrouter.ai/api`.
 There is no fallback to Claude: an unavailable OpenRouter profile refuses.
 The task record carries `model=or:<resolved id>` and, for an alias, `model_alias=<alias>`, and a relaunch keeps both.
 
@@ -1900,7 +1914,7 @@ Before the worker starts, the wrapper checks from inside the VM that `https://op
 A failed check stops the launch and removes the sandbox.
 The placeholder is not a secret, and a request that reaches another host carrying it is not substituted; OpenRouter refuses a wrong bearer token with a 401.
 
-The wrapper reads the key's lifetime spend from `/api/v1/key` before the worker starts and again when it exits, and appends `at= model= before= after= cost_usd=` to `data/<id>/openrouter-usage.log`.
+The wrapper reads the key's lifetime spend from the top-level `data.usage` field of `/api/v1/key` before the worker starts and again when it exits, parsed with `jq` when it is installed and otherwise anchored to the first `usage` field in the document, and appends `at= model= before= after= cost_usd=` to `data/<id>/openrouter-usage.log`.
 A reading that cannot be made writes nothing, and with parallel workers each line also includes the other workers' spend over the same period.
 
 In a [dispatch profile](#crew-dispatch-profiles-configcrew-dispatchjson) a Claude `or:` model is attributed to the `openrouter` quota provider, which carries no quota measurement, so it counts as unmeasured and unranked rather than drawing on the Claude plan.
@@ -3890,8 +3904,12 @@ FM_TASKS_AXI_CHECK_REASON=   # internal one-hop handoff of the reason behind tha
 FM_GUARD_READ_ONLY=0    # internal/read-only guard mode: keep alarms but suppress drain, supervision repair, and checkout repair commands
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the guarded operation WILL still run.'   # banner continuation line; fm-send.sh overrides it to name the requested message specifically
 FM_POLL=15              # seconds between watcher poll cycles
+FM_EVENT_CAP_FAIL_MAX=3   # consecutive event-path capability-probe failures before the watcher disables its backend push fast-path for the rest of that process and polls; unset or empty uses 3
+FM_WATCH_HANDLING_SUCCESSOR=0   # internal: set to 1 by bin/fm-watch-arm.sh for a watcher handling a successor arm's recovery handoff; it skips the startup marker reopen and settles the handoff itself
+FM_WATCH_FOREGROUND_CHECKPOINT=0   # internal: set to 1 by bin/fm-watch-checkpoint.sh for the bounded foreground checkpoint, which also skips the startup marker reopen
+FM_TEST_WATCHER_PRE_IDENTITY_DELAY=0   # test seam: seconds to pause after the singleton claim and before the lock identity and EXIT trap exist, exercising the arm's startup unsafe window
 FM_HOME_SUMMARY_INTERVAL=300   # seconds before a live watcher refreshes this home's state/home-summary.json even without a status signal; invalid or zero values use 300
-FM_WATCH_TICK_ALARM_SECS=900   # seconds between repeated watcher stderr alarms for one of the three guarded poll-loop ticks (open-decision reminder, secondmate liveness, secondmate wake-stall) that keeps failing on ordinary transient I/O; the poll cycle survives those failures for those ticks, each failure episode alarms once, and among those ticks only invalid open-decision reminder settings stop the watcher; invalid or zero values use 900
+FM_WATCH_TICK_ALARM_SECS=900   # seconds between repeated watcher stderr alarms for a guarded poll-loop site that keeps failing on ordinary transient I/O - the open-decision reminder, secondmate liveness, and secondmate wake-stall ticks, plus the wedge-timer escalation stale-wake append (including its stream branch) and the away-mode busy-bound handoff append; the poll cycle survives those failures, each failure episode alarms once, and among those guarded sites only invalid open-decision reminder settings stop the watcher; invalid or zero values use 900
 FM_HOME_SUMMARY_TIMEOUT=60     # seconds bounding the complete best-effort home-summary refresh, including lock acquisition, validation, atomic publication, and worker-side failure logging; invalid or zero values use 60
 FM_HOME_SUMMARY_ERROR_LOG_MAX_BYTES=65536   # approximate size cap for state/.home-summary-refresh.log before it is trimmed to the newest 200 lines; invalid or zero values use 65536
 FM_HOME_SUMMARY_FAILURE_REPORT=2   # recorded publication failures since the ledger's own last publication before session start reports a HOME_SUMMARY line; invalid or zero values use 2
@@ -3956,6 +3974,7 @@ FMX_FOLLOWUP_MAX_AGE_SECS=604800   # local window for posting Relay completion f
 FMX_FOLLOWUP_MAX_COUNT=3   # local cap on Relay completion follow-ups per linked mention
 FM_PF_RETRY_BACKOFF_SECS=900   # seconds before the next attempt after a retryable promised-public-reply delivery error
 FM_LOCK_STALE_AFTER=2   # grace seconds for missing or nonnumeric lock-owner PIDs (minimum 2s); dead numeric PIDs, and live ones whose start time (or, for the watch lock, process identity) no longer matches the holder's recorded value, have no age grace
+FM_LOCK_OWNER_SCOPE=   # internal: scope token bin/fm-watch.sh stamps into its staged lock-owner directory names so an interrupted acquisition cleans up only its own staging directories
 FM_GUARD_GRACE=300      # beacon freshness threshold for guard verdicts, arm health checks, and the primary turn-end guard; see docs/turnend-guard.md for model-aware exceptions
 FM_CLAUDE_AUTOARM_ATTEMPTS=2   # bounded hook-owned arm attempts per Claude auto-arm cycle; accepted values are 1, 2, or 3
 FM_CLAUDE_STOPFAILURE_REWAKE_COOLDOWN=300   # minimum seconds between StopFailure-driven exit-2 continuations; nonnegative integers accepted, invalid or empty values use 300; pacing mechanics: bin/fm-claude-stop-autoarm.sh header
@@ -3968,26 +3987,30 @@ FM_WATCHER_STARTUP_LOCK_BOUND=60   # per-lock startup wait in seconds for downti
 FM_ARM_ATTACH_POLL=0.5  # seconds between checks while fm-watch-arm follows an attached watcher cycle (bin/fm-watch-arm.sh header)
 FM_OPENCODE_ARM_READY_TIMEOUT_MS=12000   # milliseconds the OpenCode primary watcher plugin waits for an arm attempt to report started, healthy, wake, or failure; default 35000 on Windows; independent of the fresh-child arm backstop
 FM_PI_ARM_READY_TIMEOUT_MS=12000   # milliseconds the Pi watcher extension waits for a successor arm to report started or attached; default 35000 on Windows; independent of the fresh-child arm backstop
+FM_OMP_WATCH_RECONCILE_SECS=60   # seconds between omp watch extension idle liveness rechecks: deliver a dead-but-unclosed arm's stranded actionable, or start one arm on a stale beacon while supervision is needed (docs/watcher-continuity.md "Pi, omp, and OpenCode adapters")
 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=1000   # milliseconds Pi/OpenCode wait for an unready successor arm to exit before abandoning retries
 FM_WATCH_REARM_RETRY_BASE_MS=250   # Pi/OpenCode adapter base delay for continuity restoration retries
 FM_WATCH_REARM_RETRY_MAX_MS=4000   # Pi/OpenCode adapter cap for exponential continuity retry delay
 FM_WATCH_REARM_RETRY_LIMIT=5   # Pi/OpenCode adapter launch-failure retries before surfacing restoration failure
 FM_WATCH_CYCLE_LOG_MAX_BYTES=262144   # size cap for the arm-owned watcher lifecycle ledger
 FM_WATCH_CYCLE_LOG_KEEP_LINES=1000   # newest complete lifecycle rows considered when the ledger is capped
-FM_WATCH_EXTENSION_LOG_KEEP_LINES=0   # opt-in Pi extension diagnostic log (state/.watch-extension.log); unset, empty, non-numeric, zero, or negative disables logging, a positive value keeps that many newest rows; logging never changes supervision behavior
+FM_WATCH_EXTENSION_LOG_KEEP_LINES=0   # opt-in Pi and omp extension diagnostic log (state/.watch-extension.log); unset, empty, non-numeric, zero, or negative disables logging, a positive value keeps that many newest rows; logging never changes supervision behavior
 FM_WATCHER_STALE_GRACE=300   # defaults to FM_GUARD_GRACE if set, else the poll-derived grace (docs/turnend-guard.md "Guard grace and the poll cadence"); seconds before a fresh arm refuses a live holder's stale beacon (attached arms: FM_WATCHER_STALL_BOUND)
-FM_WATCHER_STALL_BOUND=       # live-holder stall bound; default and arm/re-arm behavior: docs/turnend-guard.md "Guard grace and the poll cadence"
+FM_WATCHER_STALL_BOUND=       # live-holder stall bound; honored only through fm_watcher_stall_bound in bin/fm-wake-lib.sh; default and arm/re-arm behavior: docs/turnend-guard.md "Guard grace and the poll cadence"
 FM_WATCHER_BEACON_INTERVAL=30   # seconds between state/.last-watcher-beat touches from the ticker that keeps the beacon fresh while bin/fm-watch.sh blocks in its terminal wait (watcher_run_with_beacon); see docs/turnend-guard.md "Guard grace and the poll cadence"
 FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
 FM_WATCHER_CLEANUP_LOCK_BOUND=   # optional watcher EXIT marker-lock wait; default and validation: docs/watcher-continuity.md
 FM_TURNEND_CHURN_ABSORB_SECS=900   # longest one endpoint's bare turn-ends may be deferred on pane-churn evidence alone; only consulted when config/turnend-churn-absorb is present
 FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'   # captain-relevant status regex; nonterminal progress verbs remain excluded even when their prose matches
 FM_STATUS_FLOOD_MAX=20   # distinct stamped captain-relevant status lines one task may append inside ten minutes before the rest fold into one noisy event (terminal verbs always surface; 0 disables, invalid uses 20); see the status flood cap section
+FM_STATUS_FLOOD_WINDOW_SECS=600   # seconds of a task's stamped status lines the flood cap counts; a line spaced at or beyond this window is outside the count
+FM_STATUS_FLOOD_SEED_BYTES=32768   # starting bytes of pre-span status lines replayed to rank a span's first line; the window doubles until the replay reaches the file start, ranks the first line past the cap, or its earliest replayed stamp is a full flood window older than that line; 0 or an invalid value replays from the file start
+FM_WAKE_ENRICH_TEST_DELAY=   # test seam: seconds to pause best-effort wake annotation enrichment, to prove queue appends stay independent of it
 FM_CLASSIFY_PAUSED_VERB=paused     # leading declared-wait status verb; bin/fm-classify-lib.sh owns its meaning and legacy external-wait label; excluded from FM_CAPTAIN_RE and distinct from blocked
 FM_STALE_ESCALATE_SECS=240         # idle seconds before a provably-working stale pane escalates, unless that pane's own worker declared a wait that has not elapsed, its task is held for the captain in the backlog, or, where config/wedge-defer-worker-wait arms it, its worker's own newest line is a still-open `blocked:` or `needs-decision:` line, or, where config/wedge-defer-parked-gate arms it, that pane's crew is parked at a validation gate awaiting the supervisor's decision on it that the crew raised under that run's key and nobody has answered yet, or, where config/wedge-defer-validating arms it, that pane's crew has an attributed no-mistakes run whose step is running or fixing, any of which takes the FM_PAUSE_RESURFACE_SECS recheck below instead; stale panes whose crew is not provably working surface immediately unless admitted directly to the declared-wait cadence, while a live idle declared wait still surfaces once before that cadence bounds repeats; at that same escalation moment a recovery-grade agent-state probe (docs/architecture.md owns that dead-record contract) reports a pane whose endpoint is proven `dead` or `missing` once and stops re-escalating it while it stays that way
 FM_BUSY_TURN_MAX_SECS=3600         # maximum age without a completed turn, explicit native-harness progress, or opted-in model progress (see the stream option above; bin/fm-watch.sh owns marker selection), before the same wedge escalation used for a provably-working non-busy stale takes over; inspection-only, never an automatic interrupt or restart; a declared external wait, an attended verified captain-held transfer, an attended backlog captain hold on the crew's task, or - where config/wedge-defer-worker-wait or config/wedge-defer-parked-gate arms it - the worker's own still-open newest `blocked:` or `needs-decision:` line or a validation gate of the crew's own awaiting the supervisor's still-unanswered decision, or - where config/wedge-defer-validating arms it - an attributed validation run that is running or fixing, takes the FM_PAUSE_RESURFACE_SECS recheck below instead
 FM_STREAM_SILENT_MAX_SECS=         # opt-in Pi worker foreground model-stream silence threshold; off by default; see the option above and bin/fm-busy-lib.sh
-FM_PAUSE_RESURFACE_SECS=14400      # four hours between bounded rechecks of a declared external wait or verified captain-held transfer, repeated new-hash stale alarms for an ordinary crew task with an open backlog captain call, and repeated first-sight alarms from an otherwise-unclassifiable pane whose recovery-grade endpoint probe proves its agent alive and whose own status log or task worktree was written within FM_STALE_ESCALATE_SECS (without that progress evidence every new hash still surfaces immediately); a structured until time can make an external-wait recheck occur sooner but cannot extend this bound; this includes a live idle pane after its first inconclusive stale wake, a provably-working pane whose own unelapsed declared wait, backlog captain hold, or, where config/wedge-defer-worker-wait or config/wedge-defer-parked-gate arms it, its worker's own still-open `blocked:` or `needs-decision:` line or unanswered supervisor-owed validation gate, or, where config/wedge-defer-validating arms it, attributed validation run that is running or fixing, defers its FM_STALE_ESCALATE_SECS escalation, and a live busy pane past FM_BUSY_TURN_MAX_SECS, while the away-mode daemon uses the same setting and ages its window against the crew's own latest status line rather than pane busy state; set it in config/watch.env for durable non-Relay tuning of watchers started through bin/fm-watch-arm.sh, while the Codex checkpoint route with no config/supervision-host and the away-mode daemon start the watcher directly and use the default; a captain-held transfer or backlog captain hold is never rechecked while the away-posture record exists, while an armed validation gate awaiting the supervisor's decision keeps this recheck in either posture; zero and invalid values use 14400
+FM_PAUSE_RESURFACE_SECS=14400      # four hours between bounded rechecks of a declared external wait or verified captain-held transfer, repeated new-hash stale alarms for an ordinary crew task with an open backlog captain call, and repeated first-sight alarms from an otherwise-unclassifiable pane whose recovery-grade endpoint probe proves its agent alive and whose own status log or task worktree was written within FM_STALE_ESCALATE_SECS (without that progress evidence every new hash still surfaces immediately); a structured until time can make an external-wait recheck occur sooner but cannot extend this bound; this includes a live idle pane after its first inconclusive stale wake, a provably-working pane whose own unelapsed declared wait, backlog captain hold, or, where config/wedge-defer-worker-wait or config/wedge-defer-parked-gate arms it, its worker's own still-open `blocked:` or `needs-decision:` line or unanswered supervisor-owed validation gate, or, where config/wedge-defer-validating arms it, attributed validation run that is running or fixing, defers its FM_STALE_ESCALATE_SECS escalation, and a live busy pane past FM_BUSY_TURN_MAX_SECS, while the away-mode daemon uses the same setting and ages its window against the crew's own latest status line rather than pane busy state; set it in config/watch.env for durable non-Relay tuning of watchers started through bin/fm-watch-arm.sh, while the Codex checkpoint route with no config/supervision-host and the away-mode daemon start the watcher directly and use the default; a captain-held transfer or backlog captain hold is never rechecked while the away-posture record exists, while an armed validation gate awaiting the supervisor's decision keeps this recheck in either posture; zero and invalid values use 14400; the default is owned by FM_PAUSE_RESURFACE_SECS_DEFAULT in bin/fm-classify-lib.sh
 FM_PAUSE_UNDATED_MAX_SECS=86400   # seconds before an undated worker pause becomes overdue where config/pause-ceiling arms the pause ceiling; zero or invalid values use 86400; see "Pause ceiling (config/pause-ceiling)" above
 FM_SECONDMATE_WAKE_STALL_SECS=180  # minimum interval with no change of the oldest actionable foreign wake-queue row (it advances as the mate drains, and a queue reprovisioned under the same task id starts a fresh interval at whatever sequence it restarts) before an endpoint-recorded local secondmate produces one durable parent wake-loop-stall notification for that no-progress episode; a mate that is provably inside an active turn (an exact busy verdict) does not escalate until that same no-progress interval reaches FM_BUSY_TURN_MAX_SECS above; a mate whose busy class is exactly idle, whose agent is alive, and whose composer is not pending is rung once so its own home can drain, and the parent notification is withheld until that same row stays frozen for another stall interval; unknown or ring-unsafe panes keep the parent alarm; declared external-wait pause rows are excluded, and zero or invalid values use 180
 FM_SECONDMATE_LIVENESS_SECS=60   # seconds between watcher probes of each registered secondmate's recorded endpoint; bin/fm-secondmate-liveness-lib.sh owns recovery actions and refusal rules; zero or invalid values use 60

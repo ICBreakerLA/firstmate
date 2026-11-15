@@ -61,11 +61,11 @@ cat > "$REMOTE_ROOT/bin/fm-probe-job.sh" <<'SH'
 #!/bin/bash
 set -u
 printf 'home=%s\nroot=%s\nactive=%s\npath=%s\n' "$FM_HOME" "$FM_ROOT_OVERRIDE" "${FM_REMOTE_JOB_ACTIVE:-}" "$PATH"
-printf 'user=%s\nlogname=%s\n' "${USER:-}" "${LOGNAME:-}"
 printf 'args:'
 printf ' <%s>' "$@"
 printf '\n'
 if [ -n "${TOP_SECRET:-}" ]; then printf 'secret=leaked\n'; else printf 'secret=absent\n'; fi
+printf 'user=%s\nlogname=%s\n' "${USER-<unset>}" "${LOGNAME-<unset>}"
 while IFS= read -r line || [ -n "$line" ]; do printf 'stdin=%s\n' "$line"; done
 exit "${FM_PROBE_EXIT:-0}"
 SH
@@ -129,6 +129,7 @@ SH
   [ -z "$legacy" ] || export FM_REMOTE_JOB_POLL_SECONDS="$legacy"
   # shellcheck disable=SC2030 # The active override is local to this cadence fixture.
   [ -z "$active" ] || export FM_REMOTE_JOB_ACTIVE_POLL_SECONDS="$active"
+  # shellcheck disable=SC2030 # Each cadence fixture owns its subshell environment.
   export FM_REMOTE_JOB_STATE_ROOT="$poll_dir/state" FM_ROOT_OVERRIDE="$REMOTE_ROOT"
   # shellcheck disable=SC2030 # Each cadence fixture owns its subshell's bounds.
   export FM_REMOTE_JOB_QUEUE_TIMEOUT=60 FM_REMOTE_JOB_TIMEOUT=30
@@ -372,6 +373,30 @@ fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the completed job could no
 assert_absent "$JOB_DIR" "reap retained a completed job record"
 assert_absent "$FAKE_PERL_LOG" "the worker invoked an unavailable Perl runtime"
 pass "the worker preserves bounded argv and stdin in an empty environment"
+
+# A worker without an ambient USER or LOGNAME still gives the child the account
+# identity from `id -un`, so macOS credential lookups that key on the login name
+# keep working. The fixture runs as its own bash process, so the job library's
+# variables never enter this shell and the surrounding top-level assertions stay
+# unaffected.
+IDENTITY_DIR="$TMP_ROOT/identity-unset"
+mkdir -p "$IDENTITY_DIR"
+cat > "$IDENTITY_DIR/run.sh" <<'SH'
+set -u
+. "$ROOT/bin/fm-remote-job-lib.sh"
+fm_remote_job_stage "$ACCOUNT_HOME" "$REMOTE_ROOT" "$REMOTE_HOME" fm-probe-job.sh </dev/null >/dev/null \
+  || { echo "$FM_REMOTE_JOB_ERROR" >&2; exit 1; }
+HOME="$ACCOUNT_HOME" "$BASH" "$REMOTE_ROOT/bin/fm-remote-job-worker.sh" --lane "$FM_REMOTE_JOB_ID" || exit 1
+fm_remote_job_wait "$ACCOUNT_HOME" "$FM_REMOTE_JOB_ID" || { echo "$FM_REMOTE_JOB_ERROR" >&2; exit 1; }
+cat "$FM_REMOTE_JOB_STDOUT"
+SH
+IDENTITY_OUT=$(env -u USER -u LOGNAME ROOT="$ROOT" ACCOUNT_HOME="$ACCOUNT_HOME" REMOTE_ROOT="$REMOTE_ROOT" \
+  REMOTE_HOME="$REMOTE_HOME" FM_REMOTE_JOB_STATE_ROOT="$IDENTITY_DIR/state" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+  FM_REMOTE_JOB_QUEUE_TIMEOUT=60 FM_REMOTE_JOB_TIMEOUT=30 "$BASH" "$IDENTITY_DIR/run.sh") \
+  || fail "the identity-unset job did not complete"
+assert_contains "$IDENTITY_OUT" "user=$ACCOUNT_USER" "the worker did not derive USER from the account identity"
+assert_contains "$IDENTITY_OUT" "logname=$ACCOUNT_USER" "the worker did not derive LOGNAME from the account identity"
+pass "the worker derives USER and LOGNAME from the account identity when the environment omits them"
 
 ACTIVE_SIDE_EFFECT="$TMP_ROOT/active-side-effect"
 FM_REMOTE_JOB_TIMEOUT=10

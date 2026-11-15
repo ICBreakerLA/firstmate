@@ -1,0 +1,80 @@
+# Targeted validation of merge a3c889ee (upstream sync merge over fork main c88c4595) — 2026-11-15T16:58Z
+
+## Conflict-marker check on merged tree
+$ git grep -nE "^(<<<<<<<|=======|>>>>>>>)" -- ":!tests"
+(no conflict markers)
+
+## tests/fm-classify-status-flood.test.sh
+result: 15 ok, 0 not ok
+    ok - FM_STATUS_FLOOD_MAX=0 disables the cap
+    ok - the default cap tolerates a busy task and catches a burst
+    ok - an invalid cap falls back to the default instead of disabling the guard
+
+## tests/fm-watcher-beat-check.test.sh
+result: 7 ok, 0 not ok
+    ok - work in flight with no beacon at all raises the never-beaten alarm
+    ok - a blocking wait keeps the beacon fresh and preserves the wait's status
+    ok - the beacon ticker is stopped even when its inherited TERM disposition is ignored
+
+## tests/fm-watcher-lock.test.sh
+result: 72 ok, 0 not ok
+    ok - a stop forced before the safe point waits for it and leaves no lock evidence
+    ok - a watcher that cannot publish its identity exits through its cleanup
+    ok - SIGSTOP distinguishes live PID from stale beacon and termination records the exit class
+
+## tests/fm-watch-open-decisions.test.sh
+result: 20 ok, 0 not ok
+    ok - an un-writable alarm marker keeps the alarm cadence bounded and the poll cycle surviving
+    ok - a leading-zero alarm cadence normalizes onto the documented 900s default and raises its episode alarm
+    Terminated                 FM_HOME="$dir" FM_STATE_OVERRIDE="$dir/state" FM_CONFIG_OVERRIDE="$dir/config" FM_POLL=1 FM_WATCH_TICK_ALARM_SECS=1000000 FM_OPEN_DECISION_OVERDUE_SECS=100 FM_OPEN_DECISION_BACKOFF_MAX_SECS=400 bash "$ROOT/bin/fm-watch.sh" > "$dir/cycle1.out" 2> "$dir/cycle1.err"
+
+## tests/fm-daemon.test.sh
+result: 166 ok, 0 not ok
+    ok - a seen terminal status on the picker clears like a plain stale
+    ok - a dialog name joins the escalation of an unseen status
+    ok - a dialog name after demand-deep-inspection still escalates, and a declared wait still pauses
+
+## tests/fm-busy-state.test.sh
+result: 40 ok, 0 not ok
+    ok - record parsing never clobbers the caller's positional parameters, glob setting, or fields
+    ok - the boolean view reports busy only on an exact busy verdict
+    all fm-busy-state tests passed
+
+## tests/fm-park.test.sh
+result: 34 ok, 0 not ok
+    ok - an action report survives until the tick has recorded its wake, then is reported once
+    ok - a merge-time cleanup waits for a relaunch of the same lane that is under way
+    FM_TEST_COMPLETE
+
+## tests/fm-local-llm-lib.test.sh
+result: 22 ok, 0 not ok
+    ok - ComfyUI holding the GPU blocks both the start and an already-running server
+    ok - the GPU probe reads powershell.exe, with no powershell.exe as no conflict and every other probe failure fail-closed as a conflict
+    # all fm-local-llm-lib tests passed
+
+## tests/fm-openrouter-lib.test.sh
+result: 19 ok, 0 not ok
+    ok - a null, absent or nonnumeric usage emits nothing so no bad spend is logged
+    ok - without jq, the first usage field is read rather than the last
+    # all fm-openrouter-lib tests passed
+
+## tests/fm-sbx-run.test.sh
+result: 54 ok, 0 not ok
+    ok - a capture target that refuses the write never fails the run and still removes the sandbox
+    ok - two launches of the same task leave two distinct parseable JSON files, each its launch's whole policy log
+    # all fm-sbx-run tests passed
+
+## tests/fm-wake-queue.test.sh
+result: 82 ok, 0 not ok
+    ok - watch liveness: an outcome that could not be queued surfaces as an error, not a wake, and the cycle survives it
+    ok - watch liveness: a mate mid-episode under the shared liveness lock is skipped entirely
+    ok - watch liveness: an unreachable remote secondmate is probed, preserved, and never failed over
+
+## tests/fm-watch-triage.test.sh (partial: timed out at 420s, 69 of 146 assertions ran)
+result: 69 ok, 0 not ok
+
+## tests/fm-watch-triage-pause.test.sh (blocked prerequisite)
+result: 11 ok before stopping
+    13:not ok - tasks-axi is required (captain-hold stale bound)
+    reason: external CLI tasks-axi is not installed in this environment (command -v tasks-axi fails);
+    the first 11 supervisor-pause/re-surface assertions passed before that prerequisite gate.

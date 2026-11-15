@@ -29,12 +29,14 @@
 //     arm only on its alarm exit.
 //   - Delivery is bounded so a persistent or rotating set of alerts cannot take
 //     a supervisor turn per watcher cycle: a per-event count inside a rolling
-//     window (FM_OMP_WAKE_FOLLOWUP_CEILING, default 6) and a global cap on
-//     consecutive deliveries of any event each emit one plain ceiling notice and
-//     then suppress delivery, so interleaved events cannot reset each other.
-//     A replayed replacement-handoff batch is coalesced into one session-start
-//     summary. Every suppressed row stays durable in the wake queue for
-//     bin/fm-wake-drain.sh, and a captain turn clears both bounds.
+//     window (FM_OMP_WAKE_FOLLOWUP_CEILING, default 6) and a global count of
+//     deliveries of any event inside its own rolling window
+//     (FM_OMP_WAKE_GLOBAL_CEILING, default 12 per 6h) each emit one plain
+//     ceiling notice and then suppress delivery, so interleaved events cannot
+//     reset each other and a bounded session resumes automatically once the
+//     window rolls. A replayed replacement-handoff batch is coalesced into one
+//     session-start summary. Every suppressed row stays durable in the wake
+//     queue for bin/fm-wake-drain.sh, and a captain turn clears both bounds.
 //   - Each delivery journals its close-to-delivery wait as a `delivered` event
 //     in the handoff journal, so bin/fm-handoff-latency.sh can report a flood.
 //   - On session_start a recorded lock owner the shared
@@ -170,13 +172,13 @@ type SessionGeneration = {
   // A key that recurs past FM_OMP_WAKE_FOLLOWUP_CEILING times in the window
   // gets one plain ceiling notice and is then suppressed until the window
   // rolls, so interleaved recurring events cannot each reset the other's
-  // count. A separate count of consecutive deliveries of ANY event caps
-  // rotation outright; only a captain turn clears it. The durable queue keeps
-  // every suppressed row.
+  // count. A separate rolling window of deliveries of ANY event caps rotation
+  // the same way, and lets delivery resume on its own once it rolls. The
+  // durable queue keeps every suppressed row.
   wakeKeyDeliveries: Map<string, number[]>;
   wakeKeyCeilingNotified: Set<string>;
-  wakeDeliveryStreak: number;
-  wakeGlobalCeilingReached: boolean;
+  wakeDeliveryTimes: number[];
+  wakeGlobalCeilingNotified: boolean;
   // Wake text this generation already consumed. An idle main raises
   // before_agent_start and then message_start for the same follow-up, so the
   // second event must not be mistaken for a captain steer.
@@ -227,11 +229,12 @@ const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
 // turns per window.
 const followUpCeiling = positiveInteger("FM_OMP_WAKE_FOLLOWUP_CEILING", 6);
 const followUpWindowMs = positiveInteger("FM_OMP_WAKE_FOLLOWUP_WINDOW_SECS", 300) * 1000;
-// Consecutive deliveries of any event, across keys, allowed before delivery
-// stops entirely. Strictly above the per-event bound so the per-event window
-// still governs a single recurring source while the global cap catches a
-// rotation of distinct ones.
-const globalFollowUpCeiling = followUpCeiling * 2;
+// Deliveries of any event, across keys, allowed inside the global rolling
+// window before one notice replaces the next and delivery stops until that
+// window rolls. Independent of the per-event bound so a rotation of distinct
+// events is caught without permanently disabling delivery for the session.
+const globalFollowUpCeiling = positiveInteger("FM_OMP_WAKE_GLOBAL_CEILING", 12);
+const globalFollowUpWindowMs = positiveInteger("FM_OMP_WAKE_GLOBAL_WINDOW_SECS", 21600) * 1000;
 const wakeQueueFile = `${state}/.wake-queue`;
 
 let nextGenerationId = 0;
@@ -529,11 +532,12 @@ function wakeKeyCeilingNotice(count: number, event: string): string {
 }
 
 // The notice for the global bound that catches a rotation of distinct events:
-// one plain notice, then every automatic delivery stops until the captain
-// speaks. The durable drain obligation stays visible.
+// one plain notice, then every automatic delivery stops until the rolling
+// window resumes it or the captain speaks. The durable drain obligation stays
+// visible.
 function wakeGlobalCeilingNotice(count: number): string {
   return [
-    `FIRSTMATE SUPERVISION FOLLOW-UP CEILING REACHED - this session has taken ${count} consecutive follow-up wakes since the captain's last message, so automatic delivery of every wake stops here to bound the loop. Queued wakes stay durable: run bin/fm-wake-drain.sh, handle them, and run its exact WAKE_ACK_REQUIRED command. Supervision resumes after the captain's next message.`,
+    `FIRSTMATE SUPERVISION FOLLOW-UP CEILING REACHED - this session has taken ${count} follow-up wakes inside the delivery window, so automatic delivery of every wake stops here to bound the loop. Queued wakes stay durable: run bin/fm-wake-drain.sh, handle them, and run its exact WAKE_ACK_REQUIRED command. Supervision resumes after the captain's next message or once the window rolls over.`,
   ].join("\n");
 }
 
@@ -868,8 +872,8 @@ function createGeneration(): SessionGeneration {
     deferredClose: null,
     wakeKeyDeliveries: new Map(),
     wakeKeyCeilingNotified: new Set(),
-    wakeDeliveryStreak: 0,
-    wakeGlobalCeilingReached: false,
+    wakeDeliveryTimes: [],
+    wakeGlobalCeilingNotified: false,
     consumedWakeTexts: new Set(),
   };
 }
@@ -1054,8 +1058,8 @@ export default function (pi: ExtensionAPI) {
     // bound counts deliveries since then, so delivery restarts from zero.
     owner.wakeKeyDeliveries.clear();
     owner.wakeKeyCeilingNotified.clear();
-    owner.wakeDeliveryStreak = 0;
-    owner.wakeGlobalCeilingReached = false;
+    owner.wakeDeliveryTimes = [];
+    owner.wakeGlobalCeilingNotified = false;
   }
 
   function confirmHandlingDelivery(recovery: { generation: string; watcherPid: string }): {
@@ -1254,25 +1258,33 @@ export default function (pi: ExtensionAPI) {
           }
           const message = restoration.failure ? `${pending.message}\n\n${restoration.failure}` : pending.message;
           // Bound delivery so a persistent or rotating set of recurring alerts
-          // cannot take one supervisor turn per watcher cycle. Each event is
-          // counted inside a rolling window, so interleaving distinct events
-          // cannot reset one another; independently, the total consecutive
-          // deliveries since the captain last spoke are capped. A suppressed
-          // record is settled here, but its durable queue row is untouched, so
-          // the drain still presents it and its acknowledgement still clears it.
+          // cannot take one supervisor turn per watcher cycle. Each event and
+          // the whole session are counted inside their own rolling windows, so
+          // interleaving distinct events cannot reset one another and delivery
+          // resumes on its own once a window rolls. A suppressed record is
+          // settled here, but its durable queue row is untouched, so the drain
+          // still presents it and its acknowledgement still clears it.
           const eventKey = wakeEventKey(pending.message);
           const now = Date.now();
           const recent = (owner.wakeKeyDeliveries.get(eventKey) ?? []).filter(
             (at) => now - at < followUpWindowMs,
           );
+          const globalRecent = owner.wakeDeliveryTimes.filter(
+            (at) => now - at < globalFollowUpWindowMs,
+          );
+          if (owner.wakeGlobalCeilingNotified && globalRecent.length < globalFollowUpCeiling) {
+            owner.wakeGlobalCeilingNotified = false;
+          }
           let notice = "";
           let globalNotice = false;
           let suppress = false;
-          if (owner.wakeGlobalCeilingReached) {
-            suppress = true;
-          } else if (owner.wakeDeliveryStreak >= globalFollowUpCeiling) {
-            globalNotice = true;
-            notice = wakeGlobalCeilingNotice(owner.wakeDeliveryStreak + 1);
+          if (globalRecent.length >= globalFollowUpCeiling) {
+            if (owner.wakeGlobalCeilingNotified) {
+              suppress = true;
+            } else {
+              globalNotice = true;
+              notice = wakeGlobalCeilingNotice(globalRecent.length + 1);
+            }
           } else if (recent.length >= followUpCeiling) {
             if (owner.wakeKeyCeilingNotified.has(eventKey)) {
               suppress = true;
@@ -1284,6 +1296,7 @@ export default function (pi: ExtensionAPI) {
             recent.push(now);
           }
           owner.wakeKeyDeliveries.set(eventKey, recent);
+          owner.wakeDeliveryTimes = globalRecent;
           if (suppress) {
             settleClaim("delivered");
             pending.delivered = true;
@@ -1308,9 +1321,9 @@ export default function (pi: ExtensionAPI) {
           }
           // Only a delivered notice closes the event: a failed one is retried
           // by the next identical close instead of suppressing silently.
-          owner.wakeDeliveryStreak += 1;
+          owner.wakeDeliveryTimes.push(now);
           if (globalNotice) {
-            owner.wakeGlobalCeilingReached = true;
+            owner.wakeGlobalCeilingNotified = true;
           } else if (notice) {
             owner.wakeKeyCeilingNotified.add(eventKey);
           }

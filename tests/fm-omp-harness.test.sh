@@ -38,8 +38,10 @@
 #   9. The watch extension bounds repeated delivery: wakes for the same event
 #      stop after FM_OMP_WAKE_FOLLOWUP_CEILING inside the rolling window, and a
 #      rotation of distinct recurring events trips the global cap; each bound
-#      sends one ceiling notice. A replayed handoff batch arrives as one summary
-#      wake, and every delivery is journaled for bin/fm-handoff-latency.sh.
+#      sends one ceiling notice, and the global bound's rolling window lets
+#      delivery resume without a captain turn. A replayed handoff batch arrives
+#      as one summary wake, and every delivery is journaled for
+#      bin/fm-handoff-latency.sh.
 #      Suppressed rows stay durable in the wake queue.
 set -u
 
@@ -1702,6 +1704,78 @@ EOF
   pass ".omp watch extension: a repeated wake stops after the follow-up ceiling, keeps every queue row, and journals close-to-delivery latency"
 }
 
+# The bound is a rolling window, not a session latch: the fixture keeps closing
+# on the same event after the global cap trips, and with no captain turn at all
+# a delivery must go out again once the window rolls past the early deliveries.
+test_watch_extension_global_ceiling_resumes_when_the_window_rolls() {
+  local repo home log out status
+  repo="$TMP_ROOT/watch-window/repo"; home="$TMP_ROOT/watch-window/home"; log="$TMP_ROOT/watch-window/arm.log"
+  install_omp_extension_fixture "$repo"
+  mkdir -p "$home/state"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --handling-delivered ]; then exit 0; fi
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+seq=$(( $(cat "${FM_HOME:?}/state/.queue-seq" 2>/dev/null || echo 0) + 1 ))
+printf '%s\n' "$seq" > "$FM_HOME/state/.queue-seq"
+printf '%s\t%s\tcheck\twindow-gate:t1\trecurring\n' "$(date +%s)" "$seq" >> "$FM_HOME/state/.wake-queue"
+printf 'watcher: started pid=%s (beacon 0s) recovery-generation=gen-%s\n' "$$" "$seq"
+sleep 0.2
+printf 'check: window-gate t1 parked at awaiting_approval\n'
+exit 0
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_WAKE_FOLLOWUP_CEILING=50 FM_OMP_WAKE_GLOBAL_CEILING=2 FM_OMP_WAKE_GLOBAL_WINDOW_SECS=6 FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+    EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
+import { pathToFileURL } from "node:url";
+import { writeFileSync } from "node:fs";
+const home = process.env.FM_HOME;
+writeFileSync(`${home}/state/.lock`, `${process.pid}\n`);
+const handlers = new Map(); let tool = null; const sent = [];
+const pi = {
+  on(e, h) { handlers.set(e, h); },
+  registerCommand() {},
+  registerTool(t) { tool = t; },
+  sendUserMessage(m, o) { sent.push({ m, o, at: Date.now() }); return undefined; },
+};
+const mod = await import(pathToFileURL(process.env.EXT).href);
+mod.default(pi);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+await tool.execute();
+let consumed = 0;
+const deadline = Date.now() + 40000;
+while (Date.now() < deadline && sent.length < 4) {
+  if (sent.length > consumed) {
+    const item = sent[consumed];
+    consumed += 1;
+    await handlers.get("before_agent_start")({ type: "before_agent_start", prompt: item.m }, {});
+    await handlers.get("message_start")({ type: "message_start", message: { role: "user", content: item.m } }, {});
+  } else {
+    await sleep(50);
+  }
+}
+const isCheck = (item) => /WATCHER WAKE: check: window-gate/.test(item.m);
+const firstCeiling = sent.findIndex((item) => item.m.includes("FOLLOW-UP CEILING REACHED"));
+if (firstCeiling !== 2) throw new Error(`expected 2 raw deliveries then the global notice, saw ${JSON.stringify(sent)}`);
+if (!sent.slice(0, 2).every(isCheck)) throw new Error(`the pre-ceiling deliveries lost their event: ${JSON.stringify(sent)}`);
+const resumed = sent.slice(firstCeiling + 1).find(isCheck);
+if (!resumed) throw new Error(`no delivery resumed after the global window rolled: ${JSON.stringify(sent)}`);
+if (sent.slice(firstCeiling + 1).some((item) => item.m.includes("FOLLOW-UP CEILING REACHED") && item.at < resumed.at)) {
+  throw new Error(`a notice replaced the resumed delivery: ${JSON.stringify(sent)}`);
+}
+if (resumed.at - sent[0].at < 6000) {
+  throw new Error(`delivery resumed inside the delivery window: ${JSON.stringify(sent)}`);
+}
+await handlers.get("session_shutdown")({}, {});
+process.exit(0);
+EOF
+)
+  status=$?
+  expect_code 0 "$status" "omp watch extension global window resumption: $out"
+  [ -z "$out" ] || fail "omp watch extension global window resumption test printed output: $out"
+  pass ".omp watch extension: the global delivery ceiling is a rolling window and lets delivery resume without a captain turn"
+}
+
 # The observed flood interleaved one stale wake, one gate-parked check, and one
 # turn-ended signal. A per-event consecutive counter resets on every different
 # event, so it never bounds that rotation; the per-event rolling window plus the
@@ -1730,7 +1804,7 @@ esac
 exit 0
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_WAKE_FOLLOWUP_CEILING=2 FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$log" FM_OMP_WAKE_FOLLOWUP_CEILING=2 FM_OMP_WAKE_GLOBAL_CEILING=4 FM_OMP_ARM_READY_TIMEOUT_MS=3000 FM_WATCH_REARM_RETRY_LIMIT=1 FM_WATCH_REARM_RETRY_BASE_MS=5 FM_WATCH_REARM_RETRY_MAX_MS=10 \
     EXT="$repo/.omp/extensions/fm-primary-omp-watch.ts" node --input-type=module 2>&1 <<'EOF'
 import { pathToFileURL } from "node:url";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
@@ -1972,6 +2046,7 @@ test_watch_extension_keeps_the_arm_without_the_file_or_with_off
 test_watch_extension_replays_a_host_only_boundary_across_replacement
 test_watch_extension_delivers_a_split_host_close_whole
 test_watch_extension_bounds_repeated_wakes_and_journals_latency
+test_watch_extension_global_ceiling_resumes_when_the_window_rolls
 test_watch_extension_bounds_interleaved_recurring_wakes
 test_watch_extension_journals_flood_source_identity
 test_watch_extension_coalesces_a_session_start_batch

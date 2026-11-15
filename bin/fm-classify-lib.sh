@@ -1137,10 +1137,11 @@ status_own_open_decisions() {  # <status-file>
 # one, so it reads status_open_decisions rather than the incremental fold.
 # An unreadable, missing or symlinked status file folds to nothing and answers 1,
 # which is the safe answer for every caller: no evidence, no exception.
-# Given a <run-id>, only a decision whose key is exactly `nm-<run-id>-<step>` for
-# a non-empty step counts - the key shape the brief mandates for a gate
-# escalation - so an unrelated question left open earlier in the same task is
-# never read as firstmate being told about THIS run's gate.
+# Given a <run-id>, only a decision bound to that run - key `nm-<run-id>-<step>`
+# for a non-empty step, the key shape the brief mandates for a gate escalation -
+# counts. The run is parked at one of its steps at a time, so any of its own
+# steps counts as this run's gate report; a question under another task's or
+# run's key is never read as firstmate being told about THIS run's gate.
 status_has_open_needs_decision() {  # <status-file> [<run-id>]
   local run=${2-} open line key verb
   open=$(status_open_decisions "$1")
@@ -1155,51 +1156,6 @@ status_has_open_needs_decision() {  # <status-file> [<run-id>]
   done <<EOF
 $open
 EOF
-  return 1
-}
-
-# 0 when the fold still holds an OPEN `blocked` record bound to <run-id> AND the
-# gate step <step> (key exactly `nm-<run-id>-<step>`). A blocked line is the
-# worker's own report that this run's gate needs action, so the parked-gate
-# check has nothing to add: the status line already woke firstmate when it
-# landed. The full key scope means a report about one step (or an earlier fix
-# round) never silences a newly parked gate at another step. Unreadable,
-# missing or symlinked status files answer 1, the caller's "no positive report"
-# answer.
-status_has_open_run_blocker() {  # <status-file> <run-id> <step>
-  local run=${2-} step=${3-} open line key verb
-  [ -n "$run" ] && [ -n "$step" ] || return 1
-  open=$(status_open_decisions "$1")
-  [ -n "$open" ] || return 1
-  while IFS= read -r line; do
-    key=${line%%$'\t'*}
-    verb=${line#*$'\t'}; verb=${verb%%$'\t'*}
-    [ "$verb" = blocked ] || continue
-    [ "$key" = "nm-$run-$step" ] && return 0
-  done <<EOF
-$open
-EOF
-  return 1
-}
-
-# 0 when the status log records a `resolved` answer bound to <run-id> AND the
-# gate step <step> (key exactly `nm-<run-id>-<step>`). fm-send --resolve-key
-# appends that closing line at answer time, and the run-step snapshot a parked
-# verdict comes from refreshes only when the worker touches the run, so a
-# snapshot still naming an already-answered gate is stale evidence, not a live
-# gate. The full key scope means an answer for an earlier step (or fix round)
-# never marks a newer parked gate as answered. Unreadable, missing or symlinked
-# status files answer 1, which fails open for a caller that wakes.
-status_has_resolved_run_decision() {  # <status-file> <run-id> <step>
-  local run=${2-} step=${3-} line key verb
-  [ -n "$run" ] && [ -n "$step" ] || return 1
-  [ -f "$1" ] && [ -r "$1" ] && [ ! -L "$1" ] || return 1
-  while IFS= read -r line || [ -n "$line" ]; do
-    status_line_verb "$line" verb
-    [ "$verb" = resolved ] || continue
-    key=$(_fm_decision_key "$line") || continue
-    [ "$key" = "nm-$run-$step" ] && return 0
-  done < "$1"
   return 1
 }
 

@@ -16,20 +16,21 @@
 # THE RULE. For one idle task, read the authoritative current state
 # ($FM_CREW_STATE_BIN). Only a `parked` verdict from a run step is a gate. For
 # a task not nudged within the last FM_GATE_PARK_NUDGE_SECS (default 300):
-#   - when the task's own status log holds no open needs-decision and no open
-#     blocked record bound to that run and gate step, and no resolved answer
-#     for that run and gate step, nobody has been told: send the worker the
-#     reattach nudge (read the gate with `no-mistakes axi run` and report it as
-#     its brief says) and wake firstmate;
-#   - when the worker already reported it, firstmate was already woken by that
-#     status line, so nothing is added;
-#   - when firstmate already answered it, the closed decision is the record
-#     that the gate is done, and the run-step snapshot is only stale: nothing
-#     is added. The snapshot refreshes only when the worker touches the run,
-#     so a resolved answer is the positive evidence that a parked verdict is
-#     no longer a live gate. A report or answer for a different step of the
-#     same run is not evidence about this gate. Every check is a positive
-#     match, so unreadable state fails open and the wake is delivered anyway.
+#   - when the task's status stream carries no transition for this run and gate
+#     step's decision key (`nm-<run>-<step>`), nobody has been told: send the
+#     worker the reattach nudge (read the gate with `no-mistakes axi run` and
+#     report it as its brief says) and wake firstmate;
+#   - when that key is still open (needs-decision or blocked), the worker
+#     already reported it and firstmate was woken by that status line, so
+#     nothing is added;
+#   - when that key's latest transition is a close (resolved, or the verified
+#     captain-held transfer), firstmate already answered it and the run-step
+#     snapshot is only stale: nothing is added. The snapshot refreshes only
+#     when the worker touches the run, so a close is the positive evidence that
+#     a parked verdict is no longer a live gate. A transition for a different
+#     step or run is not evidence about this gate. The key's verb is read from
+#     the one order-aware decision fold, and every check is a positive match,
+#     so unreadable state fails open and the wake is delivered anyway.
 # The nudge is the one mechanical reaction and carries no decision: it never
 # answers, approves, merges or discards, and tells the worker so. It is sent at
 # most once per interval per task, the last-nudge time being the only record, so
@@ -119,19 +120,15 @@ gate_park_check() {
   case "$run" in ''|*[[:space:]]*) return 1 ;; esac
   [ -n "$gate" ] || { gate=gate; gate_detail=gate; }
   # Only a gate nobody has reported and nobody has answered is news. The
-  # worker's own open needs-decision or blocked line bound to this run means
-  # firstmate was already woken when it landed; a resolved answer for this run
-  # means firstmate decided it, and the run-step snapshot can still name the
-  # gate because it refreshes only when the worker touches the run. The report
-  # and answer checks match the full run-and-step decision key, so evidence
-  # about a different step can never silence this gate. Every check above is a
-  # positive match, so an unreadable status log fails open and the wake still
-  # goes out.
-  if status_has_open_needs_decision "$statusf" "$run" \
-    || status_has_open_run_blocker "$statusf" "$run" "$gate" \
-    || status_has_resolved_run_decision "$statusf" "$run" "$gate"; then
-    return 1
-  fi
+  # order-aware fold read of this gate's own decision key is the whole rule: an
+  # open record means the worker already reported this gate and firstmate was
+  # woken by that line; a recorded close means firstmate already answered it,
+  # and the run-step snapshot can still name the gate because it refreshes only
+  # when the worker touches the run. A different step's or run's key is a
+  # different key, so evidence about it can never silence this gate. No
+  # transition at all - including an unreadable status log - fails open and the
+  # wake still goes out.
+  [ -z "$(status_key_closing_verb "$statusf" "nm-$run-$gate")" ] || return 1
   : > "$STATE/.gate-park-nudged-$key" || return 1
   FM_HOME="$FM_HOME" fm_run_timed "$FM_GATE_PARK_SEND_TIMEOUT" \
     "${FM_GATE_PARK_SEND_BIN:-$SCRIPT_DIR/fm-send.sh}" "$task" "$FM_GATE_PARK_NUDGE" >/dev/null 2>&1 || rc=$?

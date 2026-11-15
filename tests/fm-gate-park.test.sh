@@ -129,20 +129,77 @@ test_answered_and_reported_gate_is_left_alone() {
   [ ! -s "$dir/send.log" ] || fail "a run-blocked worker was nudged"
 
   # An answer or report for a different step of the same run is not evidence
-  # about this parked gate: it is a live gate and must still wake.
+  # about this parked gate: it is a live gate and must still wake. The same
+  # holds for an open decision at another step.
   printf 'resolved [at=%s] [key=nm-run-7-review]: approved: earlier step\n' "$now" > "$dir/state/t3.status"
   run_check "$dir" t3 test_fm-t3 >/dev/null || fail "a resolved answer for another step silenced a live gate"
   [ "$(wc -l < "$dir/send.log")" -eq 1 ] || fail "the gate with a different-step answer was not nudged exactly once"
   printf 'blocked [at=%s] [key=nm-run-7-lint]: an earlier step was blocked\n' "$now" > "$dir/state/t4.status"
   run_check "$dir" t4 test_fm-t4 >/dev/null || fail "a blocked report for another step silenced a live gate"
   [ "$(wc -l < "$dir/send.log")" -eq 2 ] || fail "the gate with a different-step report was not nudged exactly once"
+  printf 'needs-decision [at=%s] [key=nm-run-7-review]: question at another step\n' "$now" > "$dir/state/t5.status"
+  run_check "$dir" t5 test_fm-t5 >/dev/null || fail "an open decision for another step silenced a live gate"
+  [ "$(wc -l < "$dir/send.log")" -eq 3 ] || fail "the gate with a different-step decision was not nudged exactly once"
 
   # Genuinely unanswered: no report and no answer for this gate still wakes.
-  printf 'working [at=%s]: validating\n' "$now" > "$dir/state/t5.status"
-  run_check "$dir" t5 test_fm-t5 >/dev/null || fail "a genuinely unanswered gate did not wake"
-  [ "$(wc -l < "$dir/send.log")" -eq 3 ] || fail "the unanswered gate was not nudged exactly once"
+  printf 'working [at=%s]: validating\n' "$now" > "$dir/state/t6.status"
+  run_check "$dir" t6 test_fm-t6 >/dev/null || fail "a genuinely unanswered gate did not wake"
+  [ "$(wc -l < "$dir/send.log")" -eq 4 ] || fail "the unanswered gate was not nudged exactly once"
   unset FM_FAKE_CREW_STATE
-  pass "a gate firstmate already answered or the worker already reported is left alone; a different-step answer or report and a genuinely unanswered gate still wake"
+  pass "a gate firstmate already answered or the worker already reported is left alone; a different-step answer, report or open decision and a genuinely unanswered gate still wake"
+}
+
+test_same_key_repark_reads_the_latest_transition() {
+  local dir now verb
+  dir=$(make_case gp-repark); make_send_stub "$dir" >/dev/null
+  now=$(date +%s)
+  export FM_FAKE_CREW_STATE="$PARKED_HUMAN"
+
+  # Round one: the worker reported this gate and firstmate answered it.
+  printf 'needs-decision [at=%s] [key=nm-run-7-awaiting_approval]: ask-user findings=a file=/x\n' "$now" > "$dir/state/t7.status"
+  printf 'resolved [at=%s] [key=nm-run-7-awaiting_approval]: approved: your answer\n' "$now" >> "$dir/state/t7.status"
+  run_check "$dir" t7 test_fm-t7 >/dev/null && fail "an answered gate produced a wake for a stale snapshot"
+  [ ! -s "$dir/send.log" ] || fail "an answered gate nudged the worker"
+
+  # A re-park after that round reopens the same key. The fold reports the fresh
+  # opening as the key's latest transition, so the earlier close cannot answer
+  # the new park; the fresh report itself is the wake firstmate already got, so
+  # the gate check adds nothing.
+  printf 'needs-decision [at=%s] [key=nm-run-7-awaiting_approval]: ask-user findings=b file=/y\n' "$now" >> "$dir/state/t7.status"
+  verb=$(bash -c '. "$1/bin/fm-classify-lib.sh"; status_key_closing_verb "$2" nm-run-7-awaiting_approval' _ "$ROOT" "$dir/state/t7.status")
+  [ "$verb" = needs-decision ] || fail "the earlier close still read as the key's latest transition: '$verb'"
+  run_check "$dir" t7 test_fm-t7 >/dev/null && fail "the re-park's fresh report was read as answered or produced a second wake"
+  [ ! -s "$dir/send.log" ] || fail "the re-park's fresh report produced a nudge"
+
+  # Answered again: the same key's latest transition is a close once more.
+  printf 'resolved [at=%s] [key=nm-run-7-awaiting_approval]: approved: second answer\n' "$now" >> "$dir/state/t7.status"
+  verb=$(bash -c '. "$1/bin/fm-classify-lib.sh"; status_key_closing_verb "$2" nm-run-7-awaiting_approval' _ "$ROOT" "$dir/state/t7.status")
+  [ "$verb" = resolved ] || fail "the same key answered again did not report its close: '$verb'"
+  run_check "$dir" t7 test_fm-t7 >/dev/null && fail "the same key answered again produced a wake"
+  [ ! -s "$dir/send.log" ] || fail "the same key answered again nudged the worker"
+  unset FM_FAKE_CREW_STATE
+  pass "a same-key re-park reads the fresh opening, not the earlier resolved round, and its second answer answers it again"
+}
+
+test_unseen_historical_close_cannot_answer_a_repark() {
+  local dir now
+  dir=$(make_case gp-stale-close); make_send_stub "$dir" >/dev/null
+  now=$(date +%s)
+  export FM_FAKE_CREW_STATE="$PARKED_HUMAN"
+
+  # A closing line the fold cannot see follow an opening is not positive
+  # evidence about the current park: the gate stays live and wakes.
+  printf 'resolved [at=%s] [key=nm-run-7-awaiting_approval]: approved: an earlier round\n' "$now" > "$dir/state/t8.status"
+  run_check "$dir" t8 test_fm-t8 >/dev/null || fail "a same-key historical close silenced a re-parked gate"
+  [ "$(wc -l < "$dir/send.log")" -eq 1 ] || fail "the re-parked gate was not nudged exactly once"
+
+  # An earlier round under another run id is another decision key, so its
+  # close cannot answer this park either.
+  printf 'resolved [at=%s] [key=nm-run-6-awaiting_approval]: approved: earlier run\n' "$now" > "$dir/state/t9.status"
+  run_check "$dir" t9 test_fm-t9 >/dev/null || fail "an earlier run's close silenced a re-parked gate"
+  [ "$(wc -l < "$dir/send.log")" -eq 2 ] || fail "the re-park after an earlier run's close was not nudged exactly once"
+  unset FM_FAKE_CREW_STATE
+  pass "a close the fold cannot see follow its opening, or one under an earlier run, does not answer a re-parked gate"
 }
 
 test_cadence_and_non_gate_states() {
@@ -232,6 +289,8 @@ test_nudge_is_bounded_to_one_per_interval
 test_slow_state_read_is_bounded
 test_reported_gate_is_left_alone
 test_answered_and_reported_gate_is_left_alone
+test_same_key_repark_reads_the_latest_transition
+test_unseen_historical_close_cannot_answer_a_repark
 test_cadence_and_non_gate_states
 test_failed_send_still_wakes_and_says_so
 test_watcher_wakes_on_idle_parked_worker

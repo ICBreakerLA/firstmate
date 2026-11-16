@@ -1,0 +1,73 @@
+=== .github/workflows contents (ci.yml must be gone) ===
+macos-bash.yml
+no-mistakes-required.yml
+windows-herdr-spike.yml
+
+=== macos-bash.yml parsed semantically (node js-yaml) ===
+{
+  "name": "macOS Bash compatibility",
+  "on": {
+    "pull_request": {
+      "paths": [
+        "bin/**",
+        "tests/**",
+        ".github/workflows/**"
+      ]
+    },
+    "workflow_dispatch": null
+  },
+  "jobs": [
+    "macos-stock-bash"
+  ],
+  "job": {
+    "runs_on": "macos-latest",
+    "timeout": 30,
+    "steps": [
+      "actions/checkout@v6",
+      "Run snapshot consumers with stock Bash"
+    ]
+  },
+  "concurrency": {
+    "group": "macos-bash-${{ github.event.pull_request.number || github.ref }}",
+    "cancel-in-progress": true
+  }
+}
+
+=== .no-mistakes.yaml commands.test (node js-yaml) ===
+FM_LIVE=0 bin/fm-test-run.sh --check-coverage && FM_LIVE=0 bin/fm-test-run.sh --lane portable-parallel-1 --exclude-family live-harness-optin --exclude-family hc-pinned && FM_LIVE=0 bin/fm-test-run.sh --lane portable-parallel-2 --exclude-family live-harness-optin --exclude-family hc-pinned && FM_LIVE=0 bin/fm-test-run.sh --lane portable-serial --exclude-family live-harness-optin --exclude-family hc-pinned
+
+=== real runner selections for the three gate lanes (FM_LIVE=0) ===
+lane=portable-parallel-1 count=13
+lane=portable-parallel-2 count=14
+lane=portable-serial count=260
+  tests/fm-backend-hc.test.sh
+  tests/fm-macos-workflow.test.sh
+  tests/fm-nm-test-contract.test.sh
+
+=== excluded families are empty selections when requested directly ===
+family=live-harness-optin: 61 scripts
+family=real-herdr-gated: 16 scripts
+family=hc-pinned: 2 scripts
+
+=== documentation states macOS coverage is kept (not dropped) ===
+## Fork divergence: no hosted Linux suite
+
+This fork's `main` deliberately deletes `.github/workflows/ci.yml` while the public template keeps it.
+An upstream template sync reintroduces that file, and the sync worker deletes it again on the same branch and keeps `commands.test` in `.no-mistakes.yaml`.
+The reason is measured cost: the October 2026 usage report attributes 10,206 Linux minutes and 309 macOS minutes to that workflow, 83% of the account's 12,735 hosted minutes.
+The local no-mistakes gate replaces the Linux suite: `commands.test` runs the coverage guard and the three portable lanes through `bin/fm-test-run.sh`, and the portable serial lane includes `tests/fm-repo-invariants.test.sh`.
+Every lane excludes the live-harness-optin and hc-pinned families and runs under `FM_LIVE=0`, so a gate round never drives a live Herdr session, downloads release binaries, or uses a real hc binary.
+The hermetic `tests/fm-backend-hc.test.sh` stays in the portable serial lane.
+Deleting the workflow also removed the only automation for the real-Herdr and pinned-hc lanes: they are manual/pre-merge lanes now, run before merging a Herdr or hc change with `--family real-herdr-gated --fail-on-gate-skip herdr` and `--family hc-pinned --fail-on-gate-skip 'hc not found'` against the pinned build, and they are no longer automated on every pull request.
+The full portable walk takes roughly 3.5-4 hours; the operator raised the gate host's global no-mistakes `test_agent_timeout` to 5h on 2026-11-16, and [fm-test-portable-shards.md](docs/fm-test-portable-shards.md#gate-execution-bounds) owns that bound.
+Stock macOS Bash coverage is kept, not dropped: `.github/workflows/macos-bash.yml` runs its single stock Bash job only on a pull request that touches `bin/**`, `tests/**`, or `.github/workflows/**`, and on demand through `workflow_dispatch`.
+No hosted job runs on a push to `main`.
+CI prose elsewhere in this repository describes the public template rather than this fork, and this fork's externally configured ruleset still names checks the deleted workflow produced, so prune those names before relying on required checks.
+---
+In this fork that command runs `bin/fm-test-run.sh --check-coverage` and the three portable lanes with `--exclude-family live-harness-optin --exclude-family hc-pinned` under `FM_LIVE=0`, and the portable serial lane includes `tests/fm-repo-invariants.test.sh` and the hermetic `tests/fm-backend-hc.test.sh`.
+Never add `--all` or the real-Herdr family to that command: `--all` selects the live-Herdr family, and the family exclusions plus `FM_LIVE=0` keep every live Herdr session, release download, and hc binary out of the gate.
+Targeted validation beyond that suite belongs to the no-mistakes evidence path; add a scenario only when no deterministic test reaches the behavior.
+Firstmate PR #3644 demonstrated why an ad hoc script walk is not the alternative: pinning a 75-162-script walk took 32.7 minutes per validation, while the lane composition keeps broad regression bounded and reproducible.
+Stock macOS Bash compatibility stays out of the gate and remains covered by the single path-filtered `.github/workflows/macos-bash.yml` workflow.
+Other repositories keep their own suite-ownership policy rather than inheriting this fork's command.
+

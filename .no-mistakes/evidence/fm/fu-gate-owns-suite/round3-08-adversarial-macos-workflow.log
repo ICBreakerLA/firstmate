@@ -1,0 +1,11 @@
+# adversarial contract mutations, run against a clean archive of HEAD
+
+## (a) macos-bash.yml gains a push-to-main trigger
+a push trigger would spend hosted minutes on every main merge
+not ok - macOS workflow contract
+exit=1
+
+## (b) macos-bash.yml grows a second job
+the macOS workflow must carry only macos-stock-bash, got macos-stock-bash, linux-full
+not ok - macOS workflow contract
+exit=1

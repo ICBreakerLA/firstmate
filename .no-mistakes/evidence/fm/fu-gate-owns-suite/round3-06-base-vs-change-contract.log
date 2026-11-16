@@ -1,0 +1,12 @@
+# new contract tests against base commit 96dfd3b80e8a7830c1b809a0375f2146d114bd4d
+$ bash tests/fm-nm-test-contract.test.sh   # base .no-mistakes.yaml
+commands.test must be present: the local no-mistakes gate owns broad deterministic regression
+not ok - no-mistakes commands.test contract
+exit=1
+
+$ bash tests/fm-macos-workflow.test.sh   # base tree has no macos-bash.yml
+Traceback (most recent call last):
+  File "<stdin>", line 196, in <module>
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/fm-base-check.nB8bSN/.github/workflows/macos-bash.yml'
+not ok - macOS workflow contract
+exit=1

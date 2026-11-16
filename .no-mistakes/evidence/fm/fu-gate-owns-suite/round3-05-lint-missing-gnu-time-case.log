@@ -1,0 +1,6 @@
+$ (single changed case from tests/fm-lint.test.sh)
+test_memory_failure_retries_without_external_sources
+host: /usr/bin/time absent
+# the bounded fallback reports rss_kib=unavailable: GNU time is not installed at /usr/bin/time
+ok - memory failures retry without source following, exclude cross-file codes, and preserve a real fallback finding
+exit=0

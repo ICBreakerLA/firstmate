@@ -1,0 +1,25 @@
+$ bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=366 parallel=27 parallel_max_ms=850004 parallel_imbalance_ms=1977 parallel_unhinted=0 serial=323 serial_shards=12 serial_unhinted=17 serial_max_ms=1045994 serial_budget_ms=1200000 herdr=16
+exit=0
+
+== portable-parallel-1 (the exact gate clause: --exclude-family live-harness-optin --exclude-family hc-pinned)
+selected=13
+  tests/fm-backend-t3code.test.sh
+
+== portable-parallel-2 (the exact gate clause: --exclude-family live-harness-optin --exclude-family hc-pinned)
+selected=14
+
+== portable-serial (the exact gate clause: --exclude-family live-harness-optin --exclude-family hc-pinned)
+selected=260
+  tests/fm-backend-hc.test.sh
+
+== family composition through the runner
+family hc: tests/fm-backend-hc.test.sh 
+family hc-pinned: tests/fm-backend-hc-appdetect-smoke.test.sh tests/fm-backend-hc-smoke.test.sh 
+family live-harness-optin count: 61
+
+== new contract tests in the exact gate selection (portable-serial)
+tests/fm-backend-hc.test.sh
+tests/fm-macos-workflow.test.sh
+tests/fm-nm-test-contract.test.sh
+tests/fm-repo-invariants.test.sh

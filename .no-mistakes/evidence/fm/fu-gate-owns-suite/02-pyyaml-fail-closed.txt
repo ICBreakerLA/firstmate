@@ -1,0 +1,14 @@
+$ python3 -c "import yaml"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import yaml; print(yaml.__version__)
+    ^^^^^^^^^^^
+ModuleNotFoundError: No module named 'yaml'
+
+$ bash tests/fm-macos-workflow.test.sh
+not ok - python3 with PyYAML is required to parse .github/workflows/macos-bash.yml as YAML
+rc=1
+
+$ bash tests/fm-nm-test-contract.test.sh
+not ok - python3 with PyYAML is required to parse .no-mistakes.yaml for this contract
+rc=1

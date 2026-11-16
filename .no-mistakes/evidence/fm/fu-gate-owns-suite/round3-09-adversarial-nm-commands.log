@@ -1,0 +1,16 @@
+# adversarial commands.test mutations, run against a clean archive of HEAD
+
+## (a) a lane excludes the hermetic hc family instead of only hc-pinned
+commands.test must run the coverage guard then exactly the three portable lanes in order; got [['bin/fm-test-run.sh', '--check-coverage'], ['bin/fm-test-run.sh', '--lane', 'portable-parallel-1', '--exclude-family', 'live-harness-optin', '--exclude-family', 'hc-pinned'], ['bin/fm-test-run.sh', '--lane', 'portable-parallel-2', '--exclude-family', 'live-harness-optin', '--exclude-family', 'hc-pinned'], ['bin/fm-test-run.sh', '--lane', 'portable-serial', '--exclude-family', 'live-harness-optin', '--exclude-family', 'hc']]
+not ok - no-mistakes commands.test contract
+exit=1
+
+## (b) the first lane clause drops FM_LIVE=0
+every executing clause must set FM_LIVE=0 so no default-on guard runs: bin/fm-test-run.sh --check-coverage
+not ok - no-mistakes commands.test contract
+exit=1
+
+## (c) commands.test grows an --all clause
+commands.test must run the coverage guard then exactly the three portable lanes in order; got [['bin/fm-test-run.sh', '--check-coverage'], ['bin/fm-test-run.sh', '--lane', 'portable-parallel-1', '--exclude-family', 'live-harness-optin', '--exclude-family', 'hc-pinned'], ['bin/fm-test-run.sh', '--lane', 'portable-parallel-2', '--exclude-family', 'live-harness-optin', '--exclude-family', 'hc-pinned'], ['bin/fm-test-run.sh', '--lane', 'portable-serial', '--exclude-family', 'live-harness-optin', '--exclude-family', 'hc-pinned'], ['bin/fm-test-run.sh', '--all']]
+not ok - no-mistakes commands.test contract
+exit=1

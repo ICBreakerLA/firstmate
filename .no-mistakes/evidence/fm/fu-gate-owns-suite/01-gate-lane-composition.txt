@@ -1,0 +1,22 @@
+$ FM_LIVE=0 bin/fm-test-run.sh --check-coverage
+FM_TEST_COVERAGE ok total=366 parallel=27 parallel_max_ms=850004 parallel_imbalance_ms=1977 parallel_unhinted=0 serial=323 serial_shards=12 serial_unhinted=17 serial_max_ms=1045994 serial_budget_ms=1200000 herdr=16
+rc=0
+
+== --list --lane portable-parallel-1 --exclude-family live-harness-optin --exclude-family hc-pinned
+13
+== --list --lane portable-parallel-2 --exclude-family live-harness-optin --exclude-family hc-pinned
+14
+== --list --lane portable-serial --exclude-family live-harness-optin --exclude-family hc-pinned
+260
+
+== hermetic hc included in portable-serial:
+11:tests/fm-backend-hc.test.sh
+== pinned hc smokes in any gate lane (expect none):
+none
+== real-herdr / live-harness family paths leaked into lanes (expect empty):
+
+== hc-pinned family (excluded):
+tests/fm-backend-hc-appdetect-smoke.test.sh
+tests/fm-backend-hc-smoke.test.sh
+== hc family (kept):
+tests/fm-backend-hc.test.sh

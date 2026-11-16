@@ -1,0 +1,4 @@
+$ bash tests/fm-repo-invariants.test.sh
+ok - repo invariants: AGENTS.md pointer and skills symlink stay intact
+ok - repo invariants: personal fleet paths stay untracked
+exit=0

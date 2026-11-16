@@ -1,0 +1,49 @@
+# PyYAML is absent here, so the two contract tests fail closed. This is an
+# independent semantic check of the same two artifacts using the real js-yaml
+# parser (node), mirroring the contract tests' assertions.
+
+$ node /tmp/check-macos.js
+PASS macos-bash.yml semantics: single job, no push, dispatch, path filters, concurrency cancel, finite timeout, stock bash step
+rc=0
+
+$ node /tmp/check-nm.js
+PASS .no-mistakes.yaml commands.test: coverage guard + three lanes, FM_LIVE=0, excludes live-harness-optin and hc-pinned, no --all
+[
+ [
+  "bin/fm-test-run.sh",
+  "--check-coverage"
+ ],
+ [
+  "bin/fm-test-run.sh",
+  "--lane",
+  "portable-parallel-1",
+  "--exclude-family",
+  "live-harness-optin",
+  "--exclude-family",
+  "hc-pinned"
+ ],
+ [
+  "bin/fm-test-run.sh",
+  "--lane",
+  "portable-parallel-2",
+  "--exclude-family",
+  "live-harness-optin",
+  "--exclude-family",
+  "hc-pinned"
+ ],
+ [
+  "bin/fm-test-run.sh",
+  "--lane",
+  "portable-serial",
+  "--exclude-family",
+  "live-harness-optin",
+  "--exclude-family",
+  "hc-pinned"
+ ]
+]
+rc=0
+
+== workflows present (ci.yml deleted, macos-bash.yml added):
+macos-bash.yml
+no-mistakes-required.yml
+windows-herdr-spike.yml

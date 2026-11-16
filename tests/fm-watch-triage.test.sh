@@ -940,8 +940,8 @@ test_turn_ended_churn_resets_wedge_state_before_stale_poll() {
 # deferral window), the marker-creation loop expands an empty missing_keys and
 # the cleanup expands an empty created_keys. Under `set -u`, bash 3.2 aborts the
 # whole watcher on an empty "${arr[@]}" where newer bash no-ops, so the absorb
-# must land without re-marking the window. The macos-stock-bash CI lane runs
-# this case under real /bin/bash 3.2 via FM_TEST_STOCK_BASH.
+# must land without re-marking the window. The stock macOS Bash job runs this
+# case under real /bin/bash 3.2 via FM_TEST_STOCK_BASH.
 test_turn_ended_churn_existing_marker_absorbed() {
   local dir state fakebin out capture_file window key marker_since pid
   dir=$(make_case turn-ended-churn-marked); state="$dir/state"; fakebin="$dir/fakebin"
@@ -6123,9 +6123,10 @@ test_wedge_stale_append_failure_restores_escalation_count() {
   pass "a failed wedge append restores its count, so the retry delivers escalation 1"
 }
 
-# CI's stock macOS Bash lane sets FM_TEST_STOCK_BASH=1 to run just the bash-3.2
-# churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
-# Adding another stock-bash case means adding it to this list, not to ci.yml.
+# The stock macOS Bash job in .github/workflows/macos-bash.yml sets
+# FM_TEST_STOCK_BASH=1 to run just the bash-3.2 churn-deferral regression. The
+# rest of this file is not a 3.2 snapshot suite. Adding another stock-bash case
+# means adding it to this list, not to the workflow.
 if [ -n "${FM_TEST_STOCK_BASH:-}" ]; then
   fm_test_run test_turn_ended_churn_existing_marker_absorbed
   exit 0

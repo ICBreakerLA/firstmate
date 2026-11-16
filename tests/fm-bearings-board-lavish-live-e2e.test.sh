@@ -17,9 +17,9 @@
 # a human. The artifact is a scratch page in a temporary directory, and the
 # session it opens is ended again before the guard returns.
 #
-# Standard CI has no lavish-axi, so this reports a capability skip there. The
-# portable counterpart in tests/fm-bearings-board.test.sh pins the build's logic
-# in CI against a stub that reproduces these shapes. Run this guard after a
+# The portable suite has no lavish-axi, so this reports a capability skip there.
+# The portable counterpart in tests/fm-bearings-board.test.sh pins the build's
+# logic against a stub that reproduces these shapes. Run this guard after a
 # lavish-axi upgrade and before trusting refreshed evidence.
 set -u
 

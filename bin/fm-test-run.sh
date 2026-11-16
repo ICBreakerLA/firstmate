@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fm-test-run.sh - single owner of Firstmate's behavior-test runner, lane
-# composition for portable CI shards, local --jobs for proven-concurrent work,
+# composition for the portable lanes, local --jobs for proven-concurrent work,
 # timing markers, and the complete-regression coverage guard.
 #
 # Selection modes (exactly one of: --all, --family, --changed, --lane,
@@ -45,12 +45,12 @@
 #   --base <ref>    with --changed, compare against this ref (default: origin/main)
 #   --exclude-family <name>
 #                   drop scripts whose primary family matches <name> after selection
-#                   (repeatable; portable CI lanes exclude real-herdr-gated so the
-#                   dedicated required Herdr lane owns that coverage)
+#                   (repeatable; the portable lanes exclude real-herdr-gated so the
+#                   dedicated real-Herdr lane owns that coverage)
 #   --fail-on-gate-skip <token>
 #                   after each script, fail the run if any output line contains
 #                   "skip: <token>" (e.g. --fail-on-gate-skip 'herdr not found').
-#                   The required Herdr CI lane uses this so a missing pin cannot
+#                   The real-Herdr lane uses this so a missing pin cannot
 #                   silently pass as a gate skip.
 #   --jobs N        run the selected scripts with up to N concurrent workers.
 #                   Plain --changed and a plain list of script paths use
@@ -132,14 +132,14 @@
 # These sums exclude unhinted members and are estimates, not measured job wall
 # times. Missing parallel hints are reported without failing this guard.
 #
-# portable-serial stays strictly serial. Its CI shards (portable-serial-<k>of<n>)
+# portable-serial stays strictly serial. Its shards (portable-serial-<k>of<n>)
 # split it across separate runners, so two of its stateful scripts still never
 # share a machine. This script owns <n>: a lane whose <n> disagrees with the
-# configured shard count is refused, so a CI matrix cannot silently drop a shard.
+# configured shard count is refused, so a shard set cannot silently drop a shard.
 # --check-coverage also reports serial_max_ms (largest packed hint sum, including
 # default weights) and serial_budget_ms (the 20-minute packing target), refusing
 # a split above that target. Neither figure is an execution timeout or proof of
-# observed headroom: refresh growing files from CI measurements.
+# observed headroom: refresh growing files from recorded measurements.
 # --changed is conservative: it over-selects related families rather than
 # under-selecting, and never expands to the complete suite unless --all. The one
 # place it is deliberately narrow is a bin/ path with no curated family: a test
@@ -200,11 +200,11 @@ PER_SCRIPT_TIMEOUT_SECS=0
 CHANGED_DEFAULT_TIMEOUT_SECS=1500
 
 # How many separate-runner shards the portable serial remainder splits into.
-# One owner: CI lane names carry this count and are refused when they disagree.
+# One owner: shard lane names carry this count and are refused when they disagree.
 PORTABLE_SERIAL_SHARDS=12
 
 # Conservative balance hint for a portable-serial script with no measurement.
-# Rounded above the current CI mean, including the capability-skipped scripts.
+# Rounded above the current measured mean, including the capability-skipped scripts.
 PORTABLE_SERIAL_DEFAULT_WEIGHT_MS=45000
 
 # Packing target, not an execution timeout: leave at least ten minutes of the
@@ -214,7 +214,7 @@ PORTABLE_SERIAL_MAX_WEIGHT_MS=1200000
 
 # Largest share of the serial lane allowed to run on the default weight above.
 # Hints are what keep the shards balanced, so once too much of the lane is
-# unmeasured the balance is guesswork and one shard can reach its CI job cap
+# unmeasured the balance is guesswork and one shard can reach its hosted job cap
 # while another sits idle. The coverage guard refuses past this share, which
 # leaves room for newly added tests while making a stale hint table fail loudly
 # instead of silently. docs/fm-test-portable-shards.md owns the refresh.
@@ -308,7 +308,8 @@ family_for_basename() {
     fm-tmux-submit-busy.test.sh|fm-trace-context-lib.test.sh|\
     fm-transition-lib.test.sh|\
     fm-test-run.test.sh|fm-test-isolation-proof.test.sh|fm-test-tap-verify.test.sh|\
-    fm-test-linux.test.sh)
+    fm-test-linux.test.sh|fm-nm-test-contract.test.sh|fm-macos-workflow.test.sh|\
+    fm-repo-invariants.test.sh)
       printf '%s\n' pure-contract-unit
       ;;
     fm-daemon.test.sh|fm-guard-stale-banner.test.sh|fm-pi-watch-extension.test.sh|\
@@ -647,8 +648,8 @@ EOF
 
 # Families whose scripts are proven safe to run concurrently WITH EACH OTHER
 # under the bounded local scheduler. Deliberately separate from the
-# proven-isolated set, which must stay exactly equal to the portable CI shard
-# union (see the coverage guard); these families keep their serial CI lane and
+# proven-isolated set, which must stay exactly equal to the portable shard
+# union (see the coverage guard); these families keep their serial lane and
 # only gain concurrency for a local run.
 #
 # Membership is empirical, never assumed:
@@ -784,7 +785,6 @@ tests/fm-calm-pi-queue-retention-live-e2e.test.sh 1345
 tests/fm-capacity-auto.test.sh 36243
 tests/fm-capacity.test.sh 7630
 tests/fm-check-unregister.test.sh 469
-tests/fm-ci-workflow.test.sh 5833
 tests/fm-classify-corr-token.test.sh 23085
 tests/fm-classify-decision-key.test.sh 4362
 tests/fm-classify-status-flood.test.sh 2000
@@ -865,6 +865,7 @@ tests/fm-live-lab-up-mate.test.sh 17363
 tests/fm-live-lab.test.sh 79639
 tests/fm-local-llm-lib.test.sh 3362
 tests/fm-local-llm-live.test.sh 60
+tests/fm-macos-workflow.test.sh 300
 tests/fm-mail-check.test.sh 7524
 tests/fm-mail.test.sh 9684
 tests/fm-merge-local.test.sh 6737
@@ -933,6 +934,7 @@ tests/fm-remote-secondmate-parent-binding.test.sh 42294
 tests/fm-remote-secondmate-relaunch.test.sh 879
 tests/fm-remote-secondmate-trace-context.test.sh 74870
 tests/fm-remote-transport-lanes.test.sh 66089
+tests/fm-repo-invariants.test.sh 300
 tests/fm-review-check.test.sh 1796
 tests/fm-rovo-harness.test.sh 15691
 tests/fm-rovo-signals-live-e2e.test.sh 52
@@ -1160,7 +1162,7 @@ portable_serial_assignments() {
 }
 
 # Parse "<k>of<n>" from a portable-serial shard lane and echo <k>, refusing when
-# <n> disagrees with this script's configured count so a CI matrix built for a
+# <n> disagrees with this script's configured count so a shard set built for a
 # different shard count fails loudly instead of dropping tests.
 portable_serial_shard_index() {
   local lane=$1 spec index count
@@ -1277,7 +1279,7 @@ run_coverage_guard() {
     return 1
   fi
 
-  # Serial (whole lane and each CI shard) + Herdr lane listings without
+  # Serial (whole lane and each shard) + Herdr lane listings without
   # disturbing a caller's selection.
   saved_scripts=("${SCRIPTS[@]+"${SCRIPTS[@]}"}")
   SCRIPTS=()
@@ -1304,8 +1306,8 @@ run_coverage_guard() {
   printf '%s\n' "${SCRIPTS[@]+"${SCRIPTS[@]}"}" | LC_ALL=C sort -u >"$tmp/herdr"
   SCRIPTS=("${saved_scripts[@]+"${saved_scripts[@]}"}")
 
-  # Every serial script runs in exactly one CI shard: no duplicate work across
-  # runners, and no script silently left out of the required lane.
+  # Every serial script runs in exactly one shard: no duplicate work across
+  # shard runs, and no script silently left out of the portable lane.
   # A split script appears on several shards by design, once per slice, so
   # duplicates and omissions are judged per slice unit rather than per path.
   portable_serial_assignments | cut -f2 | LC_ALL=C sort >"$tmp/serial_units_raw"
@@ -1379,7 +1381,7 @@ run_coverage_guard() {
 
   # Hint drift is what makes a balanced-looking partition run unbalanced: the
   # shards are packed from hints, so every unmeasured script is balanced on a
-  # guess and enough of them let one shard reach its CI job cap while another
+  # guess and enough of them let one shard reach its hosted job cap while another
   # runner sits idle. Bound the unmeasured share here rather than waiting for a
   # shard to time out.
   portable_serial_unhinted >"$tmp/unhinted"
@@ -2018,7 +2020,10 @@ families_for_changed_path() {
     .agents/skills/*/SKILL.md)
       printf '%s\n' pure-contract-unit
       ;;
-    .github/workflows/ci.yml|.no-mistakes.yaml)
+    .github/workflows/macos-bash.yml)
+      printf '%s\n' pure-contract-unit
+      ;;
+    .no-mistakes.yaml)
       printf '%s\n' pure-contract-unit
       printf '%s\n' real-herdr-gated
       ;;
@@ -2623,8 +2628,8 @@ done
 # admission rule below. Naming scripts is how a local verification round asks
 # for exactly those subjects, so it gets bounded concurrency rather than a
 # serial chain of separate runs.
-# The curated selections stay untouched: --lane composes CI shards whose serial
-# lane must stay strictly serial, --family is what the required Herdr lane runs,
+# The curated selections stay untouched: --lane composes shards whose serial
+# lane must stay strictly serial, --family is what the real-Herdr lane runs,
 # and --all is a deliberate complete regression.
 AUTO_CONCURRENCY=0
 if { [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq 0 ]; then

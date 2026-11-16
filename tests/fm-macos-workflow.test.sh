@@ -12,32 +12,52 @@ WORKFLOW="$ROOT/.github/workflows/macos-bash.yml"
 
 test_macos_workflow_is_only_the_stock_bash_job() {
   assert_present "$WORKFLOW" ".github/workflows/macos-bash.yml is missing"
-  command -v ruby >/dev/null 2>&1 \
-    || fail "ruby is required to parse .github/workflows/macos-bash.yml as YAML"
-  ruby -ryaml -e '
-doc = YAML.load_file(ARGV[0])
-jobs = doc.fetch("jobs")
-raise "the macOS workflow must carry only macos-stock-bash, got #{jobs.keys.join(", ")}" \
-  unless jobs.keys == ["macos-stock-bash"]
-triggers = doc[true] || doc["on"]
-raise "a push trigger would spend hosted minutes on every main merge" if triggers.key?("push")
-raise "the stock Bash job must be dispatchable by hand" unless triggers.key?("workflow_dispatch")
-concurrency = doc["concurrency"]
-raise "the workflow needs a concurrency group so a superseded pull request cancels its in-flight run" unless concurrency.is_a?(Hash)
-raise "concurrency.group must be non-empty, got #{concurrency["group"].inspect}" \
-  unless concurrency["group"].is_a?(String) && !concurrency["group"].strip.empty?
-raise "concurrency.cancel-in-progress must be true, got #{concurrency["cancel-in-progress"].inspect}" \
-  unless concurrency["cancel-in-progress"] == true
-paths = triggers.fetch("pull_request").fetch("paths")
-expected = %w[bin/** tests/** .github/workflows/**]
-raise "pull_request paths must be #{expected.join(", ")}, got #{paths.join(", ")}" unless paths.sort == expected.sort
-job = jobs.fetch("macos-stock-bash")
-timeout = job["timeout-minutes"]
-raise "macos-stock-bash must keep a finite timeout, got #{timeout.inspect}" unless timeout.is_a?(Integer) && timeout.positive?
-steps = job.fetch("steps")
-raise "macos-stock-bash must keep its stock Bash step" \
-  unless steps.any? { |s| s["shell"].to_s.start_with?("/bin/bash") }
-' "$WORKFLOW" || fail "macOS workflow contract"
+  command -v python3 >/dev/null 2>&1 \
+    || fail "python3 with PyYAML is required to parse .github/workflows/macos-bash.yml as YAML"
+  python3 -c 'import yaml' >/dev/null 2>&1 \
+    || fail "python3 with PyYAML is required to parse .github/workflows/macos-bash.yml as YAML"
+  python3 - "$WORKFLOW" <<'PY' || fail "macOS workflow contract"
+import sys
+
+import yaml
+
+
+def fail(message):
+    sys.stderr.write(message + "\n")
+    sys.exit(1)
+
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    doc = yaml.safe_load(fh)
+
+jobs = doc["jobs"]
+if list(jobs.keys()) != ["macos-stock-bash"]:
+    fail("the macOS workflow must carry only macos-stock-bash, got " + ", ".join(jobs.keys()))
+triggers = doc.get(True) or doc.get("on") or {}
+if "push" in triggers:
+    fail("a push trigger would spend hosted minutes on every main merge")
+if "workflow_dispatch" not in triggers:
+    fail("the stock Bash job must be dispatchable by hand")
+concurrency = doc.get("concurrency")
+if not isinstance(concurrency, dict):
+    fail("the workflow needs a concurrency group so a superseded pull request cancels its in-flight run")
+group = concurrency.get("group")
+if not isinstance(group, str) or not group.strip():
+    fail("concurrency.group must be non-empty, got {!r}".format(group))
+if concurrency.get("cancel-in-progress") is not True:
+    fail("concurrency.cancel-in-progress must be true, got {!r}".format(concurrency.get("cancel-in-progress")))
+paths = triggers["pull_request"]["paths"]
+expected = ["bin/**", "tests/**", ".github/workflows/**"]
+if sorted(paths) != sorted(expected):
+    fail("pull_request paths must be {}, got {}".format(", ".join(expected), ", ".join(paths)))
+job = jobs["macos-stock-bash"]
+timeout = job.get("timeout-minutes")
+if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
+    fail("macos-stock-bash must keep a finite timeout, got {!r}".format(timeout))
+steps = job["steps"]
+if not any(str(step.get("shell", "")).startswith("/bin/bash") for step in steps):
+    fail("macos-stock-bash must keep its stock Bash step")
+PY
   pass "the macOS workflow keeps only the path-filtered stock Bash job, with no push trigger"
 }
 

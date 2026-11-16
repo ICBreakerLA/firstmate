@@ -11,101 +11,126 @@ set -u
 NM="$ROOT/.no-mistakes.yaml"
 
 test_nm_commands_test_runs_the_portable_lanes() {
-  command -v ruby >/dev/null 2>&1 \
-    || fail "ruby is required to parse .no-mistakes.yaml for this contract"
-  ruby -ryaml -rshellwords -ropen3 - "$NM" "$ROOT" <<'RUBY' || fail "no-mistakes commands.test contract"
-doc_path, root = ARGV
+  command -v python3 >/dev/null 2>&1 \
+    || fail "python3 with PyYAML is required to parse .no-mistakes.yaml for this contract"
+  python3 -c 'import yaml' >/dev/null 2>&1 \
+    || fail "python3 with PyYAML is required to parse .no-mistakes.yaml for this contract"
+  python3 - "$NM" "$ROOT" <<'PY' || fail "no-mistakes commands.test contract"
+import os
+import re
+import shlex
+import subprocess
+import sys
 
-def split_clauses(command)
-  parts = []
-  buffer = +""
-  quote = nil
-  index = 0
-  while index < command.length
-    char = command[index]
-    if quote
-      buffer << char
-      if char == quote
-        quote = nil
-      elsif char == "\\" && quote == '"' && index + 1 < command.length
+import yaml
+
+doc_path, root = sys.argv[1], sys.argv[2]
+
+
+def fail(message):
+    sys.stderr.write(message + "\n")
+    sys.exit(1)
+
+
+def split_clauses(command):
+    parts = []
+    buffer = ""
+    quote = None
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if quote:
+            buffer += char
+            if char == quote:
+                quote = None
+            elif char == "\\" and quote == '"' and index + 1 < len(command):
+                index += 1
+                buffer += command[index]
+        elif char == '"' or char == "'":
+            quote = char
+            buffer += char
+        elif char == "&" and index + 1 < len(command) and command[index + 1] == "&":
+            parts.append(buffer.strip())
+            buffer = ""
+            index += 1
+        else:
+            buffer += char
         index += 1
-        buffer << command[index]
-      end
-    elsif char == '"' || char == "'"
-      quote = char
-      buffer << char
-    elsif char == "&" && command[index + 1] == "&"
-      parts << buffer.strip
-      buffer = +""
-      index += 1
-    else
-      buffer << char
-    end
-    index += 1
-  end
-  parts << buffer.strip
-  parts.reject(&:empty?)
-end
+    parts.append(buffer.strip())
+    return [part for part in parts if part]
 
-def split_clause(clause)
-  tokens = Shellwords.shellsplit(clause)
-  env = {}
-  while (token = tokens.first) && token =~ /\A([A-Za-z_][A-Za-z0-9_]*)=(.*)\z/m
-    env[Regexp.last_match(1)] = Regexp.last_match(2)
-    tokens.shift
-  end
-  [env, tokens]
-end
 
-def list_selected(runner, args)
-  output, status = Open3.capture2(runner, "--list", *args)
-  raise "#{runner} --list #{args.join(' ')} failed" unless status.success?
-  output.lines.map(&:chomp).reject(&:empty?)
-end
+def split_clause(clause):
+    tokens = shlex.split(clause)
+    env = {}
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        name, _, value = tokens[0].partition("=")
+        env[name] = value
+        tokens.pop(0)
+    return env, tokens
 
-doc = YAML.load_file(doc_path) || {}
-commands = doc["commands"]
-command = commands.is_a?(Hash) ? commands["test"] : nil
-raise "commands.test must be present: the local no-mistakes gate owns broad deterministic regression" if command.nil? || command == false || command.to_s.strip.empty?
 
-parsed = split_clauses(command.to_s).map { |clause| split_clause(clause) }
-lanes = %w[portable-parallel-1 portable-parallel-2 portable-serial]
-expected = [["bin/fm-test-run.sh", "--check-coverage"]] +
-           lanes.map { |lane| ["bin/fm-test-run.sh", "--lane", lane, "--exclude-family", "live-harness-optin", "--exclude-family", "hc-pinned"] }
-actual = parsed.map(&:last)
-raise "commands.test must run the coverage guard then exactly the three portable lanes in order; got #{actual.inspect}" unless actual == expected
+def list_selected(runner, args):
+    proc = subprocess.run(
+        [runner, "--list", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    if proc.returncode != 0:
+        fail("{} --list {} failed".format(runner, " ".join(args)))
+    return [line for line in proc.stdout.splitlines() if line]
 
-parsed.each do |env, argv|
-  raise "every executing clause must set FM_LIVE=0 so no default-on guard runs: #{argv.join(' ')}" unless env["FM_LIVE"] == "0"
-  raise "commands.test must never select --all: #{argv.join(' ')}" if argv.include?("--all")
-  argv.each_cons(2) do |flag, value|
-    if flag == "--family" && %w[real-herdr-gated live-harness-optin hc-pinned].include?(value)
-      raise "commands.test must never select the #{value} family: #{argv.join(' ')}"
-    end
-  end
-end
 
-runner = File.join(root, "bin/fm-test-run.sh")
-bad_families = %w[live-harness-optin real-herdr-gated hc-pinned]
-bad_paths = bad_families.flat_map { |family| list_selected(runner, ["--family", family]) }.uniq
+with open(doc_path, encoding="utf-8") as fh:
+    doc = yaml.safe_load(fh) or {}
+commands = doc.get("commands")
+command = commands.get("test") if isinstance(commands, dict) else None
+if command is None or command is False or not str(command).strip():
+    fail("commands.test must be present: the local no-mistakes gate owns broad deterministic regression")
+
+parsed = [split_clause(clause) for clause in split_clauses(str(command))]
+lanes = ["portable-parallel-1", "portable-parallel-2", "portable-serial"]
+expected = [["bin/fm-test-run.sh", "--check-coverage"]] + [
+    ["bin/fm-test-run.sh", "--lane", lane, "--exclude-family", "live-harness-optin", "--exclude-family", "hc-pinned"]
+    for lane in lanes
+]
+actual = [argv for _env, argv in parsed]
+if actual != expected:
+    fail("commands.test must run the coverage guard then exactly the three portable lanes in order; got {!r}".format(actual))
+
+for env, argv in parsed:
+    if env.get("FM_LIVE") != "0":
+        fail("every executing clause must set FM_LIVE=0 so no default-on guard runs: " + " ".join(argv))
+    if "--all" in argv:
+        fail("commands.test must never select --all: " + " ".join(argv))
+    for index in range(len(argv) - 1):
+        flag, value = argv[index], argv[index + 1]
+        if flag == "--family" and value in ("real-herdr-gated", "live-harness-optin", "hc-pinned"):
+            fail("commands.test must never select the {} family: {}".format(value, " ".join(argv)))
+
+runner = os.path.join(root, "bin/fm-test-run.sh")
+bad_families = ["live-harness-optin", "real-herdr-gated", "hc-pinned"]
+bad_paths = set()
+for family in bad_families:
+    bad_paths.update(list_selected(runner, ["--family", family]))
 selected_all = []
 
-parsed.drop(1).each do |_env, argv|
-  lane = argv[argv.index("--lane") + 1]
-  selected = list_selected(runner, argv.drop(1))
-  selected_all.concat(selected)
-  leaked = selected & bad_paths
-  raise "lane #{lane} must not select the live-harness, real-Herdr, or pinned hc families, got: #{leaked.join(', ')}" unless leaked.empty?
-end
+for _env, argv in parsed[1:]:
+    lane = argv[argv.index("--lane") + 1]
+    selected = list_selected(runner, argv[1:])
+    selected_all.extend(selected)
+    leaked = [path for path in selected if path in bad_paths]
+    if leaked:
+        fail("lane {} must not select the live-harness, real-Herdr, or pinned hc families, got: {}".format(lane, ", ".join(leaked)))
 
 hermetic_hc = "tests/fm-backend-hc.test.sh"
-raise "commands.test must keep the hermetic hc suite gated: #{hermetic_hc} was not selected" unless selected_all.include?(hermetic_hc)
+if hermetic_hc not in selected_all:
+    fail("commands.test must keep the hermetic hc suite gated: {} was not selected".format(hermetic_hc))
 
 witness = "tests/fm-backend-t3code.test.sh"
-raise "commands.test must select the default-on guard witness #{witness}" unless selected_all.include?(witness)
+if witness not in selected_all:
+    fail("commands.test must select the default-on guard witness {}".format(witness))
 
-puts "commands.test runs the exact portable lane sequence, excludes the live-harness and pinned-hc families while keeping the hermetic hc suite, and disables default-on guards"
-RUBY
+print("commands.test runs the exact portable lane sequence, excludes the live-harness and pinned-hc families while keeping the hermetic hc suite, and disables default-on guards")
+PY
   local witness_name=tests/fm-backend-t3code.test.sh witness_out
   # Run the selected suite's own default-on guard; FM_LIVE=0 must short-circuit it.
   witness_out=$(FM_LIVE=0 FM_TEST_ONLY=t3_verify_live_codex_env bash "$ROOT/$witness_name" 2>&1) \

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm-hc-ci-cleanup.sh - bounded cleanup of CI-owned herdr-core (`hc`) lab
+# fm-hc-ci-cleanup.sh - bounded cleanup of job-owned herdr-core (`hc`) lab
 # sessions.
 #
 # Snapshot the lab session inventory before the real-hc suite, then at job

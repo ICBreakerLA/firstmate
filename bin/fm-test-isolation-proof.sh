@@ -20,7 +20,7 @@
 # Options:
 #   --pool NAME  candidate pool: "portable" (default, this harness's own curated
 #                set) or a bin/fm-test-run.sh family name, to prove a stateful
-#                family that stays serial on CI but may earn bounded local
+#                family that stays serial in the portable lane but may earn bounded local
 #                concurrency. bin/fm-test-run.sh's list_concurrent_safe_families
 #                records which families passed.
 #   --jobs N     max concurrent workers (default: 4; min 1)
@@ -134,7 +134,7 @@ exclusion_reason() {
     fm-opencode-primary-live-e2e.test.sh|fm-pi-primary-live-e2e.test.sh|\
     fm-quota-array-dispatch-live-e2e.test.sh|fm-send-secondmate-marker-herdr-e2e.test.sh|\
     fm-sessionstart-instruction-refresh-live-e2e.test.sh)
-      printf '%s\n' 'live harness opt-in; never default parallel CI'
+      printf '%s\n' 'live harness opt-in; never default parallel in the gate'
       ;;
     fm-backend-autodetect-smoke.test.sh|fm-backend-herdr-eventwait-smoke.test.sh|\
     fm-backend-herdr-presentation-e2e.test.sh|fm-backend-herdr-prune-safety-e2e.test.sh|\
@@ -350,7 +350,7 @@ if [ "$LIST_EXCLUSIONS" -eq 1 ]; then
 fi
 
 # The portable pool is this harness's own curated set. A family pool proves a
-# stateful family that stays serial on CI but may earn bounded local
+# stateful family that stays serial in the portable lane but may earn bounded local
 # concurrency; bin/fm-test-run.sh's list_concurrent_safe_families records which
 # families passed. Membership stays empirical: a family that fails here is not
 # admitted, and this harness never retries a failure into green.

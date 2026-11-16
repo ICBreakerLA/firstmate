@@ -356,6 +356,14 @@ fm_lint_bounds_supported() {
   return 0
 }
 
+# fm_lint_rss_supported: per-root peak-RSS reporting needs GNU time, which
+# bin/fm-lint.sh reads at /usr/bin/time. Bounds and RSS reporting are separate
+# capabilities: a host can enforce the memory envelope and still have no GNU
+# time, in which case the root records rss_kib=unavailable.
+fm_lint_rss_supported() {
+  [ -x /usr/bin/time ]
+}
+
 # fm_lint_stub_reactive_shellcheck <fakebin-dir>: a ShellCheck stub whose
 # behavior is steered by the basename of the root it is asked to analyze, so
 # bounded-execution tests can mix a hang, a memory-limit death, and clean
@@ -1748,7 +1756,13 @@ SH
     if [ "$mode" -eq 1 ]; then
       assert_grep $'meta\tbounds_enforced\t1' "$tmp/pass.$mode.roots.tsv" \
         "the bounded fallback did not enforce bounds"
-      case "$rss_kib" in ''|*[!0-9]*) fail "the fallback attempts lost per-root RSS reporting: $rss_kib" ;; esac
+      if fm_lint_rss_supported; then
+        case "$rss_kib" in ''|*[!0-9]*) fail "the fallback attempts lost per-root RSS reporting: $rss_kib" ;; esac
+      else
+        [ "$rss_kib" = unavailable ] \
+          || fail "the bounded fallback should report unavailable RSS without GNU time, got: $rss_kib"
+        printf '# the bounded fallback reports rss_kib=unavailable: GNU time is not installed at /usr/bin/time\n'
+      fi
     else
       assert_grep $'meta\tbounds_enforced\t0' "$tmp/pass.$mode.roots.tsv" \
         "the unbounded fallback unexpectedly enforced bounds"

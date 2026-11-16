@@ -125,9 +125,19 @@ lock_free() {
 }
 
 # end_holder: what a wrapper's exit does to a claim nobody took over.
+# The brief settle lets the holder's cat reach the FIFO first: an open/close
+# before the cat opens is a transient writer the cat never sees, and the cat
+# would then block on its own open forever.
 end_holder() {
+  sleep 0.2
   exec 6<>"$FM_LOCAL_LLM_LOCK.handoff"
   exec 6>&-
+}
+
+# release_gone: 0 only when a released claim left no lock file and no FIFO.
+release_gone() {
+  [ ! -e "$FM_LOCAL_LLM_LOCK" ] || fail "a released claim must remove the lock file"
+  [ ! -e "$FM_LOCAL_LLM_LOCK.handoff" ] || fail "a released claim must remove the handoff FIFO"
 }
 
 test_a_claim_refuses_a_second_and_names_its_task() {
@@ -173,6 +183,102 @@ test_killing_the_holder_releases_the_claim() {
   kill "$FM_LOCAL_LLM_HOLDER" || fail "the holder must be a live process"
   lock_free || fail "a killed holder must release the slot"
   pass "the spawn releases an untaken claim by killing its holder"
+}
+
+test_a_matching_claim_is_released_and_the_slot_is_claimable_again() {
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  assert_equals "$FM_LOCAL_LLM_HOLDER" "$(sed -n 2p "$FM_LOCAL_LLM_LOCK")" "the claim persists its holder's pid on the lock file's second line"
+  fm_local_llm_claim task-b 2>/dev/null && fail "the claim must refuse a second task until it is released"
+  fm_local_llm_release task-a || fail "releasing this task's own claim must succeed"
+  wait "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  ! kill -0 "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || fail "the release must end the persisted holder"
+  release_gone
+  lock_free || fail "a released claim must free the flock"
+  fm_local_llm_claim task-b || fail "the slot must be claimable by the next task after a release"
+  assert_equals "task-b" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the next task's claim names it"
+  end_holder
+  lock_free || fail "the next claim must end cleanly"
+  pass "a release ends the holder, removes the claim, and frees the slot for the next task"
+}
+
+test_release_leaves_another_tasks_claim_running() {
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  fm_local_llm_release task-b || fail "releasing another task's claim must succeed as a no-op"
+  assert_equals "task-a" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the other task's claim must keep its name"
+  kill -0 "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || fail "a release must never kill a running claim's holder"
+  fm_local_llm_claim task-b 2>/dev/null && fail "the running claim must still refuse a second task"
+  fm_local_llm_release task-a || fail "releasing the matching claim must succeed"
+  wait "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  release_gone
+  lock_free || fail "the released claim must free the flock"
+  pass "a release leaves another task's running claim untouched"
+}
+
+test_releasing_no_claim_is_a_clean_noop() {
+  # A lock_free probe opens the lock file with create, so the test sets up
+  # its own absence first.
+  rm -f "$FM_LOCAL_LLM_LOCK" "$FM_LOCAL_LLM_LOCK.handoff"
+  fm_local_llm_release task-none || fail "releasing with no claim file must succeed"
+  [ ! -e "$FM_LOCAL_LLM_LOCK" ] || fail "a no-op release must not create the lock file"
+  [ ! -e "$FM_LOCAL_LLM_LOCK.handoff" ] || fail "a no-op release must not create the handoff FIFO"
+  pass "a release with no claim file is a clean no-op"
+}
+
+test_release_is_safe_to_call_twice() {
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  fm_local_llm_release task-a || fail "the first release must succeed"
+  wait "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  fm_local_llm_release task-a || fail "a second release must succeed"
+  release_gone
+  lock_free || fail "the slot must stay free"
+  pass "calling a release twice succeeds"
+}
+
+test_a_claim_left_by_a_dead_holder_is_cleaned_up() {
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  kill "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  wait "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  [ -e "$FM_LOCAL_LLM_LOCK" ] || fail "a dead holder leaves the claim file in place"
+  fm_local_llm_release task-a || fail "a release must clean a claim left by a dead holder"
+  release_gone
+  lock_free || fail "the flock must be free"
+  fm_local_llm_claim task-b || fail "the cleaned slot must be claimable"
+  end_holder
+  lock_free || fail "the next claim must end cleanly"
+  pass "a release cleans the leftover file and FIFO of a claim whose holder is gone"
+}
+
+test_a_reused_pid_is_never_killed() {
+  sleep 30 &
+  local victim=$!
+  printf 'task-a\n%s\n' "$victim" >"$FM_LOCAL_LLM_LOCK"
+  rm -f "$FM_LOCAL_LLM_LOCK.handoff"
+  mkfifo -m 600 "$FM_LOCAL_LLM_LOCK.handoff"
+  fm_local_llm_release task-a || fail "releasing a stale claim must succeed"
+  kill -0 "$victim" 2>/dev/null || fail "a release must never kill an unrelated process holding the recorded pid"
+  release_gone
+  lock_free || fail "the slot must be free"
+  fm_local_llm_claim task-b || fail "the slot must be claimable after the stale claim is removed"
+  kill "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  wait "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  kill "$victim" 2>/dev/null || true
+  wait "$victim" 2>/dev/null || true
+  pass "a recorded pid that is not this claim's holder is treated as gone: removed, never killed"
+}
+
+test_a_zombie_holder_is_treated_as_gone() {
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  local holder=$FM_LOCAL_LLM_HOLDER
+  kill "$holder" 2>/dev/null || true
+  kill -0 "$holder" 2>/dev/null || fail "the killed holder must remain a zombie for this test to be meaningful"
+  fm_local_llm_release task-a || fail "a release must clean a claim whose holder is a zombie"
+  release_gone
+  lock_free || fail "a zombied holder must not keep the flock held"
+  fm_local_llm_claim task-b || fail "the slot must be claimable"
+  end_holder
+  lock_free || fail "the next claim must end cleanly"
+  wait "$holder" 2>/dev/null || true
+  pass "a zombie of the recorded pid is treated as gone: the claim is removed, never held"
 }
 
 test_a_background_job_without_the_descriptor_does_not_keep_the_claim() {
@@ -372,6 +478,13 @@ test_a_claim_refuses_a_second_and_names_its_task
 test_the_claiming_task_takes_over_and_its_exit_releases
 test_another_task_or_no_claim_is_refused
 test_killing_the_holder_releases_the_claim
+test_a_matching_claim_is_released_and_the_slot_is_claimable_again
+test_release_leaves_another_tasks_claim_running
+test_releasing_no_claim_is_a_clean_noop
+test_release_is_safe_to_call_twice
+test_a_claim_left_by_a_dead_holder_is_cleaned_up
+test_a_reused_pid_is_never_killed
+test_a_zombie_holder_is_treated_as_gone
 test_a_background_job_without_the_descriptor_does_not_keep_the_claim
 test_select_uses_the_local_model_when_every_check_holds
 test_select_names_an_invalid_health_bound_and_falls_back

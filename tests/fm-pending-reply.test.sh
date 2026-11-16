@@ -36,7 +36,9 @@
 #      uncached status read - accepting any verb - immediately before firing
 #  18. A same-kind escalation after an operator close appends again and reopens
 #      the decision; a retry while that decision is still open appends nothing
-#  19. A request summary keeps accented letters, drops control characters, and
+#  19. An operator close that names only the key resolves the escalated record on
+#      the next tick, with no hand-typed correlation token
+#  20. A request summary keeps accented letters, drops control characters, and
 #      caps at 120 characters without splitting one under any caller locale
 set -u
 
@@ -2103,6 +2105,44 @@ test_same_kind_escalation_reopens_after_operator_close() {
   pass "a same-kind escalation after an operator close opens the decision again"
 }
 
+test_operator_close_note_resolves_escalated_record() {
+  (
+    local dir fb log home state corr status rec open
+    dir="$TMP_ROOT/operator-close-resolves"
+    mkdir -p "$dir"
+    fb=$(make_stubs "$dir")
+    log="$dir/send.log"
+    home=$(setup_parent operator-close)
+    state="$home/state"
+    fm_write_secondmate_meta "$state/mate.meta" "$home/sm" "sess:fm-mate"
+    export FM_PENDING_REPLY_NOW=11000
+    corr=$(fm_pending_reply_create "$home" "$state" mate "request left parked") \
+      || fail "create failed"
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    fm_pending_reply_mark_delivered "$state" "$corr" || fail "mark delivered failed"
+    fm_pending_reply_set "$rec" phase escalated || fail "escalated phase failed"
+    fm_pending_reply_set "$rec" escalated_epoch 10000 || fail "escalated epoch failed"
+    status="$state/mate.status"
+    printf 'blocked [key=pending-reply-%s]: pending-reply-missed: task=mate pending-reply-id=%s request=request left parked\n' \
+      "$corr" "$corr" > "$status"
+
+    run_send "$fb" "$home" "$log" mate --resolve-key "pending-reply-$corr" \
+      "dismiss the parked request" \
+      || fail "operator close failed"
+    [ "$(phase_of "$state" "$corr")" = escalated ] \
+      || fail "precondition: the raw close line must not resolve the record by itself"
+
+    fm_pending_reply_tick "$state" || fail "tick failed"
+    [ "$(phase_of "$state" "$corr")" = resolved ] \
+      || fail "an operator close that names only the key must resolve the expectation"
+    open=$(status_open_decisions "$status")
+    [ -z "$open" ] || fail "operator close left the decision open: $open"
+    [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ] \
+      || fail "operator close did not record the closed escalation"
+  ) || fail "operator close key resolution failed"
+  pass "an operator close that names only the key resolves the expectation"
+}
+
 test_summary_keeps_accents_and_caps_by_character() {
   local out long cap_chars loc
   out=$(fm_pending_reply_summarize "não faça a correção")
@@ -2173,6 +2213,7 @@ test_remote_parent_replies_is_not_wrong_home
 test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
 test_same_kind_escalation_reopens_after_operator_close
+test_operator_close_note_resolves_escalated_record
 test_summary_keeps_accents_and_caps_by_character
 
 printf 'ok - all pending-reply tests passed\n'

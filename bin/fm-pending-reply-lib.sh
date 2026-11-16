@@ -1119,9 +1119,13 @@ fm_pending_reply_escalation_key() {  # <corr_id>
 # The fold's guard (bin/fm-classify-lib.sh _fm_decision_key_transition_allowed)
 # requires the note to begin with this namespace's vocabulary token; this is
 # that token plus the stable task/id/via fields both the record close and the
-# operator --resolve-key path write. Optional <extra> is appended after a space.
+# operator --resolve-key path write. The note also carries the corr= token the
+# resolution scanner matches (fm_pending_reply_find_resolve_line), so an
+# operator close that names only the key resolves its own expectation without a
+# hand-typed correlation token, and the record settles on the next tick.
+# Optional <extra> is free text appended after a space.
 fm_pending_reply_resolved_note() {  # <task-id> <corr_id> <via> [extra]
-  printf 'pending-reply-resolved: task=%s pending-reply-id=%s via=%s' "$1" "$2" "$3"
+  printf 'pending-reply-resolved: task=%s pending-reply-id=%s via=%s corr=%s' "$1" "$2" "$3" "$2"
   if [ -n "${4:-}" ]; then
     printf ' %s' "$4"
   fi

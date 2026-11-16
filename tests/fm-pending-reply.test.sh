@@ -34,8 +34,9 @@
 #  17. Recovery and escalation grace are measured from the relevant turn's
 #      completion, never from delivery or send time, and each takes one fresh,
 #      uncached status read - accepting any verb - immediately before firing
-#  18. A same-kind escalation after an operator close appends again and reopens
-#      the decision; a retry while that decision is still open appends nothing
+#  18. A same-kind escalation after a legacy operator close (one written before
+#      the close note carried its own corr= token) appends again and reopens the
+#      decision; a retry while that decision is still open appends nothing
 #  19. An operator close that names only the key resolves the escalated record on
 #      the next tick, with no hand-typed correlation token
 #  20. A request summary keeps accented letters, drops control characters, and
@@ -652,7 +653,7 @@ prime_seen() {  # <state> <file>
 }
 
 test_escalation_wakes_and_its_close_stays_quiet() {
-  local home state corr
+  local home state corr close_line
   home=$(setup_parent escalation-wake-gate)
   state="$home/state"
   export FM_PENDING_REPLY_SEND_HOOK='true'
@@ -680,6 +681,9 @@ test_escalation_wakes_and_its_close_stays_quiet() {
   fm_pending_reply_try_resolve "$state" "$corr" || fail "correlated reply should resolve"
   grep -Fq "resolved [key=pending-reply-$corr]" "$state/hibit.status" \
     || fail "resolution did not close the escalation decision"
+  close_line=$(grep -F "resolved [key=pending-reply-$corr]" "$state/hibit.status" | head -1)
+  fm_pending_reply_text_has_corr "$close_line" "$corr" \
+    || fail "the escalation-close note must carry its own corr= token"
   seen_gate "$state" "$state/hibit.status" \
     || fail "the home's own escalation close re-woke its own watcher gate"
   pass "escalations and replies wake; the home's own escalation close stays quiet"
@@ -2031,16 +2035,14 @@ test_escalated_undelivered_correlation_stays_retryable() {
   pass "an escalated correlation stays retryable only while undelivered"
 }
 
-test_same_kind_escalation_reopens_after_operator_close() {
+test_same_kind_escalation_reopens_after_legacy_operator_close() {
   (
-    local dir fb log home state corr status blocked open
-    dir="$TMP_ROOT/same-kind-reescalation"
-    mkdir -p "$dir"
-    fb=$(make_stubs "$dir")
-    log="$dir/send.log"
+    local home state corr status blocked open
     home=$(setup_parent same-kind)
     state="$home/state"
     fm_write_secondmate_meta "$state/mate.meta" "$home/sm" "sess:fm-mate"
+    # This fixture clock is intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
     export FM_PENDING_REPLY_NOW=10000
     corr=$(fm_pending_reply_create "$home" "$state" mate "wake after lost transport")
     status="$state/mate.status"
@@ -2068,9 +2070,11 @@ test_same_kind_escalation_reopens_after_operator_close() {
     open=$(status_open_decisions "$status" | cut -f1)
     [ "$open" = "pending-reply-$corr" ] \
       || fail "the first decision must stay open, got '$open'"
-    run_send "$fb" "$home" "$log" mate --resolve-key "pending-reply-$corr" \
-      "dismiss the unknown-delivery hold" \
-      || fail "operator close failed"
+    # A close written before the close note carried its own corr= token: the
+    # decision settles while the record stays escalated, so the owner's resend
+    # is still the retry this test covers.
+    printf 'resolved [key=pending-reply-%s]: pending-reply-resolved: task=mate pending-reply-id=%s via=operator-resolve-key dismiss the unknown-delivery hold\n' \
+      "$corr" "$corr" >> "$status"
     open=$(status_open_decisions "$status")
     [ -z "$open" ] || fail "operator close left the decision open: $open"
     fm_pending_reply_reset_known_undelivered "$state" "$corr" \
@@ -2101,8 +2105,8 @@ test_same_kind_escalation_reopens_after_operator_close() {
     open=$(status_open_decisions "$status" | cut -f1)
     [ "$open" = "pending-reply-$corr" ] \
       || fail "the reopened decision must stay open across the retry, got '$open'"
-  ) || fail "same-kind re-escalation after an operator close failed"
-  pass "a same-kind escalation after an operator close opens the decision again"
+  ) || fail "same-kind re-escalation after a legacy operator close failed"
+  pass "a same-kind escalation after a legacy operator close opens the decision again"
 }
 
 test_operator_close_note_resolves_escalated_record() {
@@ -2115,6 +2119,8 @@ test_operator_close_note_resolves_escalated_record() {
     home=$(setup_parent operator-close)
     state="$home/state"
     fm_write_secondmate_meta "$state/mate.meta" "$home/sm" "sess:fm-mate"
+    # This fixture clock is intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
     export FM_PENDING_REPLY_NOW=11000
     corr=$(fm_pending_reply_create "$home" "$state" mate "request left parked") \
       || fail "create failed"
@@ -2212,7 +2218,7 @@ test_mechanical_helper_writes_parent_channel
 test_remote_parent_replies_is_not_wrong_home
 test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
-test_same_kind_escalation_reopens_after_operator_close
+test_same_kind_escalation_reopens_after_legacy_operator_close
 test_operator_close_note_resolves_escalated_record
 test_summary_keeps_accents_and_caps_by_character
 

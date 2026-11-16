@@ -102,7 +102,8 @@
 # marked - their behavior is unchanged.
 #
 # Parent-owned pending-reply expectation: every newly marked secondmate request
-# except an explicit --fire-and-forget delivery receives a privacy-safe
+# except an explicit --fire-and-forget delivery or a terminal --resolve-key
+# close of a reserved pending-reply key (below) receives a privacy-safe
 # correlation id and a durable parent record under state/pending-replies/ before
 # delivery (bin/fm-pending-reply-lib.sh). Delivery
 # success and reply success are separate facts: delivery never resolves the
@@ -1371,10 +1372,9 @@ else
     # pending, delivery is unproven
     # rather than refused, so the pending-reply expectation stays armed; the
     # adapter retains the logical delivery's request id under the retry policy
-    # in docs/t3code-backend.md. A marked secondmate request is the exception:
-    # a plain rerun mints a new
-    # correlation, so its text and request id differ, and the armed attempt
-    # refuses a resend of this one.
+    # in docs/t3code-backend.md. A reply-bearing marked secondmate request is
+    # the exception: a plain rerun mints a new correlation, so its text and
+    # request id differ, and the armed attempt refuses a resend of this one.
     if [ -n "$PENDING_REPLY_CORR" ]; then
       echo "fm-send: delivery to $T is unconfirmed (verdict=unconfirmed: the $TARGET_BACKEND outcome is unproven, a lost reply or an error that can follow a commit; tried $RESOLUTION_TRIED); do not resend - a rerun mints a new pending-reply correlation and would deliver twice; correlation $PENDING_REPLY_CORR stays armed, so verify with fm-peek.sh and let its reply or the watcher's reconciliation settle it" >&2
     else

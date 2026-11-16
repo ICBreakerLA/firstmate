@@ -52,6 +52,24 @@ test_report_orders_gaps_worst_first_by_stage() {
   pass "the report derives each stage's gap from the status log and the journal"
 }
 
+# The omp primary extension journals `delivered` with the watcher-close epoch in
+# the queued-epoch field, so the report can say how long each wake waited between
+# the close and its delivery: that is what makes a delivery flood measurable.
+test_report_includes_close_to_delivery_gaps() {
+  local dir state now out
+  dir=$(make_case report-delivered)
+  state="$dir/state"
+  out="$dir/report.out"
+  now=$(date +%s)
+  printf 'v1\t%s000\tdelivered\teta\t0\tcheck\tk9\t%s\n' $((now - 180)) $((now - 240)) > "$state/.handoff-journal"
+  FM_STATE_OVERRIDE="$state" "$LATENCY" > "$out" || fail "report failed"
+  grep -E '^ +1m00s +close->delivered +eta .*check k9' "$out" >/dev/null \
+    || fail "the close->delivered gap (240s to 180s) is wrong: $(cat "$out")"
+  grep -E '^ +close->delivered +1 +1m00s +1m00s' "$out" >/dev/null \
+    || fail "the per-stage summary is missing close->delivered: $(cat "$out")"
+  pass "a journaled omp delivery reports its watcher-close-to-delivery gap"
+}
+
 test_report_lists_worst_gap_first() {
   local dir state now out first
   dir=$(make_case report-order)
@@ -165,6 +183,7 @@ test_concurrent_appends_keep_whole_lines() {
 
 test_drain_journals_presented_and_acked_rows
 test_report_orders_gaps_worst_first_by_stage
+test_report_includes_close_to_delivery_gaps
 test_report_lists_worst_gap_first
 test_report_covers_steering_messages_and_open_gaps
 test_report_axi_surface

@@ -9,6 +9,8 @@
 # A handoff has two directions, and each is a chain of timestamps already on
 # disk. Worker to firstmate:
 #   event->wake      a worker status line ([at=]) to the wake row it caused
+#   close->delivered how long a wake waited between the watcher close and the
+#                    omp primary extension handing it to main (omp only)
 #   wake->shown      the row queued to the drain presenting it to firstmate
 #   shown->handled   presented to acknowledged (firstmate's own handling time)
 #   wake unhandled   a row still queued now, with how long it has waited
@@ -44,7 +46,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 usage() {
   printf 'usage: fm-handoff-latency.sh [--task ID] [--since SECONDS] [--limit N] [--min SECONDS]\n'
-  printf 'Prints where time went between workers and firstmate, worst gap first: status event to wake, wake to presented, presented to handled, steer to worker acknowledgement, plus anything still waiting.\n'
+  printf 'Prints where time went between workers and firstmate, worst gap first: status event to wake, watcher close to delivery (omp), wake to presented, presented to handled, steer to worker acknowledgement, plus anything still waiting.\n'
   printf 'example: bin/fm-handoff-latency.sh --since 3600 --limit 10\n'
 }
 
@@ -166,6 +168,21 @@ $JOINED
 EOF
 fi
 
+# --- watcher close -> delivery (the omp primary extension) -------------------
+# Only the omp extension journals `delivered`, and its queued-epoch field is the
+# close epoch rather than a queue row's, so the gap is the extension's own
+# close-to-delivery wait. How long each wake waits there is what a flood makes
+# measurable rather than anecdotal.
+if [ -s "$JOURNAL" ]; then
+  while IFS=$'\t' read -r d_ver d_at d_event d_task _d_seq d_kind d_key d_closed; do
+    [ "$d_ver" = v1 ] && [ "$d_event" = delivered ] || continue
+    case "$d_at" in ''|*[!0-9]*) continue ;; esac
+    case "$d_closed" in ''|*[!0-9]*) continue ;; esac
+    records=$((records + 1))
+    add_row $((d_at / 1000 - d_closed)) 'close->delivered' "$d_task" "$d_closed" "$d_kind $d_key"
+  done <"$JOURNAL"
+fi
+
 # --- wakes still waiting in the queue ----------------------------------------
 if [ -s "$STATE/.wake-queue" ]; then
   while IFS=$'\t' read -r epoch seq kind key _payload; do
@@ -233,7 +250,7 @@ sort -t "$(printf '\t')" -k1,1nr "$ROWS" | awk -F '\t' -v min="$MIN" -v limit="$
 
 printf '\nBY STAGE\n'
 printf '  %-16s %6s %8s %8s\n' STAGE COUNT MEDIAN MAX
-for stage in 'event->wake' 'wake->shown' 'shown->handled' 'queued->handled' 'wake-unhandled' 'steer->worker-ack' 'steer-unacked'; do
+for stage in 'event->wake' 'close->delivered' 'wake->shown' 'shown->handled' 'queued->handled' 'wake-unhandled' 'steer->worker-ack' 'steer-unacked'; do
   stats=$(awk -F '\t' -v st="$stage" '$2 == st { v[++n] = $1 + 0 } END {
     if (n == 0) exit
     for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) if (v[j] < v[i]) { t = v[i]; v[i] = v[j]; v[j] = t }

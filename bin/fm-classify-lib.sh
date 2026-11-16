@@ -1137,10 +1137,11 @@ status_own_open_decisions() {  # <status-file>
 # one, so it reads status_open_decisions rather than the incremental fold.
 # An unreadable, missing or symlinked status file folds to nothing and answers 1,
 # which is the safe answer for every caller: no evidence, no exception.
-# Given a <run-id>, only a decision whose key is exactly `nm-<run-id>-<step>` for
-# a non-empty step counts - the key shape the brief mandates for a gate
-# escalation - so an unrelated question left open earlier in the same task is
-# never read as firstmate being told about THIS run's gate.
+# Given a <run-id>, only a decision bound to that run - key `nm-<run-id>-<step>`
+# for a non-empty step, the key shape the brief mandates for a gate escalation -
+# counts. The run is parked at one of its steps at a time, so any of its own
+# steps counts as this run's gate report; a question under another task's or
+# run's key is never read as firstmate being told about THIS run's gate.
 status_has_open_needs_decision() {  # <status-file> [<run-id>]
   local run=${2-} open line key verb
   open=$(status_open_decisions "$1")
@@ -1230,8 +1231,16 @@ EOF
 # token), and the fold alone decides which of them really moves the set. A line
 # whose leading word is followed by neither whitespace, a colon, nor a bracket
 # tag cannot be a transition, because the fold's own declaration guard rejects it.
-status_key_closing_verb() {  # <status-file> <key>
-  local f=$1 want=$2 line resolve held open='' was verb='' kind event candidates
+# An optional <verb-out-var> receives the reported verb instead of it being
+# printed, and an optional <at-out-var> receives the emission-time epoch of the
+# closing transition that produced a closing verb; the epoch stays empty for an
+# open record or no transition. The two out-params exist so a caller that must
+# order an answer against later evidence gets both from one fold pass rather
+# than a second read, and a two-argument caller still reads the printed verb.
+status_key_closing_verb() {  # <status-file> <key> [<verb-out-var> [<at-out-var>]]
+  local f=$1 want=$2 verb_out=${3:-} at_out=${4:-} line resolve held open='' was reported='' kind event candidates
+  [ -z "$verb_out" ] || printf -v "$verb_out" '%s' ''
+  [ -z "$at_out" ] || printf -v "$at_out" '%s' ''
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
   [ -n "$want" ] || return 0
   kind=$(_fm_status_kind "$f")
@@ -1258,16 +1267,20 @@ status_key_closing_verb() {  # <status-file> <key>
     _fm_open_set_has "$open" "$want" && was=1
     open=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind")
     if [ "$was" = 1 ] && ! _fm_open_set_has "$open" "$want"; then
-      verb=$event
+      reported=$event
+      [ -z "$at_out" ] || { _fm_status_at_epoch "$line" "$at_out" || printf -v "$at_out" '%s' ''; }
     fi
   done <<EOF
 $candidates
 EOF
   if _fm_open_set_has "$open" "$want"; then
-    _fm_open_set_verb "$open" "$want"
-    return 0
+    reported=$(_fm_open_set_verb "$open" "$want")
   fi
-  printf '%s' "$verb"
+  if [ -n "$verb_out" ]; then
+    printf -v "$verb_out" '%s' "$reported"
+  else
+    printf '%s' "$reported"
+  fi
 }
 
 # The status file inside <state> that is this home's outbound parent channel

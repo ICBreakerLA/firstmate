@@ -16,12 +16,29 @@
 # THE RULE. For one idle task, read the authoritative current state
 # ($FM_CREW_STATE_BIN). Only a `parked` verdict from a run step is a gate. For
 # a task not nudged within the last FM_GATE_PARK_NUDGE_SECS (default 300):
-#   - when the task's own status log holds no open needs-decision bound to that
-#     run, nobody has been told: send the worker the reattach nudge (read the
-#     gate with `no-mistakes axi run` and report it as its brief says) and wake
-#     firstmate;
-#   - when the worker already reported it, firstmate was already woken by that
-#     status line, so nothing is added.
+#   - when the task's status stream carries no transition for this run and gate
+#     step's decision key (`nm-<run>-<step>`), nobody has been told: send the
+#     worker the reattach nudge (read the gate with `no-mistakes axi run` and
+#     report it as its brief says) and wake firstmate;
+#   - when that key is still open (needs-decision or blocked), the worker
+#     already reported it and firstmate was woken by that status line, so
+#     nothing is added;
+#   - when that key's latest transition is a close (resolved, or the verified
+#     captain-held transfer), firstmate answered it, but that answer explains
+#     the parked snapshot only when it is newer than the current park. The
+#     order comes from the status stream's own `[at=]` stamps: the close must
+#     be strictly newer than the newest evidence that this run-and-step is
+#     parked now - the key's own report line, or a declared wait (`paused`)
+#     the worker appended when it reattached after an earlier answer. A close
+#     at or before that evidence, or one whose ordering cannot be established
+#     because a stamp is missing, fails open and the wake goes out; a
+#     re-parked gate is never silenced by an earlier round's answer. A
+#     transition for a different step or run is not evidence about this gate.
+#     The key's verb comes from the one order-aware decision fold, and every
+#     check is a positive match, so unreadable state fails open and the wake
+#     is delivered anyway.
+#   - when a `done` or `failed` terminal retired the key, the task declared its
+#     own end, so the parked snapshot is stale and nothing is added.
 # The nudge is the one mechanical reaction and carries no decision: it never
 # answers, approves, merges or discards, and tells the worker so. It is sent at
 # most once per interval per task, the last-nudge time being the only record, so
@@ -72,12 +89,41 @@ gate_park_due() { # <task> <key>
   [ $((now - last)) -ge "$FM_GATE_PARK_SECS" ]
 }
 
+# The newest `[at=]` stamp among the status lines that evidence the current
+# park of one run-and-step: the gate's own report (needs-decision or blocked
+# under <key>) and any declared wait (`paused`) line. Prints nothing when no
+# such line carries a stamp, which the caller treats as unknown ordering.
+gate_park_epoch() {  # <status-file> <key>
+  local f=$1 want=$2 line verb key at pause candidates latest=''
+  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
+  pause=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
+  candidates=$(grep -E \
+    "^[[:space:]]*(needs-decision|blocked|$pause)[[:space:]:[]" \
+    "$f") || [ "$?" -eq 1 ] || candidates=$(cat "$f")
+  while IFS= read -r line || [ -n "$line" ]; do
+    status_line_verb "$line" verb
+    case "$verb" in
+      needs-decision|blocked)
+        key=$(_fm_decision_key "$line") || continue
+        [ "$key" = "$want" ] || continue
+        ;;
+      *) status_is_paused "$line" || continue ;;
+    esac
+    at=$(status_line_at_epoch "$line") || continue
+    if [ -z "$latest" ] || [ "$at" -gt "$latest" ]; then latest=$at; fi
+  done <<EOF
+$candidates
+EOF
+  printf '%s' "$latest"
+}
+
 # gate_park_check <task> <key>: for an idle non-secondmate task. Returns 0 with
 # the wake reason in GATE_PARK_REASON and the wake key in GATE_PARK_KEY (set, not
 # printed, so a caller needs no subshell) when firstmate is owed a wake for a
 # parked gate; returns 1 otherwise.
 gate_park_check() {
-  local task=$1 key=$2 line state src rest part gate='' run='' human='' detail
+  local task=$1 key=$2 line state src rest part gate='' gate_detail='' run='' human='' detail
+  local verb answered_at='' park_at=''
   local statusf="$STATE/$task.status"
   local nudge rc=0
   gate_park_enabled || return 1
@@ -96,16 +142,39 @@ gate_park_check() {
     part=${rest%% · *}
     rest=${rest#* · }
     case "$part" in
-      "parked at "*) gate=${part#parked at } ;;
+      "parked at "*)
+        gate_detail=${part#parked at }
+        # The decision key carries the step slug only; the state line may
+        # append its finding count after a colon.
+        gate=${gate_detail%%[[:space:]]*}
+        gate=${gate%:}
+        ;;
+
       "run: "?*) run=${part#run: } ;;
     esac
     [ "$part" = "$FM_GATE_HUMAN_DECISION" ] && human=1
   done
   case "$run" in ''|*[[:space:]]*) return 1 ;; esac
-  [ -n "$gate" ] || gate=gate
-  if status_has_open_needs_decision "$statusf" "$run"; then
-    return 1
-  fi
+  [ -n "$gate" ] || { gate=gate; gate_detail=gate; }
+  # Only a gate nobody has reported and nobody has answered is news. The
+  # order-aware fold read of this gate's own decision key says who has been
+  # told: an open record means the worker already reported this gate and
+  # firstmate was woken by that line. A recorded close is firstmate's answer,
+  # and it silences the snapshot only when its own `[at=]` stamp is strictly
+  # newer than gate_park_epoch's newest evidence - the key's report, or a wait
+  # the worker declared when it reattached after an earlier answer. A close at
+  # or before that evidence, and any ordering a missing stamp leaves unknown,
+  # fails open and wakes. A different step's or run's key is a different key,
+  # so evidence about it can never silence this gate. No transition at all -
+  # including an unreadable status log - fails open too.
+  status_key_closing_verb "$statusf" "nm-$run-$gate" verb answered_at
+  case "$verb" in
+    needs-decision|blocked|done|failed) return 1 ;;
+    resolved|"${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}")
+      park_at=$(gate_park_epoch "$statusf" "nm-$run-$gate")
+      [ -n "$answered_at" ] && [ -n "$park_at" ] && [ "$answered_at" -gt "$park_at" ] && return 1
+      ;;
+  esac
   : > "$STATE/.gate-park-nudged-$key" || return 1
   FM_HOME="$FM_HOME" fm_run_timed "$FM_GATE_PARK_SEND_TIMEOUT" \
     "${FM_GATE_PARK_SEND_BIN:-$SCRIPT_DIR/fm-send.sh}" "$task" "$FM_GATE_PARK_NUDGE" >/dev/null 2>&1 || rc=$?
@@ -117,7 +186,7 @@ gate_park_check() {
   else
     nudge="reattach nudge failed (exit $rc)"
   fi
-  detail="parked at $gate${human:+, ask-user finding owed by firstmate}"
+  detail="parked at $gate_detail${human:+, ask-user finding owed by firstmate}"
   # shellcheck disable=SC2034 # output read by the sourcing script
   GATE_PARK_REASON="gate-parked: $task $detail; worker idle and has not reported it ($nudge); you own any decision, approval or ask-user answer"
   # shellcheck disable=SC2034 # output read by the sourcing script

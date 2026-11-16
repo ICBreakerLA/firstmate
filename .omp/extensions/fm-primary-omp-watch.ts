@@ -27,6 +27,18 @@
 //     owns supervision, it asks bin/fm-watcher-beat-check.sh whether
 //     supervision is needed and the beacon is stale, and starts one ordinary
 //     arm only on its alarm exit.
+//   - Delivery is bounded so a persistent or rotating set of alerts cannot take
+//     a supervisor turn per watcher cycle: a per-event count inside a rolling
+//     window (FM_OMP_WAKE_FOLLOWUP_CEILING, default 6) and a global count of
+//     deliveries of any event inside its own rolling window
+//     (FM_OMP_WAKE_GLOBAL_CEILING, default 12 per 6h) each emit one plain
+//     ceiling notice and then suppress delivery, so interleaved events cannot
+//     reset each other and a bounded session resumes automatically once the
+//     window rolls. A replayed replacement-handoff batch is coalesced into one
+//     session-start summary. Every suppressed row stays durable in the wake
+//     queue for bin/fm-wake-drain.sh, and a captain turn clears both bounds.
+//   - Each delivery journals its close-to-delivery wait as a `delivered` event
+//     in the handoff journal, so bin/fm-handoff-latency.sh can report a flood.
 //   - On session_start a recorded lock owner the shared
 //     fm_session_lock_pid_blocks_reclaim verdict proves stale is reclaimed
 //     through bin/fm-lock.sh before arming, so a resumed process re-arms with
@@ -119,6 +131,10 @@ type PendingActionableClose = {
   message: string;
   predecessorArmPid: string;
   delivered?: true;
+  // Epoch ms at which the watcher close that produced this wake was observed.
+  // The delivery path logs close-to-delivery latency from it; a record loaded
+  // from an older handoff without the field simply has no latency to log.
+  observedAt?: number;
 };
 
 type ReplacementActionableHandoff = {
@@ -152,6 +168,21 @@ type SessionGeneration = {
   // still delivering the wake it was started for; its bounded retry runs once
   // that delivery settles instead of being skipped by the single-flight guard.
   deferredClose: { message: string; predecessorArmPid: string } | null;
+  // Follow-up delivery times inside the rolling window, per actionable event.
+  // A key that recurs past FM_OMP_WAKE_FOLLOWUP_CEILING times in the window
+  // gets one plain ceiling notice and is then suppressed until the window
+  // rolls, so interleaved recurring events cannot each reset the other's
+  // count. A separate rolling window of deliveries of ANY event caps rotation
+  // the same way, and lets delivery resume on its own once it rolls. The
+  // durable queue keeps every suppressed row.
+  wakeKeyDeliveries: Map<string, number[]>;
+  wakeKeyCeilingNotified: Set<string>;
+  wakeDeliveryTimes: number[];
+  wakeGlobalCeilingNotified: boolean;
+  // Wake text this generation already consumed. An idle main raises
+  // before_agent_start and then message_start for the same follow-up, so the
+  // second event must not be mistaken for a captain steer.
+  consumedWakeTexts: Set<string>;
 };
 
 const extensionFile = fileURLToPath(import.meta.url);
@@ -191,6 +222,20 @@ const beatCheckScript = `${fmRoot}/bin/fm-watcher-beat-check.sh`;
 const afkRecord = `${state}/.afk`;
 const repairOnlyHint = "call fm_watch_arm_omp again only after a later notification says the cycle is missing, failed, or unhealthy";
 const shuttingDownMessage = "watcher: not armed - omp session is shutting down";
+// Deliveries of one event allowed inside the rolling window before automatic
+// delivery of it stops, and the window length that forgets those deliveries.
+// The watcher keeps appending to the durable queue; only the follow-up turn is
+// bounded, so a persistent alert costs one notice plus a bounded number of
+// turns per window.
+const followUpCeiling = positiveInteger("FM_OMP_WAKE_FOLLOWUP_CEILING", 6);
+const followUpWindowMs = positiveInteger("FM_OMP_WAKE_FOLLOWUP_WINDOW_SECS", 300) * 1000;
+// Deliveries of any event, across keys, allowed inside the global rolling
+// window before one notice replaces the next and delivery stops until that
+// window rolls. Independent of the per-event bound so a rotation of distinct
+// events is caught without permanently disabling delivery for the session.
+const globalFollowUpCeiling = positiveInteger("FM_OMP_WAKE_GLOBAL_CEILING", 12);
+const globalFollowUpWindowMs = positiveInteger("FM_OMP_WAKE_GLOBAL_WINDOW_SECS", 21600) * 1000;
+const wakeQueueFile = `${state}/.wake-queue`;
 
 let nextGenerationId = 0;
 let nextHandoffId = 0;
@@ -375,6 +420,198 @@ function completedActionableLine(output: string): string {
   return newline < 0 ? "" : actionableLine(output.slice(0, newline + 1));
 }
 
+// The stable identity of an actionable line: its kind plus the subject that
+// persists across repeats of one alert. Volatile detail (a stale timer's idle
+// seconds, a check's changing output) is dropped, so one recurring alert counts
+// as the same event instead of as a new one on every cycle.
+type WakeIdentity = {
+  kind: "signal" | "stale" | "check" | "heartbeat" | "wake";
+  subject: string;
+  line: string;
+  task: string;
+};
+
+function wakeIdentity(message: string): WakeIdentity {
+  const lines = message.split(/\r?\n/);
+  const line =
+    lines.find((candidate) => /^(signal:|stale:|check:|heartbeat($|:))/.test(candidate)) ||
+    lines[0] ||
+    message;
+  if (/^heartbeat($|:)/.test(line)) return { kind: "heartbeat", subject: "heartbeat", line, task: "" };
+  const stale = line.match(/^stale:\s*(\S+)/);
+  if (stale) return { kind: "stale", subject: stale[1], line, task: "" };
+  const signal = line.match(/^signal:?\s*(.*)$/);
+  if (signal) {
+    const files = signal[1].trim().split(/\s+/).filter(Boolean).sort();
+    return { kind: "signal", subject: files.join(" ") || "-", line, task: "" };
+  }
+  const check = line.match(/^check:?\s*(.*)$/);
+  if (check) {
+    const rest = check[1].trim();
+    const colon = rest.indexOf(":");
+    const name = (colon >= 0 ? rest.slice(0, colon) : rest.split(/\s+/)[0] || rest).trim();
+    const detail = colon >= 0 ? rest.slice(colon + 1).trim() : "";
+    const subject = detail.split(/\s+/).find(Boolean) || "";
+    if (name === "gate-parked" && subject) {
+      return { kind: "check", subject: `${name}: ${subject}`, line, task: subject };
+    }
+    return { kind: "check", subject: subject ? `${name}: ${subject}` : name || "check", line, task: "" };
+  }
+  return { kind: "wake", subject: line, line, task: "" };
+}
+
+// The identity the follow-up ceiling counts, stable across repeats of one
+// alert so a stale timer, a parked-gate check, and a turn-ended signal are
+// three different events rather than one bucket, and a timer's changing idle
+// seconds do not read as a new event each cycle.
+function wakeEventKey(message: string): string {
+  const identity = wakeIdentity(message);
+  return identity.kind === "wake" ? identity.line : `${identity.kind}: ${identity.subject}`;
+}
+
+// The journal identity of a delivered wake: its kind word plus the stable
+// subject, and the task when the line names one directly. fm-handoff-journal-lib.sh
+// resolves a stale window key to its task, so only this pair is needed for a
+// latency record.
+function wakeJournalIdentity(message: string): { kind: string; key: string; task: string } {
+  const identity = wakeIdentity(message);
+  switch (identity.kind) {
+    case "heartbeat":
+      return { kind: "heartbeat", key: "heartbeat", task: "" };
+    case "signal":
+      return { kind: "signal", key: identity.subject.split(/\s+/)[0] || "-", task: "" };
+    case "stale":
+      return { kind: "stale", key: identity.subject, task: "" };
+    case "check":
+      return { kind: "check", key: identity.subject.replace(/: /g, ":"), task: identity.task };
+    default:
+      return { kind: "wake", key: "-", task: "" };
+  }
+}
+
+// Record how long a wake waited between the watcher close and this delivery in
+// the home's handoff journal, so a future flood is measurable rather than
+// anecdotal. Diagnostic only: a failure never changes supervision behavior.
+function recordDeliveryLatency(pending: PendingActionableClose, message: string): void {
+  if (pending.observedAt === undefined) return;
+  const identity = wakeJournalIdentity(message);
+  try {
+    const child = spawn(
+      "bash",
+      [
+        "-c",
+        '. "$1"; . "$2"; STATE="$3"; task="$7"; [ -n "$task" ] || task=$(fm_hj_task_of_key "$4" "$5"); [ -n "$task" ] || task="-"; fm_hj_record delivered 0 "$4" "$5" "$6" "$task"',
+        "fm-hj-delivered",
+        `${fmRoot}/bin/fm-handoff-journal-lib.sh`,
+        `${fmRoot}/bin/fm-classify-lib.sh`,
+        state,
+        identity.kind,
+        identity.key,
+        String(Math.floor(pending.observedAt / 1000)),
+        identity.task,
+      ],
+      { cwd: fmRoot, detached: true, stdio: "ignore", env: bashWithHomeEnv() },
+    );
+    child.on("error", () => {
+      // Diagnostic only.
+    });
+    child.unref();
+  } catch {
+    // Diagnostic only.
+  }
+}
+
+// The one notice that replaces the raw event at a per-event ceiling: it says
+// plainly that automatic delivery of this event stopped inside the window,
+// keeps the drain command and its WAKE_ACK_REQUIRED obligation visible, and
+// names how supervision resumes.
+function wakeKeyCeilingNotice(count: number, event: string): string {
+  return [
+    `FIRSTMATE SUPERVISION FOLLOW-UP CEILING REACHED - this session has taken ${count} follow-up wakes for the same event (${event}) inside the delivery window, so automatic delivery of that event stops here to bound the loop. Queued wakes stay durable: run bin/fm-wake-drain.sh, handle them, and run its exact WAKE_ACK_REQUIRED command. Supervision resumes after the captain's next message or once the window rolls over.`,
+  ].join("\n");
+}
+
+// The notice for the global bound that catches a rotation of distinct events:
+// one plain notice, then every automatic delivery stops until the rolling
+// window resumes it or the captain speaks. The durable drain obligation stays
+// visible.
+function wakeGlobalCeilingNotice(count: number): string {
+  return [
+    `FIRSTMATE SUPERVISION FOLLOW-UP CEILING REACHED - this session has taken ${count} follow-up wakes inside the delivery window, so automatic delivery of every wake stops here to bound the loop. Queued wakes stay durable: run bin/fm-wake-drain.sh, handle them, and run its exact WAKE_ACK_REQUIRED command. Supervision resumes after the captain's next message or once the window rolls over.`,
+  ].join("\n");
+}
+
+// The durable queue's highest unacknowledged sequence and row count. A
+// session-start summary names the sequence so the supervisor's ack-through
+// clears every row it coalesced; an unreadable queue simply reports none.
+function queuedWakeSummary(): { count: number; ackThrough: number } {
+  let rows: string[] = [];
+  try {
+    rows = readFileSync(wakeQueueFile, "utf8").split(/\r?\n/);
+  } catch {
+    return { count: 0, ackThrough: 0 };
+  }
+  let count = 0;
+  let ackThrough = 0;
+  for (const row of rows) {
+    const fields = row.split("\t");
+    if (fields.length < 5 || !/^[0-9]+$/.test(fields[1])) continue;
+    count += 1;
+    ackThrough = Math.max(ackThrough, Number(fields[1]));
+  }
+  return { count, ackThrough };
+}
+
+// At session start the replacement handoff can hold one record per watcher
+// close that fired while main was away. Replaying them one at a time gives main
+// one turn per row, which is the wake-delivery flood after a session outage.
+// Coalesce them into one summary wake: the distinct reasons are listed in the
+// message up to a bounded count (the rest are reported only as omitted, and the
+// durable queue still holds every row), and the summary names the ack-through
+// sequence that clears them. The coalesced record replaces the originals in the
+// handoff so a later shutdown replays the summary, never the whole batch.
+function coalesceSessionStartPending(pending: PendingActionableClose[]): PendingActionableClose[] {
+  if (pending.length <= 1) return pending;
+  const reasons: string[] = [];
+  const seen = new Set<string>();
+  for (const item of pending) {
+    const key = wakeEventKey(item.message);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    reasons.push(wakeIdentity(item.message).line);
+  }
+  const shown = reasons.slice(0, 25);
+  const omitted = reasons.length - shown.length;
+  const queue = queuedWakeSummary();
+  const ackLine = queue.ackThrough > 0
+    ? `The durable queue's highest unacknowledged sequence is ${queue.ackThrough}, so run bin/fm-wake-drain.sh and then its exact WAKE_ACK_REQUIRED command at that sequence (a newer wake raises it; use the number the drain prints).`
+    : "The durable queue still holds whatever this session has not acknowledged; run bin/fm-wake-drain.sh and its exact WAKE_ACK_REQUIRED command.";
+  const summary: PendingActionableClose = {
+    version: 1,
+    token: `${process.pid}-${Date.now()}-${++replacementCoordinator.nextTokenId}`,
+    // The reason lines stay verbatim and unindented: an actionable line at the
+    // start of a line is also what validatePendingActionable accepts, so a
+    // summary reloaded after a replacement still validates.
+    message: [
+      `FIRSTMATE SESSION-START WAKE SUMMARY: ${pending.length} watcher wakes were pending when this session started; they are coalesced into this one turn instead of one turn per wake.`,
+      "",
+      ...shown,
+      ...(omitted > 0 ? [`${omitted} further wake reason(s) are not listed; bin/fm-wake-drain.sh presents every queued row.`] : []),
+      "",
+      ackLine,
+    ].join("\n"),
+    predecessorArmPid: pending[0].predecessorArmPid,
+    observedAt: Math.min(...pending.map((item) => item.observedAt ?? Date.now())),
+  };
+  try {
+    writeReplacementHandoff([summary]);
+  } catch {
+    // The in-memory summary still bounds this session's deliveries; a failed
+    // persistence is retried through the ordinary replacement handoff path.
+  }
+  return [summary];
+}
+
 // An away record, never quiet mode's (bin/fm-afk-contract.sh mode owns that
 // reading): a record whose mode cannot be read as quiet reads as away.
 function awayRecordPresent(): boolean {
@@ -469,6 +706,7 @@ function createPendingActionable(message: string, predecessorArmPid: string): Pe
     token: `${process.pid}-${Date.now()}-${++replacementCoordinator.nextTokenId}`,
     message,
     predecessorArmPid,
+    observedAt: Date.now(),
   };
 }
 
@@ -484,7 +722,10 @@ function validatePendingActionable(value: unknown): PendingActionableClose {
     typeof (value as { predecessorArmPid?: unknown }).predecessorArmPid !== "string" ||
     !/^[0-9]*$/.test((value as { predecessorArmPid: string }).predecessorArmPid) ||
     ((value as { delivered?: unknown }).delivered !== undefined &&
-      (value as { delivered?: unknown }).delivered !== true)
+      (value as { delivered?: unknown }).delivered !== true) ||
+    ((value as { observedAt?: unknown }).observedAt !== undefined &&
+      (typeof (value as { observedAt?: unknown }).observedAt !== "number" ||
+        !Number.isFinite((value as { observedAt: number }).observedAt)))
   ) {
     throw new Error(`invalid omp replacement actionable handoff at ${actionableHandoff}`);
   }
@@ -630,6 +871,11 @@ function createGeneration(): SessionGeneration {
     cleanupFailure: "",
     unconsumedWakes: new Map(),
     deferredClose: null,
+    wakeKeyDeliveries: new Map(),
+    wakeKeyCeilingNotified: new Set(),
+    wakeDeliveryTimes: [],
+    wakeGlobalCeilingNotified: false,
+    consumedWakeTexts: new Set(),
   };
 }
 
@@ -788,6 +1034,13 @@ export default function (pi: ExtensionAPI) {
     for (const [token, wake] of owner.unconsumedWakes) {
       if (wake.content !== text) continue;
       owner.unconsumedWakes.delete(token);
+      if (text) {
+        owner.consumedWakeTexts.add(text);
+        if (owner.consumedWakeTexts.size > 8) {
+          const oldest = owner.consumedWakeTexts.values().next().value;
+          if (oldest !== undefined) owner.consumedWakeTexts.delete(oldest);
+        }
+      }
       wake.pending.delivered = true;
       try {
         finishPendingActionable(owner, wake.pending);
@@ -797,6 +1050,17 @@ export default function (pi: ExtensionAPI) {
       }
       return;
     }
+    // An idle main consumes a follow-up at before_agent_start and then raises
+    // message_start with the same text. That second event is the same
+    // consumption, not a captain steer, so it must not clear the delivery
+    // bound the first event's follower is enforcing.
+    if (text && owner.consumedWakeTexts.has(text)) return;
+    // Not one of this extension's follow-ups, so the captain just steered: the
+    // bound counts deliveries since then, so delivery restarts from zero.
+    owner.wakeKeyDeliveries.clear();
+    owner.wakeKeyCeilingNotified.clear();
+    owner.wakeDeliveryTimes = [];
+    owner.wakeGlobalCeilingNotified = false;
   }
 
   function confirmHandlingDelivery(recovery: { generation: string; watcherPid: string }): {
@@ -994,12 +1258,77 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           const message = restoration.failure ? `${pending.message}\n\n${restoration.failure}` : pending.message;
-          const delivered = await deliverActionableWake(owner, message, pending, restoration.recovery);
+          // Bound delivery so a persistent or rotating set of recurring alerts
+          // cannot take one supervisor turn per watcher cycle. Each event and
+          // the whole session are counted inside their own rolling windows, so
+          // interleaving distinct events cannot reset one another and delivery
+          // resumes on its own once a window rolls. A suppressed record is
+          // settled here, but its durable queue row is untouched, so the drain
+          // still presents it and its acknowledgement still clears it.
+          const eventKey = wakeEventKey(pending.message);
+          const now = Date.now();
+          const recent = (owner.wakeKeyDeliveries.get(eventKey) ?? []).filter(
+            (at) => now - at < followUpWindowMs,
+          );
+          const globalRecent = owner.wakeDeliveryTimes.filter(
+            (at) => now - at < globalFollowUpWindowMs,
+          );
+          if (owner.wakeGlobalCeilingNotified && globalRecent.length < globalFollowUpCeiling) {
+            owner.wakeGlobalCeilingNotified = false;
+          }
+          let notice = "";
+          let globalNotice = false;
+          let suppress = false;
+          if (globalRecent.length >= globalFollowUpCeiling) {
+            if (owner.wakeGlobalCeilingNotified) {
+              suppress = true;
+            } else {
+              globalNotice = true;
+              notice = wakeGlobalCeilingNotice(globalRecent.length + 1);
+            }
+          } else if (recent.length >= followUpCeiling) {
+            if (owner.wakeKeyCeilingNotified.has(eventKey)) {
+              suppress = true;
+            } else {
+              notice = wakeKeyCeilingNotice(recent.length + 1, eventKey);
+            }
+          } else {
+            owner.wakeKeyCeilingNotified.delete(eventKey);
+            recent.push(now);
+          }
+          owner.wakeKeyDeliveries.set(eventKey, recent);
+          owner.wakeDeliveryTimes = globalRecent;
+          if (suppress) {
+            settleClaim("delivered");
+            pending.delivered = true;
+            try {
+              finishPendingActionable(owner, pending);
+            } catch (error) {
+              surfaceCleanupFailure(owner, error);
+            }
+            releaseClaim();
+            continue;
+          }
+          const delivered = await deliverActionableWake(
+            owner,
+            notice || message,
+            pending,
+            restoration.recovery,
+          );
           if (!delivered) {
             settleClaim("failed");
             releaseClaim();
             return;
           }
+          // Only a delivered notice closes the event: a failed one is retried
+          // by the next identical close instead of suppressing silently.
+          owner.wakeDeliveryTimes.push(now);
+          if (globalNotice) {
+            owner.wakeGlobalCeilingNotified = true;
+          } else if (notice) {
+            owner.wakeKeyCeilingNotified.add(eventKey);
+          }
+          recordDeliveryLatency(pending, message);
           const awaitingConsumption = owner.unconsumedWakes.has(pending.token);
           if (awaitingConsumption && !generationIsLive(owner)) {
             // omp accepted the follow-up, then the session was replaced before
@@ -1311,7 +1640,8 @@ export default function (pi: ExtensionAPI) {
       loadFailure = `watcher: FAILED - omp extension could not load a replacement-session actionable wake\n${detail}`;
     }
     const inProcessPending = replacementCoordinator.pending.splice(0);
-    for (const actionable of [...pending, ...inProcessPending]) {
+    // One summary wake for a whole replayed batch, never one turn per row.
+    for (const actionable of coalesceSessionStartPending([...pending, ...inProcessPending])) {
       enqueuePendingActionable(owner, actionable);
     }
     if (owner.pendingActionables.length > 0) {

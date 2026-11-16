@@ -55,6 +55,12 @@ omp also re-checks liveness while idle and recovers a resumed session without a 
 - Otherwise the tick, while the session owns the lock and no away/quiet daemon owns supervision, asks `bin/fm-watcher-beat-check.sh` whether supervision is needed and the beacon is stale, and starts one ordinary arm only on its alarm exit.
 - On `session_start`, a lock the shared `fm_session_lock_pid_blocks_reclaim` verdict proves reclaimable is taken through `bin/fm-lock.sh`, so a resumed omp process arms before its first prompt; a live owner or an unreadable record is left untouched.
 
+omp also bounds delivery so a persistent or rotating alert cannot occupy a supervisor turn per watcher cycle:
+
+- After `FM_OMP_WAKE_FOLLOWUP_CEILING` deliveries of the same actionable event inside `FM_OMP_WAKE_FOLLOWUP_WINDOW_SECS` ([configuration](configuration.md#environment-variables) owns both defaults), one plain ceiling notice replaces the next event and that event's later deliveries are suppressed until the window rolls. Each event keeps its own count, so interleaving distinct events cannot reset the bound. Independently, `FM_OMP_WAKE_GLOBAL_CEILING` deliveries of any events inside `FM_OMP_WAKE_GLOBAL_WINDOW_SECS` (defaults and validation: [configuration](configuration.md#environment-variables)) trip one global notice and stop automatic delivery, so a rotation of distinct recurring events is bounded too; as deliveries leave that rolling window, delivery resumes on its own, and a captain turn clears it sooner. Every suppressed row stays durable in `state/.wake-queue`, and each notice keeps `bin/fm-wake-drain.sh` and its `WAKE_ACK_REQUIRED` obligation visible. A captain turn clears both bounds.
+- A replacement handoff that holds more than one record is coalesced into one session-start summary wake naming the distinct reasons (a bounded list; any remainder is left to the drain) and the queue's highest sequence, so a batch replayed after a session outage is one turn rather than one per row.
+- Each delivery appends a `delivered` event to `state/.handoff-journal`, so `bin/fm-handoff-latency.sh` reports the watcher-close-to-delivery wait.
+
 The extension header owns the exact gating and ordering.
 
 ### Pi session replacement

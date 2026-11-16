@@ -123,7 +123,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-worker-liveness.sh` | Tracked worker-liveness check: one alarm line per worker whose agent is really gone, aware of sandboxed workers and declared pipeline or CI waits |
 | `fm-watcher-beat-check.sh` | Cheap proof the primary watcher is alive: one watcher-down alarm line and exit 1 when its beacon is older than the grace |
 | `fm-gate-park-lib.sh` | Single owner of parked-gate detection: an idle worker whose run is parked at a gate gets at most one reattach nudge per interval and firstmate an actionable wake |
-| `fm-handoff-journal-lib.sh` | Single owner of the handoff journal the wake drain appends to, so the latency report can see when a wake was presented and acknowledged |
+| `fm-handoff-journal-lib.sh` | Single owner of the handoff journal the wake drain and the omp primary extension append to, so the latency report can see when a wake was presented, acknowledged, or delivered |
 | `fm-handoff-latency.sh`  | Read-only report of where time went between workers and firstmate, worst gap first    |
 | `fm-ci-rerun-failed.sh`  | Re-run only the failed jobs of a PR's latest failed CI run, refusing a live, green, or moved-head run, and print what it re-ran |
 | `fm-host-lint.sh`        | Lint a sandboxed worker's clone on the host in parallel partitions and print the evidence plus the answer text for a parked lint gate, never answering it; also the worker's pipeline-fix patch export |

@@ -217,7 +217,7 @@ test_self_announced_pending_reply_close_still_surfaces() {
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after the escalation close failed"
   sed -E 's/ \[at=[0-9]+\]//' "$out" \
-    | grep -F "task6 resolved [key=pending-reply-$corr]: pending-reply-resolved: task=task6 pending-reply-id=$corr" >/dev/null \
+    | grep -F "task6 resolved [key=pending-reply-$corr]: pending-reply-resolved: task=task6 corr=$corr pending-reply-id=$corr" >/dev/null \
     || fail "the self-announced pending-reply resolution was hidden from UNREAD STATUS: $(cat "$out")"
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "second drain after the escalation close failed"

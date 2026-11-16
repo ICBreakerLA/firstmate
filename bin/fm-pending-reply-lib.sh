@@ -1127,10 +1127,13 @@ fm_pending_reply_escalation_key() {  # <corr_id>
 # operator --resolve-key path write. The note also carries the corr= token the
 # resolution scanner matches (fm_pending_reply_find_resolve_line), so an
 # operator close that names only the key resolves its own expectation without a
-# hand-typed correlation token, and the record settles on the next tick.
+# hand-typed correlation token, and the record settles on the next tick. The
+# corr= token is written immediately after task=, ahead of the duplicate
+# pending-reply-id= and via= fields, so a status-line cap that truncates the
+# tail of a long close record can never remove it.
 # Optional <extra> is free text appended after a space.
 fm_pending_reply_resolved_note() {  # <task-id> <corr_id> <via> [extra]
-  printf 'pending-reply-resolved: task=%s pending-reply-id=%s via=%s corr=%s' "$1" "$2" "$3" "$2"
+  printf 'pending-reply-resolved: task=%s corr=%s pending-reply-id=%s via=%s' "$1" "$2" "$2" "$3"
   if [ -n "${4:-}" ]; then
     printf ' %s' "$4"
   fi

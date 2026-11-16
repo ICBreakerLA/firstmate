@@ -670,7 +670,7 @@ test_reserved_pending_reply_key_closes_through_resolve_key() {
 
   run_send "$fb" "$home" "$log" mate --resolve-key "$key" "ack, false escalation"; rc=$?
   expect_code 0 "$rc" "closing a reserved pending-reply key via --resolve-key should succeed"
-  grep -F "pending-reply-resolved: task=mate pending-reply-id=$corr via=operator-resolve-key" \
+  grep -F "pending-reply-resolved: task=mate corr=$corr pending-reply-id=$corr via=operator-resolve-key" \
     "$home/state/mate.status" >/dev/null \
     || fail "the operator close did not write the owning library's close note:"$'\n'"$(cat "$home/state/mate.status")"
   if grep -E "resolved \[key=$key\]( \[at=[0-9]+\])?: answered:" "$home/state/mate.status" >/dev/null; then
@@ -843,7 +843,7 @@ test_remote_reserved_pending_reply_key_closes_locally() {
     FM_SSH_BIN="$fb/fake-ssh" FM_SSH_LOG="$ssh_log" FM_FAKE_SSH_RC=0 \
     "$SEND" rsm --resolve-key "$key" "ack the missed-reply hold" >/dev/null 2>&1; rc=$?
   expect_code 0 "$rc" "a remote reserved-key --resolve-key should succeed"
-  grep -F "pending-reply-resolved: task=rsm pending-reply-id=$corr via=operator-resolve-key" \
+  grep -F "pending-reply-resolved: task=rsm corr=$corr pending-reply-id=$corr via=operator-resolve-key" \
     "$home/state/rsm.status" >/dev/null \
     || fail "the remote operator close did not write the owning library's close note: $(cat "$home/state/rsm.status")"
   out=$(drain_out "$home")

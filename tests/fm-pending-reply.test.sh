@@ -40,8 +40,11 @@
 #  19. An operator close that names only the key resolves the escalated record on
 #      the next tick, with no hand-typed correlation token, even when its
 #      free-text answer echoes escalation wording; an escalation line quoting
-#      its own corr token still never self-resolves
-#  20. A request summary keeps accented letters, drops control characters, and
+#      its own corr token still never self-resolves. Such a close is terminal:
+#      its own answer arms no fresh pending-reply expectation
+#  20. An operator close on a valid 36+ character task id keeps the close note's
+#      corr= token through the status-line cap, so the record still resolves
+#  21. A request summary keeps accented letters, drops control characters, and
 #      caps at 120 characters without splitting one under any caller locale
 set -u
 
@@ -734,7 +737,7 @@ test_legacy_escalation_closes_default_decision() {
   printf 'done [corr=%s]: delayed legacy reply\n' "$corr" >> "$state/hibit.status"
 
   fm_pending_reply_try_resolve "$state" "$corr" || fail "legacy reply should resolve its record"
-  [ "$(sed -E 's/ \[at=[0-9]+\]//' "$state/hibit.status" | grep -Fc "resolved [key=default]: pending-reply-resolved: task=hibit pending-reply-id=$corr")" -eq 1 ] \
+  [ "$(sed -E 's/ \[at=[0-9]+\]//' "$state/hibit.status" | grep -Fc "resolved [key=default]: pending-reply-resolved: task=hibit corr=$corr pending-reply-id=$corr")" -eq 1 ] \
     || fail "legacy escalation did not append one guarded default-key resolution"
   open=$(status_open_decisions "$state/hibit.status")
   [ -z "$open" ] || fail "resolved legacy escalation remained open: $open"
@@ -819,7 +822,7 @@ test_concurrent_resolution_closes_escalation_once() {
 
   [ "$(phase_of "$state" "$corr")" = resolved ] \
     || fail "concurrent resolvers left the expectation unresolved"
-  [ "$(grep -Fc "pending-reply-resolved: task=hibit pending-reply-id=$corr" "$state/hibit.status")" -eq 1 ] \
+  [ "$(grep -Fc "pending-reply-resolved: task=hibit corr=$corr pending-reply-id=$corr" "$state/hibit.status")" -eq 1 ] \
     || fail "concurrent resolvers did not append exactly one decision close"
   [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ] \
     || fail "concurrent resolution did not record the closed escalation"
@@ -2113,7 +2116,7 @@ test_same_kind_escalation_reopens_after_legacy_operator_close() {
 
 test_operator_close_note_resolves_escalated_record() {
   (
-    local dir fb log home state corr status rec open
+    local dir fb log home state corr status rec open pending_count
     dir="$TMP_ROOT/operator-close-resolves"
     mkdir -p "$dir"
     fb=$(make_stubs "$dir")
@@ -2139,6 +2142,9 @@ test_operator_close_note_resolves_escalated_record() {
       || fail "operator close failed"
     [ "$(phase_of "$state" "$corr")" = escalated ] \
       || fail "precondition: the raw close line must not resolve the record by itself"
+    pending_count=$(find "$state/pending-replies" -maxdepth 1 -type f | wc -l | tr -d ' ')
+    [ "$pending_count" -eq 1 ] \
+      || fail "a terminal operator close armed a fresh expectation ($pending_count records)"
 
     fm_pending_reply_tick "$state" || fail "tick failed"
     [ "$(phase_of "$state" "$corr")" = resolved ] \
@@ -2148,7 +2154,7 @@ test_operator_close_note_resolves_escalated_record() {
     [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ] \
       || fail "operator close did not record the closed escalation"
   ) || fail "operator close key resolution failed"
-  pass "an operator close that names only the key resolves the expectation"
+  pass "an operator close that names only the key resolves the expectation and arms no fresh one"
 }
 
 test_operator_close_excerpt_with_escalation_wording_resolves() {
@@ -2187,6 +2193,46 @@ test_operator_close_excerpt_with_escalation_wording_resolves() {
     [ -z "$open" ] || fail "operator close left the decision open: $open"
   ) || fail "operator close with escalation wording in the excerpt failed"
   pass "an operator close resolves even when its free text echoes escalation wording"
+}
+
+test_operator_close_long_task_id_keeps_corr_through_cap() {
+  (
+    local dir fb log home state corr status rec open long_id
+    dir="$TMP_ROOT/operator-close-long-id"
+    mkdir -p "$dir"
+    fb=$(make_stubs "$dir")
+    log="$dir/send.log"
+    home=$(setup_parent operator-close-long-id)
+    state="$home/state"
+    long_id="mate-$(printf 'x%.0s' $(seq 1 35))"
+    [ "${#long_id}" -ge 36 ] || fail "fixture task id must exceed 35 characters"
+    fm_write_secondmate_meta "$state/$long_id.meta" "$home/sm" "sess:fm-$long_id"
+    # This fixture clock is intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
+    export FM_PENDING_REPLY_NOW=14000
+    corr=$(fm_pending_reply_create "$home" "$state" "$long_id" "request left parked") \
+      || fail "create failed"
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    fm_pending_reply_mark_delivered "$state" "$corr" || fail "mark delivered failed"
+    fm_pending_reply_set "$rec" phase escalated || fail "escalated phase failed"
+    fm_pending_reply_set "$rec" escalated_epoch 13000 || fail "escalated epoch failed"
+    status="$state/$long_id.status"
+    printf 'blocked [key=pending-reply-%s]: pending-reply-missed: task=%s pending-reply-id=%s request=request left parked\n' \
+      "$corr" "$long_id" "$corr" > "$status"
+
+    run_send "$fb" "$home" "$log" "$long_id" --resolve-key "pending-reply-$corr" \
+      "dismiss the parked request" \
+      || fail "operator close failed"
+    [ "$(phase_of "$state" "$corr")" = escalated ] \
+      || fail "precondition: the raw close line must not resolve the record by itself"
+
+    fm_pending_reply_tick "$state" || fail "tick failed"
+    [ "$(phase_of "$state" "$corr")" = resolved ] \
+      || fail "a long task id truncated the close note's corr= token; the expectation never resolved"
+    open=$(status_open_decisions "$status")
+    [ -z "$open" ] || fail "operator close left the decision open: $open"
+  ) || fail "operator close on a long task id failed"
+  pass "an operator close keeps its corr= token through the cap for a long task id"
 }
 
 test_escalation_line_quoting_corr_cannot_self_resolve() {
@@ -2287,6 +2333,7 @@ test_escalated_undelivered_correlation_stays_retryable
 test_same_kind_escalation_reopens_after_legacy_operator_close
 test_operator_close_note_resolves_escalated_record
 test_operator_close_excerpt_with_escalation_wording_resolves
+test_operator_close_long_task_id_keeps_corr_through_cap
 test_escalation_line_quoting_corr_cannot_self_resolve
 test_summary_keeps_accents_and_caps_by_character
 

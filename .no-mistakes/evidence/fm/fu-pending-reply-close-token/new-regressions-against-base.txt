@@ -1,0 +1,17 @@
+Base commit: 96dfd3b80e8a7830c1b809a0375f2146d114bd4d
+Each new behavior test run individually against base code with the change's test file:
+
+=== test_operator_close_note_resolves_escalated_record ===
+not ok - a terminal operator close armed a fresh expectation (2 records)
+not ok - operator close key resolution failed
+
+=== test_operator_close_excerpt_with_escalation_wording_resolves ===
+not ok - free text echoing escalation wording must not suppress the operator close
+not ok - operator close with escalation wording in the excerpt failed
+
+=== test_operator_close_long_task_id_keeps_corr_through_cap ===
+not ok - a long task id truncated the close note's corr= token; the expectation never resolved
+not ok - operator close on a long task id failed
+
+=== test_escalation_line_quoting_corr_cannot_self_resolve ===
+ok - an escalation line quoting its own corr token cannot self-resolve

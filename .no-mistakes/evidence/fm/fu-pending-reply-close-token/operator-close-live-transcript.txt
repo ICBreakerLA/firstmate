@@ -1,0 +1,26 @@
+task=mate corr=f953590d56a768c3
+phase-before-close=escalated
+pending-records-before=1
+
+$ fm-send mate --resolve-key pending-reply-f953590d56a768c3 'the pending-reply-missed alarm was spurious'
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the requested message WILL still be sent.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+fm-send: doorbell not typed because the agent in sess:fm-mate has exited; the steer is durably recorded at /tmp/fm-drive-home.MHRFSA/state/mate.inbox/001.msg for recovery (stuck-crewmate-recovery), and the watcher will not re-ring a dead pane
+fm-send rc=0
+
+--- status lines written by the operator close ---
+resolved [key=pending-reply-f953590d56a768c3] [at=1794862976]: pending-reply-resolved: task=mate corr=f953590d56a768c3 pending-reply-id=f953590d56a768c3 via=operator-resolve-key the pending-reply-missed alarm [truncated]
+
+phase-after-close=escalated
+pending-records-after-close=1
+
+$ fm_pending_reply_tick /tmp/fm-drive-home.MHRFSA/state
+tick rc=0
+phase-after-tick=resolved
+escalation_closed_epoch=1794862976
+open-decisions=

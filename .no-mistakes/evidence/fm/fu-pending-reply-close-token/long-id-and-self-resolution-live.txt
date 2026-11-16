@@ -1,0 +1,11 @@
+=== Scenario A: 36-character task id, operator close through real fm-send ===
+task-id=mate-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (len=40)
+fm-send rc=0
+close-line: resolved [key=pending-reply-acab23265dfe9097] [at=1794863150]: pending-reply-resolved: task=mate-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx corr=acab23265dfe9097 pending-reply-id=acab23265dfe9097 via=operator-resolv [truncated]
+corr-survives-cap=yes
+phase-after-tick=resolved
+open-decisions=
+
+=== Scenario B: escalation line quoting its own corr must not self-resolve ===
+try-resolve=refused (guard holds)
+phase-after-scan=escalated

@@ -598,13 +598,18 @@ fm_pending_reply_discard_undelivered() {  # <state-dir> <corr_id>
 # 0 if a status line is a correlated acknowledgement for <corr_id>.
 # Accepts short status replies and status lines that point at a document.
 # Unrelated verbs without the token never match. Stale/wrong corr never match.
-# The parent's own pending-reply-missed escalation line must not self-resolve:
-# it names the request with pending-reply-id= rather than corr=.
+# An escalation line this library published must not self-resolve even when its
+# request summary happens to quote the corr token: only the note head's
+# vocabulary decides, so a pending-reply-resolved close note stays decisive
+# even when an operator's free-text answer echoes escalation wording.
 fm_pending_reply_line_resolves() {  # <line> <corr_id>
-  local line=$1 corr=$2
+  local line=$1 corr=$2 note
   [ -n "$line" ] && [ -n "$corr" ] || return 1
-  case "$line" in
-    *pending-reply-missed*) return 1 ;;
+  status_line_note "$line" note
+  case "$note" in
+    pending-reply-missed:*|pending-reply-delivery-unknown:*|pending-reply-recovery-delivery-*:*)
+      return 1
+      ;;
   esac
   fm_pending_reply_text_has_corr "$line" "$corr"
 }

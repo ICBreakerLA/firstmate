@@ -38,7 +38,9 @@
 #      the close note carried its own corr= token) appends again and reopens the
 #      decision; a retry while that decision is still open appends nothing
 #  19. An operator close that names only the key resolves the escalated record on
-#      the next tick, with no hand-typed correlation token
+#      the next tick, with no hand-typed correlation token, even when its
+#      free-text answer echoes escalation wording; an escalation line quoting
+#      its own corr token still never self-resolves
 #  20. A request summary keeps accented letters, drops control characters, and
 #      caps at 120 characters without splitting one under any caller locale
 set -u
@@ -2149,6 +2151,70 @@ test_operator_close_note_resolves_escalated_record() {
   pass "an operator close that names only the key resolves the expectation"
 }
 
+test_operator_close_excerpt_with_escalation_wording_resolves() {
+  (
+    local dir fb log home state corr status rec open
+    dir="$TMP_ROOT/operator-close-excerpt"
+    mkdir -p "$dir"
+    fb=$(make_stubs "$dir")
+    log="$dir/send.log"
+    home=$(setup_parent operator-close-excerpt)
+    state="$home/state"
+    fm_write_secondmate_meta "$state/mate.meta" "$home/sm" "sess:fm-mate"
+    # This fixture clock is intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
+    export FM_PENDING_REPLY_NOW=12000
+    corr=$(fm_pending_reply_create "$home" "$state" mate "request left parked") \
+      || fail "create failed"
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    fm_pending_reply_mark_delivered "$state" "$corr" || fail "mark delivered failed"
+    fm_pending_reply_set "$rec" phase escalated || fail "escalated phase failed"
+    fm_pending_reply_set "$rec" escalated_epoch 11000 || fail "escalated epoch failed"
+    status="$state/mate.status"
+    printf 'blocked [key=pending-reply-%s]: pending-reply-missed: task=mate pending-reply-id=%s request=request left parked\n' \
+      "$corr" "$corr" > "$status"
+
+    run_send "$fb" "$home" "$log" mate --resolve-key "pending-reply-$corr" \
+      "the pending-reply-missed alarm was spurious" \
+      || fail "operator close failed"
+    [ "$(phase_of "$state" "$corr")" = escalated ] \
+      || fail "precondition: the raw close line must not resolve the record by itself"
+
+    fm_pending_reply_tick "$state" || fail "tick failed"
+    [ "$(phase_of "$state" "$corr")" = resolved ] \
+      || fail "free text echoing escalation wording must not suppress the operator close"
+    open=$(status_open_decisions "$status")
+    [ -z "$open" ] || fail "operator close left the decision open: $open"
+  ) || fail "operator close with escalation wording in the excerpt failed"
+  pass "an operator close resolves even when its free text echoes escalation wording"
+}
+
+test_escalation_line_quoting_corr_cannot_self_resolve() {
+  (
+    local home state corr rec status
+    home=$(setup_parent escalation-self-corr)
+    state="$home/state"
+    # This fixture clock is intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
+    export FM_PENDING_REPLY_NOW=13000
+    corr=$(fm_pending_reply_create "$home" "$state" mate "quotes its own token") \
+      || fail "create failed"
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    fm_pending_reply_mark_delivered "$state" "$corr" || fail "mark delivered failed"
+    fm_pending_reply_set "$rec" phase escalated || fail "escalated phase failed"
+    fm_pending_reply_set "$rec" escalated_epoch 12000 || fail "escalated epoch failed"
+    status="$state/mate.status"
+    printf 'blocked [key=pending-reply-%s]: pending-reply-missed: task=mate pending-reply-id=%s request=see corr=%s for context\n' \
+      "$corr" "$corr" "$corr" > "$status"
+    if fm_pending_reply_try_resolve "$state" "$corr" "$status"; then
+      fail "an escalation line quoting its own corr token must not self-resolve"
+    fi
+    [ "$(phase_of "$state" "$corr")" = escalated ] \
+      || fail "an escalation line must leave the record escalated"
+  ) || fail "escalation self-resolution guard failed"
+  pass "an escalation line quoting its own corr token cannot self-resolve"
+}
+
 test_summary_keeps_accents_and_caps_by_character() {
   local out long cap_chars loc
   out=$(fm_pending_reply_summarize "não faça a correção")
@@ -2220,6 +2286,8 @@ test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
 test_same_kind_escalation_reopens_after_legacy_operator_close
 test_operator_close_note_resolves_escalated_record
+test_operator_close_excerpt_with_escalation_wording_resolves
+test_escalation_line_quoting_corr_cannot_self_resolve
 test_summary_keeps_accents_and_caps_by_character
 
 printf 'ok - all pending-reply tests passed\n'

@@ -565,7 +565,7 @@ For spawn-capable adapters, the runtime session-provider backend controls where 
 | `rex` | Experimental; no dedicated real-backend lane | [`docs/rex-backend.md`](rex-backend.md) |
 | `t3code` | Experimental; no dedicated real-backend lane | [`docs/t3code-backend.md`](t3code-backend.md) |
 | `tern` | Experimental; no dedicated real-backend lane | [`docs/tern-backend.md`](tern-backend.md) |
-| `hc` | Experimental; a manual `--family hc` lane runs against the pinned build, not automated on every PR | [`docs/hc-backend.md`](hc-backend.md) |
+| `hc` | Experimental; the hermetic suite runs in the gate, and a manual `--family hc-pinned` lane runs against the pinned build, not automated on every PR | [`docs/hc-backend.md`](hc-backend.md) |
 
 Treehouse remains the worktree provider for tmux, herdr, zellij, cmux, paseo, rex, t3code, tern, and hc, since herdr, zellij, cmux, paseo, rex, t3code, tern, and hc are session providers only; Orca provides both the task worktree and terminal endpoint.
 
@@ -1271,7 +1271,7 @@ The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns the exact base rule, and the
 
 ## Gate defaults (.no-mistakes.yaml)
 
-The tracked [`.no-mistakes.yaml`](../.no-mistakes.yaml) sets `test.evidence.store_in_repo: true`, pins `commands.lint` to the [output scan](#output-scan-configoutput-scan-denytxt) of the branch diff, then the canonical [shell/workflow lint](../bin/fm-lint.sh), then the [Pi production-consumer typecheck](../tests/fm-pi-primary-types.test.sh) in the compiler-owning lint phase, and pins `commands.test` to the coverage guard plus the three portable lanes through [`bin/fm-test-run.sh`](../bin/fm-test-run.sh), with the live-harness-optin and hc families excluded and `FM_LIVE=0` set. The full walk needs the gate host's global no-mistakes `test_agent_timeout` raised to 5h; [`fm-test-portable-shards.md`](fm-test-portable-shards.md#gate-execution-bounds) owns that bound.
+The tracked [`.no-mistakes.yaml`](../.no-mistakes.yaml) sets `test.evidence.store_in_repo: true`, pins `commands.lint` to the [output scan](#output-scan-configoutput-scan-denytxt) of the branch diff, then the canonical [shell/workflow lint](../bin/fm-lint.sh), then the [Pi production-consumer typecheck](../tests/fm-pi-primary-types.test.sh) in the compiler-owning lint phase, and pins `commands.test` to the coverage guard plus the three portable lanes through [`bin/fm-test-run.sh`](../bin/fm-test-run.sh), with the live-harness-optin and hc-pinned families excluded and `FM_LIVE=0` set, while the hermetic `tests/fm-backend-hc.test.sh` stays gated. The full walk takes roughly 3.5-4 hours; the operator raised the gate host's global no-mistakes `test_agent_timeout` to 5h on 2026-11-16, and [`fm-test-portable-shards.md`](fm-test-portable-shards.md#gate-execution-bounds) owns that bound.
 Storing evidence in the repo publishes each run's test artifacts to the orphan `no-mistakes/evidence` branch and links them from the PR body, instead of keeping them on local disk under the no-mistakes home.
 
 That branch shares no history with code branches, so evidence never enters a pushed feature branch or the default branch; the worktree's `.no-mistakes/` stays local and the local gate's repo invariants test rejects tracked entries under that path.

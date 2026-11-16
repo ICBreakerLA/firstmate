@@ -1,4 +1,4 @@
-# Stock macOS Bash compatibility, kept as the fork's only hosted job.
+# Stock macOS Bash compatibility, kept as the fork's only hosted Bash-compatibility job.
 #
 # The fork runs no hosted Linux suite: the no-mistakes gate runs the portable
 # lanes locally (CONTRIBUTING.md "Fork divergence: no hosted CI"). The local

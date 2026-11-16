@@ -1909,7 +1909,7 @@ ok - version floor: an unconfigured home stays projected on herdr 0.8.0 and the 
 evidence: herdr=0.8.0 protocol=19 steal_live=0 floor_verdict=0 default-session-tripwire=armed
 ```
 
-The same guarded named-lab command passed on 2026-09-03 against Herdr 0.8.2 after this regression joined the required `real-herdr-gated` lane.
+The same guarded named-lab command passed on 2026-09-03 against Herdr 0.8.2 after this regression joined the `real-herdr-gated` lane, which is now a manual/pre-merge lane rather than a required hosted one.
 It reported `steal_live=0 floor_verdict=0 default-session-tripwire=armed`, with the fleet's default session unchanged before and after.
 
 Part C is the case the suite could not reach before: a doomed pane whose shell holds a persistent background child fails the lone-idle-shell proof on every sample, so the plan takes the plain explicit close, in the geometry where the closing workspace's right neighbour is a spacer rather than the focused anchor.

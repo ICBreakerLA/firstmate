@@ -447,8 +447,11 @@ family_for_basename() {
     fm-backend-tern.test.sh|fm-backend-tern-smoke.test.sh)
       printf '%s\n' tern
       ;;
-    fm-backend-hc.test.sh|fm-backend-hc-smoke.test.sh|fm-backend-hc-appdetect-smoke.test.sh)
+    fm-backend-hc.test.sh)
       printf '%s\n' hc
+      ;;
+    fm-backend-hc-smoke.test.sh|fm-backend-hc-appdetect-smoke.test.sh)
+      printf '%s\n' hc-pinned
       ;;
     fm-branch-supervision.test.sh|fm-busy-adapter-wiring.test.sh|\
     fm-busy-state.test.sh|fm-capacity.test.sh|fm-capacity-auto.test.sh|fm-lane-vitals.test.sh|\
@@ -479,7 +482,7 @@ expected_gate_skip_for_family() {
   case "$1" in
     real-herdr-gated) printf '%s\n' herdr ;;
     live-harness-optin) printf '%s\n' live-capability ;;
-    cmux|zellij|orca|paseo|rex|tern|hc) printf '%s\n' optional-binary ;;
+    cmux|zellij|orca|paseo|rex|tern|hc-pinned) printf '%s\n' optional-binary ;;
     snapshot-bearings) printf '%s\n' optional-binary ;;
     *) printf '%s\n' none ;;
   esac
@@ -504,6 +507,7 @@ paseo
 rex
 tern
 hc
+hc-pinned
 standalone
 unclassified
 EOF
@@ -1722,14 +1726,15 @@ families_for_changed_path() {
       ;;
     bin/backends/hc.sh|bin/fm-hc-lab.sh|tests/hc-test-safety.sh)
       printf '%s\n' hc
+      printf '%s\n' hc-pinned
       printf '%s\n' backend-dispatch
       printf '%s\n' "__script__:fm-backend-hc-liveness-live-e2e.test.sh"
       ;;
     bin/fm-install-hc.sh|bin/fm-hc-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit
-      # Pin or cleanup changes also select the hc family so the real lane's
-      # coverage re-runs, mirroring the real-herdr-gated arm above.
-      printf '%s\n' hc
+      # Pin or cleanup changes also select the pinned hc family so the manual
+      # real-core lane's coverage re-runs, mirroring the real-herdr-gated arm above.
+      printf '%s\n' hc-pinned
       ;;
     bin/backends/orca*|bin/backends/tmux.sh)
       printf '%s\n' backend-dispatch
@@ -1991,8 +1996,8 @@ families_for_changed_path() {
       ;;
     bin/fm-install-herdr.sh|bin/fm-install-treehouse.sh|bin/fm-herdr-ci-cleanup.sh)
       printf '%s\n' pure-contract-unit
-      # Pin or cleanup changes also select the real-Herdr family so the required
-      # lane's contract coverage re-runs.
+      # Pin or cleanup changes also select the real-Herdr family so the manual
+      # pre-merge lane's contract coverage re-runs.
       printf '%s\n' real-herdr-gated
       ;;
     bin/fm-lint.sh|bin/fm-lint-workflows.sh|bin/fm-install-shellcheck.sh|\

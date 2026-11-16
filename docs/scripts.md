@@ -43,7 +43,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-lab-home.sh`         | Mint disposable lab homes and manage their isolated tmux socket directories       |
 | `fm-live-lab.sh`         | Build and operate a disposable live supervision lab; see its header for usage and readiness contract |
 | `fm-install-herdr.sh`    | Install the exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |
-| `fm-install-hc.sh`       | Install the pinned, checksum-verified herdr-core (`hc`) build used by the manual `--family hc` lane and operators |
+| `fm-install-hc.sh`       | Install the pinned, checksum-verified herdr-core (`hc`) build used by the manual `--family hc-pinned` lane and operators |
 | `fm-install-treehouse.sh`| Install the exact-version Treehouse pin for real-Herdr E2E that needs spawn worktrees |
 | `fm-herdr-ci-cleanup.sh` | Snapshot and tear down only job-owned `fm-lab-*` sessions in the real-Herdr lane     |
 | `fm-hc-ci-cleanup.sh`    | Snapshot and tear down only job-owned `fm-hclab-*` sessions in the manual herdr-core lane |

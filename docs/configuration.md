@@ -1798,10 +1798,12 @@ An invalid value refuses an explicit launch with a message naming the variable; 
 
 The server has one slot, so one local-model worker runs at a time across the whole host.
 The spawn claims that slot itself, with an exclusive non-blocking `flock` on `$XDG_STATE_HOME/firstmate/local-llm.lock` (`FM_LOCAL_LLM_LOCK`), before it creates anything, so of two spawns close together the second is refused and leaves no worktree, clone, or record.
-The claim names the task in the lock file and passes to a small detached holder, which keeps the lock until the task's `bin/fm-sbx-run.sh` has taken it over through the lock's `.handoff` FIFO and then ended, however it ends, including a crash.
+The claim names the task on the lock file's first line and records the small detached holder's pid on its second, and the holder, a `cat` of the lock's `.handoff` FIFO, keeps the lock until the task's `bin/fm-sbx-run.sh` has taken the FIFO over and then ended, however it ends, including a crash.
 The wrapper never takes or waits for the lock itself: it refuses to start unless the held claim names its own task.
 A spawn that fails before its launch is live releases the claim at once.
-A launched pane that never starts its wrapper leaves the claim with the holder, a `cat` of the `.handoff` FIFO, until that process is ended.
+A launched pane that never starts its wrapper leaves the claim with the holder until that process is ended.
+A finished task's claim is released with it: `bin/fm-pr-merge.sh` and `bin/fm-merge-local.sh` release it as part of a merge that landed, and `bin/fm-teardown.sh` releases it during cleanup, so the next local-model dispatch finds the slot free with no manual cleanup.
+A release never touches another task's claim, and it kills a recorded pid only after proving that pid is that claim's holder; a claim whose recorded pid is dead, zombied, stale, or reused is removed without any kill.
 
 #### Fallback to Claude Haiku and the optional server start
 

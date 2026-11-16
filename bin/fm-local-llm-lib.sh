@@ -139,11 +139,14 @@ fm_local_llm_server_processing() {
 
 # fm_local_llm_claim <task-id>
 # The spawn's atomic claim of the one local-model slot, taken before anything
-# else exists. On success the lock file names the task and the lock is held by
-# a detached holder that waits on the lock's handoff FIFO; the claim lasts
-# until the task's wrapper has opened that FIFO (fm_local_llm_take_claim) and
+# else exists. On success the lock file names the task on its first line and
+# carries the detached holder's pid on its second, and the lock is held by
+# that holder, which waits on the lock's handoff FIFO; the claim lasts until
+# the task's wrapper has opened that FIFO (fm_local_llm_take_claim) and
 # ended, however it ends. FM_LOCAL_LLM_HOLDER is the holder's pid, which the
-# spawn kills to release a claim no wrapper will take.
+# spawn kills to release a claim no wrapper will take; fm_local_llm_release
+# ends a finished task's claim by that recorded pid, which is why it is
+# persisted.
 fm_local_llm_claim() {
   local id=$1 f
   f=$(fm_local_llm_lock_file)
@@ -175,6 +178,15 @@ fm_local_llm_claim() {
   ) </dev/null >/dev/null 2>&1 &
   # shellcheck disable=SC2034 # Read by the sourcing script (fm-spawn.sh).
   FM_LOCAL_LLM_HOLDER=$!
+  # Persist the holder's pid while this shell still holds the flock, so
+  # fm_local_llm_release can name the holder after the spawn is long gone.
+  if ! printf '%s\n' "$FM_LOCAL_LLM_HOLDER" >>"$f"; then
+    kill "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+    rm -f "$f" "$f.handoff"
+    exec 9>&-
+    echo "error: could not prepare the local-model claim at $f" >&2
+    return 1
+  fi
   exec 9>&-
 }
 
@@ -195,6 +207,68 @@ fm_local_llm_take_claim() {
     echo "error: could not take over the local-model claim for $id" >&2
     return 1
   }
+}
+
+# fm_local_llm_holder_matches <pid> <lock-file>
+# 0 only when <pid> is provably the detached holder of the claim on
+# <lock-file>: its command line is the holder's `cat <lock-file>.handoff`,
+# or it holds <lock-file> open on some file descriptor. Every other verdict
+# - a dead pid, a zombie (whose command line is empty), a live pid that is
+# neither - says the recorded pid is not this claim's killable holder, so a
+# pid reused by an unrelated host process can never be killed by a late
+# release. kill -0 alone is deliberately not the test: a zombie passes it.
+fm_local_llm_holder_matches() {
+  local pid=$1 f=$2 cmd t fd
+  case "$pid" in
+  '' | *[!0-9]*) return 1 ;;
+  esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  cmd=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null) || cmd=
+  case "$cmd" in
+  "cat $f.handoff"*) return 0 ;;
+  esac
+  for fd in "/proc/$pid/fd"/*; do
+    t=$(readlink "$fd" 2>/dev/null) || continue
+    case "${t% (deleted)}" in
+    "$f") return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# fm_local_llm_release <task-id>
+# End <task-id>'s claim of the one local-model slot: the detached holder,
+# the lock file, and its handoff FIFO, so the slot is free for the next
+# claim. 0 - the slot is free of this task's claim - when the lock file is
+# absent, names another task (that claim is left running), names this task
+# with a dead, zombie, stale, or reused pid (nothing is killed, the file is
+# unlinked), or names this task with a matching live holder that is ended
+# here. 1 only when that holder outlived the kill and still holds the flock;
+# then the claim is left in place, never broken under a live worker. Safe to
+# call twice, and the unlink waits out the holder so a claim that raced in
+# after it exited is not unlinked.
+fm_local_llm_release() {
+  local id=$1 f pid i
+  f=$(fm_local_llm_lock_file)
+  [ -e "$f" ] || return 0
+  [ "$(head -n 1 "$f" 2>/dev/null)" = "$id" ] || return 0
+  pid=$(sed -n 2p "$f" 2>/dev/null) || pid=
+  if fm_local_llm_holder_matches "$pid" "$f"; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    for i in $(seq 1 50); do
+      flock -n "$f" true 2>/dev/null && break
+      sleep 0.1
+    done
+    if ! flock -n "$f" true 2>/dev/null; then
+      echo "error: task $id's local-model claim holder $pid is still holding the lock; the claim was left in place" >&2
+      return 1
+    fi
+  fi
+  # Unlink only while the claim is still this task's: a fresh claim that
+  # took the slot after the holder exited is not this file to remove.
+  [ "$(head -n 1 "$f" 2>/dev/null)" = "$id" ] || return 0
+  rm -f "$f" "$f.handoff"
 }
 
 # fm_local_llm_env

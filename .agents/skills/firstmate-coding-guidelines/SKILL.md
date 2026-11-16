@@ -100,6 +100,7 @@ Every such check needs two tests, because they fail for different reasons:
 - A live guard in the `live-harness-optin` family (`bin/fm-test-run.sh`) that exercises every INSTALLED harness for real and fails naming the harness and version.
   Report an absent harness explicitly rather than passing silently over it, and refuse a pass that checked nothing.
   Open it with `fm_live_gate` from `tests/lib.sh`, which is the single owner of that decision: a guard that spends no model tokens runs by default wherever its tools are installed, a guard that submits prompts stays opt-in, and its own variable or `FM_LIVE` forces it on (an absent tool then fails rather than skips) or off.
+  The no-mistakes gate sets `FM_LIVE=0`, so its broad regression run never executes these guards.
   The portable serial lane has no credentials and installs the public Pi package, so token-free guards exercise the available Pi surfaces while unavailable tools capability-skip; run a prompt-submitting guard after every harness upgrade and before trusting refreshed per-harness evidence.
 
 Record the dated per-harness result in `docs/verification/runtime-backends.md`, and point at the live guard as the command that refreshes it, rather than leaving a version-scoped observation to rot into a false claim.
@@ -114,8 +115,8 @@ Run `bin/fm-doc-audience-check.sh`; it enforces classification, README setup rou
 ## No-mistakes test configuration
 
 The local no-mistakes gate owns broad deterministic regression through `commands.test`.
-In this fork that command runs `bin/fm-test-run.sh --check-coverage` and the three portable lanes, and the portable serial lane includes `tests/fm-repo-invariants.test.sh`.
-Never add `--all` or the real-Herdr family to that command: `--all` selects the live-Herdr family, and a gate round must never drive a live Herdr session or the real fleet.
+In this fork that command runs `bin/fm-test-run.sh --check-coverage` and the three portable lanes with `--exclude-family live-harness-optin --exclude-family hc` under `FM_LIVE=0`, and the portable serial lane includes `tests/fm-repo-invariants.test.sh`.
+Never add `--all` or the real-Herdr family to that command: `--all` selects the live-Herdr family, and the family exclusions plus `FM_LIVE=0` keep every live Herdr session, release download, and hc binary out of the gate.
 Targeted validation beyond that suite belongs to the no-mistakes evidence path; add a scenario only when no deterministic test reaches the behavior.
 Firstmate PR #3644 demonstrated why an ad hoc script walk is not the alternative: pinning a 75-162-script walk took 32.7 minutes per validation, while the lane composition keeps broad regression bounded and reproducible.
 Stock macOS Bash compatibility stays out of the gate and remains covered by the single path-filtered `.github/workflows/macos-bash.yml` workflow.

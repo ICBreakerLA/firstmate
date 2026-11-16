@@ -22,6 +22,12 @@ raise "the macOS workflow must carry only macos-stock-bash, got #{jobs.keys.join
 triggers = doc[true] || doc["on"]
 raise "a push trigger would spend hosted minutes on every main merge" if triggers.key?("push")
 raise "the stock Bash job must be dispatchable by hand" unless triggers.key?("workflow_dispatch")
+concurrency = doc["concurrency"]
+raise "the workflow needs a concurrency group so a superseded pull request cancels its in-flight run" unless concurrency.is_a?(Hash)
+raise "concurrency.group must be non-empty, got #{concurrency["group"].inspect}" \
+  unless concurrency["group"].is_a?(String) && !concurrency["group"].strip.empty?
+raise "concurrency.cancel-in-progress must be true, got #{concurrency["cancel-in-progress"].inspect}" \
+  unless concurrency["cancel-in-progress"] == true
 paths = triggers.fetch("pull_request").fetch("paths")
 expected = %w[bin/** tests/** .github/workflows/**]
 raise "pull_request paths must be #{expected.join(", ")}, got #{paths.join(", ")}" unless paths.sort == expected.sort

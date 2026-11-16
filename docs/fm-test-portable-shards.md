@@ -74,6 +74,7 @@ The remote-secondmate lifecycle hint is 1005249 ms, its completed, passing `FM_T
 `portable-serial` includes every `tests/*.test.sh` that is neither proven-isolated nor `real-herdr-gated`.
 It keeps watcher, lock, AFK, real tmux, daemon, secondmate lifecycle, bootstrap, the `live-harness-optin` family, GUI-backend, and other unproven work serial.
 Membership is derived rather than enumerated, so a newly added test lands here by default.
+The gate's lane invocation then excludes the `live-harness-optin` and `hc` families; lane membership itself still includes them, so the coverage guard keeps its complete partition.
 
 ## Portable serial shards
 
@@ -160,11 +161,25 @@ The upstream workflow retained per-PR supersession and kept only the newest of c
 
 [CONTRIBUTING.md](../CONTRIBUTING.md) owns the local test policy and common entry points.
 `bin/fm-test-run.sh --help` owns exact lane names, selection flags, and bounded `--jobs` mechanics.
+The gate's `commands.test` runs `--check-coverage` and then each portable lane with `--exclude-family live-harness-optin --exclude-family hc` under `FM_LIVE=0`, so a gate round exercises no live guard, live Herdr session, release download, or hc binary.
 
 ## Gate execution bounds
 
 The hosted workflow's three-tier job timeouts died with it, and the macOS workflow keeps one normal-tier 30-minute tripwire on its own job.
 The local gate runs the coverage guard and the three portable lanes serially with no hosted job cap.
-The runner's optional `--per-script-timeout-secs` and `--max-wall-ms` are the only configured bounds, and each is a result check or a hang tripwire, never a packing estimate or a runtime target.
+no-mistakes bounds one Test-step agent invocation with its global `test_agent_timeout`, not with these runner flags; the full portable walk takes roughly 3.5-4 hours, so the gate host sets that global value to 5h. no-mistakes reads the key only from its global config, so a copy in `.no-mistakes.yaml` is ignored.
+The runner's optional `--per-script-timeout-secs` and `--max-wall-ms` are per-script result checks or hang tripwires, never a packing estimate or a runtime target.
+The 12 portable serial shards stay sequenced: they split hosted runners, and the gate walks the whole lane in one serial pass because stateful scripts never share a machine.
 A lane that hangs is investigated and fixed rather than given a larger cap.
 A passing coverage guard does not establish a healthy duration; refresh the healthy figures above from recorded timing artifacts.
+
+## Manual backend and live lanes
+
+Deleting the hosted workflow removed the only automation for the real-Herdr family and the pinned hc family, so neither is automated on every pull request any more.
+Run them by hand before merging a change that touches Herdr, hc, or their pinned installers:
+
+- `bin/fm-test-run.sh --family real-herdr-gated --fail-on-gate-skip herdr`, which needs an installed Herdr binary and the pinned Treehouse build.
+- `bin/fm-test-run.sh --family hc --fail-on-gate-skip 'hc not found'` with `FM_HC_BIN` pointing at the pinned herdr-core build from `bin/fm-install-hc.sh`; its smokes need `jq`.
+
+A hermetic gate sandbox carries neither binary, and the gate excludes both families rather than silently capability-skipping them.
+The gate also excludes the live-harness opt-in family and sets `FM_LIVE=0`, so no default-on guard drives a live Herdr session or downloads release binaries; run those guards directly after a harness upgrade.

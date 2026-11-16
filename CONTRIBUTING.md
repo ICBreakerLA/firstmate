@@ -105,7 +105,9 @@ This fork's `main` deliberately deletes `.github/workflows/ci.yml` while the pub
 An upstream template sync reintroduces that file, and the sync worker deletes it again on the same branch and keeps `commands.test` in `.no-mistakes.yaml`.
 The reason is measured cost: the October 2026 usage report attributes 10,206 Linux minutes and 309 macOS minutes to that workflow, 83% of the account's 12,735 hosted minutes.
 The local no-mistakes gate replaces the Linux suite: `commands.test` runs the coverage guard and the three portable lanes through `bin/fm-test-run.sh`, and the portable serial lane includes `tests/fm-repo-invariants.test.sh`.
-The gate deliberately does not run the real-Herdr family or a live-harness opt-in guard, so a gate round never drives a live Herdr session or the real fleet.
+Every lane excludes the live-harness-optin and hc families and runs under `FM_LIVE=0`, so a gate round never drives a live Herdr session, downloads release binaries, or uses a real hc binary.
+Deleting the workflow also removed the only automation for the real-Herdr and pinned-hc lanes: they are manual/pre-merge lanes now, run before merging a Herdr or hc change with `--family real-herdr-gated --fail-on-gate-skip herdr` and `--family hc --fail-on-gate-skip 'hc not found'` against the pinned build, and they are no longer automated on every pull request.
+The full portable walk needs the gate host's global no-mistakes `test_agent_timeout` raised to 5h; [fm-test-portable-shards.md](docs/fm-test-portable-shards.md#gate-execution-bounds) owns that bound.
 Stock macOS Bash coverage is kept, not dropped: `.github/workflows/macos-bash.yml` runs its single stock Bash job only on a pull request that touches `bin/**`, `tests/**`, or `.github/workflows/**`, and on demand through `workflow_dispatch`.
 No hosted job runs on a push to `main`.
 CI prose elsewhere in this repository describes the public template rather than this fork, and this fork's externally configured ruleset still names checks the deleted workflow produced, so prune those names before relying on required checks.
@@ -161,7 +163,7 @@ Portable shard balance evidence lives in `docs/fm-test-portable-shards.md`.
 Its header owns selection, runtime detection, and exit codes.
 Family selection is the ordinary local path; `--all` is deliberate full regression only.
 The local no-mistakes gate owns broad deterministic regression: `commands.test` runs the coverage guard and the three portable lanes (both parallel lanes and the portable serial remainder, which includes `tests/fm-repo-invariants.test.sh`) through `bin/fm-test-run.sh`.
-The gate deliberately does not run the real-Herdr family or a live-harness opt-in guard, so a gate round never drives a live Herdr session or the real fleet; run those lanes directly when a change needs them.
+The gate excludes the real-Herdr, hc, and live-harness opt-in families and sets `FM_LIVE=0`, so a gate round never drives a live Herdr session or the real fleet; run those lanes directly when a change needs them, as [fm-test-portable-shards.md](docs/fm-test-portable-shards.md#manual-backend-and-live-lanes) describes.
 This fork runs no hosted Linux suite, and [Fork divergence: no hosted Linux suite](#fork-divergence-no-hosted-linux-suite) owns the reason and the sync rule.
 Stock macOS Bash compatibility stays covered by the single path-filtered [`.github/workflows/macos-bash.yml`](.github/workflows/macos-bash.yml) workflow.
 Use `bin/fm-test-run.sh --list-lanes` for exact lane names and `--help` for `--jobs` rules and required gate-skip flags when reproducing a lane locally.

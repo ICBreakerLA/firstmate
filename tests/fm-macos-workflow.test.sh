@@ -13,13 +13,15 @@ WORKFLOW="$ROOT/.github/workflows/macos-bash.yml"
 test_macos_workflow_is_only_the_stock_bash_job() {
   assert_present "$WORKFLOW" ".github/workflows/macos-bash.yml is missing"
   command -v python3 >/dev/null 2>&1 \
-    || fail "python3 with PyYAML is required to parse .github/workflows/macos-bash.yml as YAML"
-  python3 -c 'import yaml' >/dev/null 2>&1 \
-    || fail "python3 with PyYAML is required to parse .github/workflows/macos-bash.yml as YAML"
+    || fail "python3 is required to run the macOS workflow contract"
+  command -v node >/dev/null 2>&1 \
+    || fail "node with js-yaml is required to parse .github/workflows/macos-bash.yml as YAML"
+  node -e 'require("js-yaml")' >/dev/null 2>&1 \
+    || fail "node with js-yaml is required to parse .github/workflows/macos-bash.yml as YAML"
   python3 - "$WORKFLOW" <<'PY' || fail "macOS workflow contract"
+import json
+import subprocess
 import sys
-
-import yaml
 
 
 def fail(message):
@@ -27,8 +29,29 @@ def fail(message):
     sys.exit(1)
 
 
-with open(sys.argv[1], encoding="utf-8") as fh:
-    doc = yaml.safe_load(fh)
+def load_yaml(path):
+    # Parse with a real YAML consumer rather than matching source text. The gate
+    # host ships js-yaml for node; PyYAML is not installed.
+    script = (
+        "const fs=require('fs');"
+        "const yaml=require('js-yaml');"
+        "process.stdout.write(JSON.stringify(yaml.load(fs.readFileSync(process.argv[1],'utf8'))));"
+    )
+    proc = subprocess.run(
+        ["node", "-e", script, path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode != 0:
+        fail("node with js-yaml is required to parse the workflow as YAML: " + proc.stderr.strip())
+    try:
+        return json.loads(proc.stdout)
+    except ValueError as exc:
+        fail("node with js-yaml did not produce a YAML document: " + str(exc))
+
+
+doc = load_yaml(sys.argv[1]) or {}
 
 jobs = doc["jobs"]
 if list(jobs.keys()) != ["macos-stock-bash"]:

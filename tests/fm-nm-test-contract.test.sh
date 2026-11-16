@@ -12,17 +12,18 @@ NM="$ROOT/.no-mistakes.yaml"
 
 test_nm_commands_test_runs_the_portable_lanes() {
   command -v python3 >/dev/null 2>&1 \
-    || fail "python3 with PyYAML is required to parse .no-mistakes.yaml for this contract"
-  python3 -c 'import yaml' >/dev/null 2>&1 \
-    || fail "python3 with PyYAML is required to parse .no-mistakes.yaml for this contract"
+    || fail "python3 is required to run the no-mistakes commands.test contract"
+  command -v node >/dev/null 2>&1 \
+    || fail "node with js-yaml is required to parse .no-mistakes.yaml for this contract"
+  node -e 'require("js-yaml")' >/dev/null 2>&1 \
+    || fail "node with js-yaml is required to parse .no-mistakes.yaml for this contract"
   python3 - "$NM" "$ROOT" <<'PY' || fail "no-mistakes commands.test contract"
+import json
 import os
 import re
 import shlex
 import subprocess
 import sys
-
-import yaml
 
 doc_path, root = sys.argv[1], sys.argv[2]
 
@@ -30,6 +31,28 @@ doc_path, root = sys.argv[1], sys.argv[2]
 def fail(message):
     sys.stderr.write(message + "\n")
     sys.exit(1)
+
+
+def load_yaml(path):
+    # Parse with a real YAML consumer rather than matching source text. The gate
+    # host ships js-yaml for node; PyYAML is not installed.
+    script = (
+        "const fs=require('fs');"
+        "const yaml=require('js-yaml');"
+        "process.stdout.write(JSON.stringify(yaml.load(fs.readFileSync(process.argv[1],'utf8'))));"
+    )
+    proc = subprocess.run(
+        ["node", "-e", script, path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode != 0:
+        fail("node with js-yaml is required to parse .no-mistakes.yaml as YAML: " + proc.stderr.strip())
+    try:
+        return json.loads(proc.stdout)
+    except ValueError as exc:
+        fail("node with js-yaml did not produce a YAML document: " + str(exc))
 
 
 def split_clauses(command):
@@ -79,8 +102,7 @@ def list_selected(runner, args):
     return [line for line in proc.stdout.splitlines() if line]
 
 
-with open(doc_path, encoding="utf-8") as fh:
-    doc = yaml.safe_load(fh) or {}
+doc = load_yaml(doc_path) or {}
 commands = doc.get("commands")
 command = commands.get("test") if isinstance(commands, dict) else None
 if command is None or command is False or not str(command).strip():

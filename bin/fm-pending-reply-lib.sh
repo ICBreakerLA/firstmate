@@ -598,13 +598,18 @@ fm_pending_reply_discard_undelivered() {  # <state-dir> <corr_id>
 # 0 if a status line is a correlated acknowledgement for <corr_id>.
 # Accepts short status replies and status lines that point at a document.
 # Unrelated verbs without the token never match. Stale/wrong corr never match.
-# The parent's own pending-reply-missed escalation line must not self-resolve:
-# it names the request with pending-reply-id= rather than corr=.
+# An escalation line this library published must not self-resolve even when its
+# request summary happens to quote the corr token: only the note head's
+# vocabulary decides, so a pending-reply-resolved close note stays decisive
+# even when an operator's free-text answer echoes escalation wording.
 fm_pending_reply_line_resolves() {  # <line> <corr_id>
-  local line=$1 corr=$2
+  local line=$1 corr=$2 note
   [ -n "$line" ] && [ -n "$corr" ] || return 1
-  case "$line" in
-    *pending-reply-missed*) return 1 ;;
+  status_line_note "$line" note
+  case "$note" in
+    pending-reply-missed:*|pending-reply-delivery-unknown:*|pending-reply-recovery-delivery-*:*)
+      return 1
+      ;;
   esac
   fm_pending_reply_text_has_corr "$line" "$corr"
 }
@@ -1119,9 +1124,16 @@ fm_pending_reply_escalation_key() {  # <corr_id>
 # The fold's guard (bin/fm-classify-lib.sh _fm_decision_key_transition_allowed)
 # requires the note to begin with this namespace's vocabulary token; this is
 # that token plus the stable task/id/via fields both the record close and the
-# operator --resolve-key path write. Optional <extra> is appended after a space.
+# operator --resolve-key path write. The note also carries the corr= token the
+# resolution scanner matches (fm_pending_reply_find_resolve_line), so an
+# operator close that names only the key resolves its own expectation without a
+# hand-typed correlation token, and the record settles on the next tick. The
+# corr= token is written immediately after task=, ahead of the duplicate
+# pending-reply-id= and via= fields, so a status-line cap that truncates the
+# tail of a long close record can never remove it.
+# Optional <extra> is free text appended after a space.
 fm_pending_reply_resolved_note() {  # <task-id> <corr_id> <via> [extra]
-  printf 'pending-reply-resolved: task=%s pending-reply-id=%s via=%s' "$1" "$2" "$3"
+  printf 'pending-reply-resolved: task=%s corr=%s pending-reply-id=%s via=%s' "$1" "$2" "$2" "$3"
   if [ -n "${4:-}" ]; then
     printf ' %s' "$4"
   fi

@@ -102,7 +102,8 @@
 # marked - their behavior is unchanged.
 #
 # Parent-owned pending-reply expectation: every newly marked secondmate request
-# except an explicit --fire-and-forget delivery receives a privacy-safe
+# except an explicit --fire-and-forget delivery or a terminal --resolve-key
+# close of a reserved pending-reply key (below) receives a privacy-safe
 # correlation id and a durable parent record under state/pending-replies/ before
 # delivery (bin/fm-pending-reply-lib.sh). Delivery
 # success and reply success are separate facts: delivery never resolves the
@@ -166,12 +167,15 @@
 # closed with the owning library's vocabulary note
 # (fm_pending_reply_close_note_for_key / fm_pending_reply_resolved_note), so
 # the fold actually drops it; a bare answered: note is not a reserved-key
-# transition and is never written for those keys. If this send cannot produce
-# a note the guard will accept, or the structural key would be lost to the
-# status-line cap, it refuses before sending and names the cause rather than
-# exiting 0 on a silent no-op. A key nothing owns refuses the same way, for the
-# same reason: delivering an answer this send cannot close would leave the
-# decision open behind an answer the operator believes settled it. That refusal
+# transition and is never written for those keys. Such a close is terminal: its
+# own answer arms no fresh pending-reply expectation, so the parked lane stays
+# quiet instead of every acknowledgement buying another wake. If this send
+# cannot produce a note the guard will accept, or the structural key or the
+# note's corr= token would be lost to the status-line cap, it refuses before
+# sending and names the cause rather than exiting 0 on a silent no-op. A key
+# nothing owns refuses the same way, for the same reason: delivering an answer
+# this send cannot close would leave the decision open behind an answer the
+# operator believes settled it. That refusal
 # never costs the message - it lists the keys the status log still holds open and
 # prints the resend commands with the message quoted back verbatim. The keyed
 # resend leaves an explicit <key> placeholder for the operator to replace, even
@@ -637,6 +641,14 @@ RESOLVE_STATUS_FILE=
 RESOLVE_STATUS_KEYS=
 RESOLVE_HOLD_KEYS=
 RESOLVE_CLOSE_MAX=$FM_LINE_CAP_DEFAULT
+# A close of a reserved pending-reply key is terminal whatever ledger owns the
+# key, so its own answer must not arm a fresh expectation.
+RESOLVE_CLOSES_PENDING_REPLY=0
+for k in $RESOLVE_KEYS; do
+  if fm_pending_reply_close_note_for_key "$k" '' '' >/dev/null 2>&1; then
+    RESOLVE_CLOSES_PENDING_REPLY=1
+  fi
+done
 
 # Resolve a --resolve-key key that the status log no longer owns to the
 # captain-held task that carries it: the key as a task id itself (the collapsed
@@ -838,6 +850,11 @@ if [ -n "$RESOLVE_KEYS" ]; then
       echo "error: --resolve-key cannot close a decision key of length ${#k}: its ${#probe_line}-character close record exceeds the $FM_LINE_CAP_DEFAULT-character status-line cap, and truncation would remove the structural key delimiter. Refusing rather than writing an ineffective close; nothing was sent." >&2
       exit 1
     fi
+    if fm_pending_reply_close_note_for_key "$k" '' '' >/dev/null 2>&1 &&
+      ! fm_pending_reply_text_has_corr "$FM_LINE_CAP_LINE" "${k#pending-reply-}"; then
+      echo "error: --resolve-key cannot close a decision key of length ${#k}: truncating its ${#probe_line}-character close record to the status-line cap would remove the corr= token, so the pending-reply record would never resolve. Refusing rather than writing an ineffective close; nothing was sent." >&2
+      exit 1
+    fi
   done
 fi
 
@@ -970,6 +987,11 @@ else
     fm_message_mark_from_firstmate "$MESSAGE" MESSAGE
     MESSAGE="${FM_FROMFIRST_MARK}delivery=${FIRE_AND_FORGET_ID} ${MESSAGE#"$FM_FROMFIRST_MARK"}"
     FM_SEND_IDEMPOTENT=1
+  elif [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$RESOLVE_CLOSES_PENDING_REPLY" = 1 ]; then
+    # An operator close of a reserved pending-reply key is terminal: it settles
+    # the existing expectation itself, so its own answer arms no fresh one and
+    # cannot restart the wake loop it is answering.
+    fm_message_mark_from_firstmate "$MESSAGE" MESSAGE
   elif [ "$MARK_FROM_FIRSTMATE" = 1 ]; then
     # Reuse an existing correlation id for recovery resends; otherwise create a
     # durable parent expectation before delivery. Transport success never
@@ -1350,10 +1372,9 @@ else
     # pending, delivery is unproven
     # rather than refused, so the pending-reply expectation stays armed; the
     # adapter retains the logical delivery's request id under the retry policy
-    # in docs/t3code-backend.md. A marked secondmate request is the exception:
-    # a plain rerun mints a new
-    # correlation, so its text and request id differ, and the armed attempt
-    # refuses a resend of this one.
+    # in docs/t3code-backend.md. A reply-bearing marked secondmate request is
+    # the exception: a plain rerun mints a new correlation, so its text and
+    # request id differ, and the armed attempt refuses a resend of this one.
     if [ -n "$PENDING_REPLY_CORR" ]; then
       echo "fm-send: delivery to $T is unconfirmed (verdict=unconfirmed: the $TARGET_BACKEND outcome is unproven, a lost reply or an error that can follow a commit; tried $RESOLUTION_TRIED); do not resend - a rerun mints a new pending-reply correlation and would deliver twice; correlation $PENDING_REPLY_CORR stays armed, so verify with fm-peek.sh and let its reply or the watcher's reconciliation settle it" >&2
     else

@@ -134,7 +134,7 @@ After that window, identical text starts a new delivery, so verify an older unco
 An accepted delivery's outcome (its request id, `messageId`, `runId`, and `delivery`) is kept for a day as `state/t3code-sends/<request-id>.accepted`, so it can be reconciled against T3's own message and run.
 The submit primitive reports `empty` when T3 accepts the message, `unconfirmed` when its reply was lost or T3 answered with a JSON-RPC server error, its catch-all `orchestration_error`, or a tool error without a code, none of which proves the message was not taken, and `send-failed` only for proven non-delivery.
 The direct-submit plane of `fm-send.sh` reports `unconfirmed` as exit 3 with any reply expectation kept armed; an inbox steer's exit status still follows the [durable-record contract](../bin/fm-send.sh).
-After `unconfirmed`, an unmarked send can reuse its request id by resending identical text within that window; a marked secondmate request is not resent, because a rerun mints a new reply correlation and so a new message.
+After `unconfirmed`, an unmarked send can reuse its request id by resending identical text within that window; a reply-bearing marked secondmate request is not resent, because a rerun mints a new reply correlation and so a new message.
 While the logical delivery still holds its id, a retry that fails for any reason other than T3 refusing the send, including an unreachable server, stays `unconfirmed` and keeps that id.
 The away daemon mints a request id for each T3 digest.
 It freezes an unconfirmed digest and retries its exact text under that id, with no expiry, until T3 accepts or refuses it, while events that arrive meanwhile wait for the next digest.

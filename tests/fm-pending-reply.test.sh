@@ -34,9 +34,17 @@
 #  17. Recovery and escalation grace are measured from the relevant turn's
 #      completion, never from delivery or send time, and each takes one fresh,
 #      uncached status read - accepting any verb - immediately before firing
-#  18. A same-kind escalation after an operator close appends again and reopens
-#      the decision; a retry while that decision is still open appends nothing
-#  19. A request summary keeps accented letters, drops control characters, and
+#  18. A same-kind escalation after a legacy operator close (one written before
+#      the close note carried its own corr= token) appends again and reopens the
+#      decision; a retry while that decision is still open appends nothing
+#  19. An operator close that names only the key resolves the escalated record on
+#      the next tick, with no hand-typed correlation token, even when its
+#      free-text answer echoes escalation wording; an escalation line quoting
+#      its own corr token still never self-resolves. Such a close is terminal:
+#      its own answer arms no fresh pending-reply expectation
+#  20. An operator close on a valid 36+ character task id keeps the close note's
+#      corr= token through the status-line cap, so the record still resolves
+#  21. A request summary keeps accented letters, drops control characters, and
 #      caps at 120 characters without splitting one under any caller locale
 set -u
 
@@ -650,7 +658,7 @@ prime_seen() {  # <state> <file>
 }
 
 test_escalation_wakes_and_its_close_stays_quiet() {
-  local home state corr
+  local home state corr close_line
   home=$(setup_parent escalation-wake-gate)
   state="$home/state"
   export FM_PENDING_REPLY_SEND_HOOK='true'
@@ -678,6 +686,9 @@ test_escalation_wakes_and_its_close_stays_quiet() {
   fm_pending_reply_try_resolve "$state" "$corr" || fail "correlated reply should resolve"
   grep -Fq "resolved [key=pending-reply-$corr]" "$state/hibit.status" \
     || fail "resolution did not close the escalation decision"
+  close_line=$(grep -F "resolved [key=pending-reply-$corr]" "$state/hibit.status" | head -1)
+  fm_pending_reply_text_has_corr "$close_line" "$corr" \
+    || fail "the escalation-close note must carry its own corr= token"
   seen_gate "$state" "$state/hibit.status" \
     || fail "the home's own escalation close re-woke its own watcher gate"
   pass "escalations and replies wake; the home's own escalation close stays quiet"
@@ -726,7 +737,7 @@ test_legacy_escalation_closes_default_decision() {
   printf 'done [corr=%s]: delayed legacy reply\n' "$corr" >> "$state/hibit.status"
 
   fm_pending_reply_try_resolve "$state" "$corr" || fail "legacy reply should resolve its record"
-  [ "$(sed -E 's/ \[at=[0-9]+\]//' "$state/hibit.status" | grep -Fc "resolved [key=default]: pending-reply-resolved: task=hibit pending-reply-id=$corr")" -eq 1 ] \
+  [ "$(sed -E 's/ \[at=[0-9]+\]//' "$state/hibit.status" | grep -Fc "resolved [key=default]: pending-reply-resolved: task=hibit corr=$corr pending-reply-id=$corr")" -eq 1 ] \
     || fail "legacy escalation did not append one guarded default-key resolution"
   open=$(status_open_decisions "$state/hibit.status")
   [ -z "$open" ] || fail "resolved legacy escalation remained open: $open"
@@ -811,7 +822,7 @@ test_concurrent_resolution_closes_escalation_once() {
 
   [ "$(phase_of "$state" "$corr")" = resolved ] \
     || fail "concurrent resolvers left the expectation unresolved"
-  [ "$(grep -Fc "pending-reply-resolved: task=hibit pending-reply-id=$corr" "$state/hibit.status")" -eq 1 ] \
+  [ "$(grep -Fc "pending-reply-resolved: task=hibit corr=$corr pending-reply-id=$corr" "$state/hibit.status")" -eq 1 ] \
     || fail "concurrent resolvers did not append exactly one decision close"
   [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ] \
     || fail "concurrent resolution did not record the closed escalation"
@@ -2029,16 +2040,14 @@ test_escalated_undelivered_correlation_stays_retryable() {
   pass "an escalated correlation stays retryable only while undelivered"
 }
 
-test_same_kind_escalation_reopens_after_operator_close() {
+test_same_kind_escalation_reopens_after_legacy_operator_close() {
   (
-    local dir fb log home state corr status blocked open
-    dir="$TMP_ROOT/same-kind-reescalation"
-    mkdir -p "$dir"
-    fb=$(make_stubs "$dir")
-    log="$dir/send.log"
+    local home state corr status blocked open
     home=$(setup_parent same-kind)
     state="$home/state"
     fm_write_secondmate_meta "$state/mate.meta" "$home/sm" "sess:fm-mate"
+    # This fixture clock is intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
     export FM_PENDING_REPLY_NOW=10000
     corr=$(fm_pending_reply_create "$home" "$state" mate "wake after lost transport")
     status="$state/mate.status"
@@ -2066,9 +2075,11 @@ test_same_kind_escalation_reopens_after_operator_close() {
     open=$(status_open_decisions "$status" | cut -f1)
     [ "$open" = "pending-reply-$corr" ] \
       || fail "the first decision must stay open, got '$open'"
-    run_send "$fb" "$home" "$log" mate --resolve-key "pending-reply-$corr" \
-      "dismiss the unknown-delivery hold" \
-      || fail "operator close failed"
+    # A close written before the close note carried its own corr= token: the
+    # decision settles while the record stays escalated, so the owner's resend
+    # is still the retry this test covers.
+    printf 'resolved [key=pending-reply-%s]: pending-reply-resolved: task=mate pending-reply-id=%s via=operator-resolve-key dismiss the unknown-delivery hold\n' \
+      "$corr" "$corr" >> "$status"
     open=$(status_open_decisions "$status")
     [ -z "$open" ] || fail "operator close left the decision open: $open"
     fm_pending_reply_reset_known_undelivered "$state" "$corr" \
@@ -2099,8 +2110,155 @@ test_same_kind_escalation_reopens_after_operator_close() {
     open=$(status_open_decisions "$status" | cut -f1)
     [ "$open" = "pending-reply-$corr" ] \
       || fail "the reopened decision must stay open across the retry, got '$open'"
-  ) || fail "same-kind re-escalation after an operator close failed"
-  pass "a same-kind escalation after an operator close opens the decision again"
+  ) || fail "same-kind re-escalation after a legacy operator close failed"
+  pass "a same-kind escalation after a legacy operator close opens the decision again"
+}
+
+test_operator_close_note_resolves_escalated_record() {
+  (
+    local dir fb log home state corr status rec open pending_count
+    dir="$TMP_ROOT/operator-close-resolves"
+    mkdir -p "$dir"
+    fb=$(make_stubs "$dir")
+    log="$dir/send.log"
+    home=$(setup_parent operator-close)
+    state="$home/state"
+    fm_write_secondmate_meta "$state/mate.meta" "$home/sm" "sess:fm-mate"
+    # This fixture clock is intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
+    export FM_PENDING_REPLY_NOW=11000
+    corr=$(fm_pending_reply_create "$home" "$state" mate "request left parked") \
+      || fail "create failed"
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    fm_pending_reply_mark_delivered "$state" "$corr" || fail "mark delivered failed"
+    fm_pending_reply_set "$rec" phase escalated || fail "escalated phase failed"
+    fm_pending_reply_set "$rec" escalated_epoch 10000 || fail "escalated epoch failed"
+    status="$state/mate.status"
+    printf 'blocked [key=pending-reply-%s]: pending-reply-missed: task=mate pending-reply-id=%s request=request left parked\n' \
+      "$corr" "$corr" > "$status"
+
+    run_send "$fb" "$home" "$log" mate --resolve-key "pending-reply-$corr" \
+      "dismiss the parked request" \
+      || fail "operator close failed"
+    [ "$(phase_of "$state" "$corr")" = escalated ] \
+      || fail "precondition: the raw close line must not resolve the record by itself"
+    pending_count=$(find "$state/pending-replies" -maxdepth 1 -type f | wc -l | tr -d ' ')
+    [ "$pending_count" -eq 1 ] \
+      || fail "a terminal operator close armed a fresh expectation ($pending_count records)"
+
+    fm_pending_reply_tick "$state" || fail "tick failed"
+    [ "$(phase_of "$state" "$corr")" = resolved ] \
+      || fail "an operator close that names only the key must resolve the expectation"
+    open=$(status_open_decisions "$status")
+    [ -z "$open" ] || fail "operator close left the decision open: $open"
+    [ -n "$(fm_pending_reply_get "$rec" escalation_closed_epoch)" ] \
+      || fail "operator close did not record the closed escalation"
+  ) || fail "operator close key resolution failed"
+  pass "an operator close that names only the key resolves the expectation and arms no fresh one"
+}
+
+test_operator_close_excerpt_with_escalation_wording_resolves() {
+  (
+    local dir fb log home state corr status rec open
+    dir="$TMP_ROOT/operator-close-excerpt"
+    mkdir -p "$dir"
+    fb=$(make_stubs "$dir")
+    log="$dir/send.log"
+    home=$(setup_parent operator-close-excerpt)
+    state="$home/state"
+    fm_write_secondmate_meta "$state/mate.meta" "$home/sm" "sess:fm-mate"
+    # This fixture clock is intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
+    export FM_PENDING_REPLY_NOW=12000
+    corr=$(fm_pending_reply_create "$home" "$state" mate "request left parked") \
+      || fail "create failed"
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    fm_pending_reply_mark_delivered "$state" "$corr" || fail "mark delivered failed"
+    fm_pending_reply_set "$rec" phase escalated || fail "escalated phase failed"
+    fm_pending_reply_set "$rec" escalated_epoch 11000 || fail "escalated epoch failed"
+    status="$state/mate.status"
+    printf 'blocked [key=pending-reply-%s]: pending-reply-missed: task=mate pending-reply-id=%s request=request left parked\n' \
+      "$corr" "$corr" > "$status"
+
+    run_send "$fb" "$home" "$log" mate --resolve-key "pending-reply-$corr" \
+      "the pending-reply-missed alarm was spurious" \
+      || fail "operator close failed"
+    [ "$(phase_of "$state" "$corr")" = escalated ] \
+      || fail "precondition: the raw close line must not resolve the record by itself"
+
+    fm_pending_reply_tick "$state" || fail "tick failed"
+    [ "$(phase_of "$state" "$corr")" = resolved ] \
+      || fail "free text echoing escalation wording must not suppress the operator close"
+    open=$(status_open_decisions "$status")
+    [ -z "$open" ] || fail "operator close left the decision open: $open"
+  ) || fail "operator close with escalation wording in the excerpt failed"
+  pass "an operator close resolves even when its free text echoes escalation wording"
+}
+
+test_operator_close_long_task_id_keeps_corr_through_cap() {
+  (
+    local dir fb log home state corr status rec open long_id
+    dir="$TMP_ROOT/operator-close-long-id"
+    mkdir -p "$dir"
+    fb=$(make_stubs "$dir")
+    log="$dir/send.log"
+    home=$(setup_parent operator-close-long-id)
+    state="$home/state"
+    long_id="mate-$(printf 'x%.0s' $(seq 1 35))"
+    [ "${#long_id}" -ge 36 ] || fail "fixture task id must exceed 35 characters"
+    fm_write_secondmate_meta "$state/$long_id.meta" "$home/sm" "sess:fm-$long_id"
+    # This fixture clock is intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
+    export FM_PENDING_REPLY_NOW=14000
+    corr=$(fm_pending_reply_create "$home" "$state" "$long_id" "request left parked") \
+      || fail "create failed"
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    fm_pending_reply_mark_delivered "$state" "$corr" || fail "mark delivered failed"
+    fm_pending_reply_set "$rec" phase escalated || fail "escalated phase failed"
+    fm_pending_reply_set "$rec" escalated_epoch 13000 || fail "escalated epoch failed"
+    status="$state/$long_id.status"
+    printf 'blocked [key=pending-reply-%s]: pending-reply-missed: task=%s pending-reply-id=%s request=request left parked\n' \
+      "$corr" "$long_id" "$corr" > "$status"
+
+    run_send "$fb" "$home" "$log" "$long_id" --resolve-key "pending-reply-$corr" \
+      "dismiss the parked request" \
+      || fail "operator close failed"
+    [ "$(phase_of "$state" "$corr")" = escalated ] \
+      || fail "precondition: the raw close line must not resolve the record by itself"
+
+    fm_pending_reply_tick "$state" || fail "tick failed"
+    [ "$(phase_of "$state" "$corr")" = resolved ] \
+      || fail "a long task id truncated the close note's corr= token; the expectation never resolved"
+    open=$(status_open_decisions "$status")
+    [ -z "$open" ] || fail "operator close left the decision open: $open"
+  ) || fail "operator close on a long task id failed"
+  pass "an operator close keeps its corr= token through the cap for a long task id"
+}
+
+test_escalation_line_quoting_corr_cannot_self_resolve() {
+  (
+    local home state corr rec status
+    home=$(setup_parent escalation-self-corr)
+    state="$home/state"
+    # This fixture clock is intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
+    export FM_PENDING_REPLY_NOW=13000
+    corr=$(fm_pending_reply_create "$home" "$state" mate "quotes its own token") \
+      || fail "create failed"
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    fm_pending_reply_mark_delivered "$state" "$corr" || fail "mark delivered failed"
+    fm_pending_reply_set "$rec" phase escalated || fail "escalated phase failed"
+    fm_pending_reply_set "$rec" escalated_epoch 12000 || fail "escalated epoch failed"
+    status="$state/mate.status"
+    printf 'blocked [key=pending-reply-%s]: pending-reply-missed: task=mate pending-reply-id=%s request=see corr=%s for context\n' \
+      "$corr" "$corr" "$corr" > "$status"
+    if fm_pending_reply_try_resolve "$state" "$corr" "$status"; then
+      fail "an escalation line quoting its own corr token must not self-resolve"
+    fi
+    [ "$(phase_of "$state" "$corr")" = escalated ] \
+      || fail "an escalation line must leave the record escalated"
+  ) || fail "escalation self-resolution guard failed"
+  pass "an escalation line quoting its own corr token cannot self-resolve"
 }
 
 test_summary_keeps_accents_and_caps_by_character() {
@@ -2172,7 +2330,11 @@ test_mechanical_helper_writes_parent_channel
 test_remote_parent_replies_is_not_wrong_home
 test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
-test_same_kind_escalation_reopens_after_operator_close
+test_same_kind_escalation_reopens_after_legacy_operator_close
+test_operator_close_note_resolves_escalated_record
+test_operator_close_excerpt_with_escalation_wording_resolves
+test_operator_close_long_task_id_keeps_corr_through_cap
+test_escalation_line_quoting_corr_cannot_self_resolve
 test_summary_keeps_accents_and_caps_by_character
 
 printf 'ok - all pending-reply tests passed\n'

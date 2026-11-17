@@ -555,6 +555,38 @@ test_a_live_holder_without_a_recorded_identity_is_never_killed() {
   pass "a live pid with no recorded identity is signaled by nothing and its claim stays claimed"
 }
 
+test_a_stopped_holder_is_killed_when_its_term_does_not_end_the_lease() {
+  local lock=$FM_LOCAL_LLM_LOCK holder out rc
+  # The shape of a blocked TERM: a stopped holder keeps the lease's flock
+  # on its descriptor, so a TERM it never runs leaves the slot claimed
+  # forever. The release escalates its identity-verified kill to SIGKILL,
+  # which no process state can block.
+  rm -f "$lock" "$lock.handoff"
+  mkdir -p "$(dirname "$lock")"
+  mkfifo -m 600 "$lock.handoff"
+  (
+    exec 9>>"$lock"
+    flock -n 9
+    exec cat "$lock.handoff"
+  ) </dev/null >/dev/null 2>&1 &
+  holder=$!
+  printf 'task-a\n%s %s\n' "$holder" "$(fm_local_llm_proc_start "$holder")" >"$lock"
+  kill -STOP "$holder" || fail "the holder must be stoppable"
+  out=$(fm_local_llm_release task-a 2>&1)
+  rc=$?
+  expect_code 0 "$rc" "the release must escalate a stopped holder's kill and free the slot: $out"
+  assert_equals "" "$out" "an escalated release that ends the lease says nothing"
+  kill -CONT "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  ! kill -0 "$holder" 2>/dev/null || fail "the escalation must end the stopped holder"
+  release_gone
+  lock_free || fail "the escalated release must free the flock"
+  fm_local_llm_claim task-b || fail "the slot must be claimable after the escalation"
+  end_holder
+  lock_free || fail "the next claim must end cleanly"
+  pass "a stopped holder whose TERM is blocked is escalated to SIGKILL, its lease ends, and the slot releases"
+}
+
 test_a_release_that_cannot_open_the_lock_file_refuses() {
   if [ "$(id -u)" = 0 ]; then
     pass "the lock-open refusal test skips as root, which bypasses file permissions"
@@ -806,6 +838,7 @@ test_a_new_holder_installed_during_a_release_is_never_killed
 test_a_release_never_kills_a_live_holder_of_a_reclaimed_claim
 test_a_live_holder_without_the_recorded_start_time_is_never_killed
 test_a_live_holder_without_a_recorded_identity_is_never_killed
+test_a_stopped_holder_is_killed_when_its_term_does_not_end_the_lease
 test_a_release_that_cannot_open_the_lock_file_refuses
 test_a_release_racing_a_concurrent_unlink_is_silent
 test_select_uses_the_local_model_when_every_check_holds

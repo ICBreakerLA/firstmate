@@ -280,6 +280,21 @@ fm_local_llm_holder_matches() {
 # at its entry. Every re-check of a release's target runs on this, so a
 # relaunch's claim with a new holder is never the old release's kill,
 # drain, or unlink target.
+# fm_local_llm_holder_gone <pid>
+# 0 once the recorded holder can no longer hold the lease on its descriptor:
+# the process is gone, its state cannot be read, or it is a zombie whose
+# descriptors the kernel has closed. A stopped process is not gone: its
+# queued TERM never runs and its lease descriptor stays open, so it is the
+# one holder a TERM alone cannot end.
+fm_local_llm_holder_gone() {
+  local stat
+  kill -0 "$1" 2>/dev/null || return 0
+  [ -r "/proc/$1/stat" ] || return 0
+  stat=$(head -n 1 "/proc/$1/stat" 2>/dev/null) || return 0
+  stat=${stat##*) }
+  [ "${stat%% *}" = Z ]
+}
+
 fm_local_llm_claim_instance() {
   [ "$(head -n 1 "$1" 2>/dev/null)" = "$2" ] && [ "$(sed -n 2p "$1" 2>/dev/null)" = "$3" ]
 }
@@ -331,8 +346,10 @@ fm_local_llm_drain_handoff() {
 # value, it is signaled by nothing, its claim is left in place with a
 # warning naming the pid, and the release returns the not-released result
 # so the caller reports the slot as still held. The live lease is ended
-# first - an identity-verified holder is killed, a pre-upgrade claim with
-# no persisted pid is ended through the handoff's EOF - which is race-free
+# first - an identity-verified holder is killed, its TERM escalated to
+# SIGKILL when the holder is stopped and the TERM would never run, a
+# pre-upgrade claim with no persisted pid is ended through the handoff's
+# EOF - which is race-free
 # because that same lease makes the flock refuse for every fresh claim
 # trying to take the slot while it is being ended. The claim is unlinked
 # only under the held flock, after the final checks that it is still the
@@ -356,7 +373,7 @@ fm_local_llm_drain_handoff() {
 # cannot be opened, or a fresh claim raced in and holds the lock. Safe to
 # call twice.
 fm_local_llm_release() {
-  local id=$1 f line pid start
+  local id=$1 f line pid start i
   f=$(fm_local_llm_lock_file)
   [ -e "$f" ] || return 0
   [ "$(head -n 1 "$f" 2>/dev/null)" = "$id" ] || return 0
@@ -384,10 +401,12 @@ fm_local_llm_release() {
     # the flock. A matched holder is killed; a pre-upgrade claim with no
     # persisted pid is ended through the handoff's EOF, which pairs with
     # that holder and with nothing else, because the lease blocks every
-    # fresh claim from reaching its holder spawn. The kill and the drain
-    # target only the claim instance sampled at entry: a relaunch that
-    # installed a new holder in this window made the claim live again,
-    # and this release refuses it.
+    # fresh claim from reaching its holder spawn. The kill escalates a
+    # stopped holder's blocked TERM to SIGKILL, the escalation targeting
+    # only the same pid the identity checks verified. The kill and the
+    # drain target only the claim instance sampled at entry: a relaunch
+    # that installed a new holder in this window made the claim live
+    # again, and this release refuses it.
     if [ -e "$f" ] && ! fm_local_llm_claim_instance "$f" "$id" "$line"; then
       exec 8>&-
       echo "warning: task $id's local-model claim was taken with a new holder during its release; the new claim was left in place" >&2
@@ -395,6 +414,11 @@ fm_local_llm_release() {
     fi
     if [ -n "$pid" ] && fm_local_llm_holder_matches "$pid" "$f"; then
       kill "$pid" 2>/dev/null || true
+      for i in $(seq 1 20); do
+        fm_local_llm_holder_gone "$pid" && break
+        sleep 0.1
+      done
+      fm_local_llm_holder_gone "$pid" || kill -9 "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
     elif [ -z "$pid" ] && [ -p "$f.handoff" ]; then
       if ! fm_local_llm_drain_handoff "$f.handoff"; then

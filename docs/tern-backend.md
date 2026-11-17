@@ -163,7 +163,7 @@ The only sanctioned teardown is `tern_safe_kill_session <session_id> <want_name>
 
 ## Active limits
 
-- tern is experimental and has no dedicated real-backend CI lane.
+- tern is experimental and has no dedicated real-backend lane.
 - Secondmate spawns are unsupported (`fm-spawn.sh` refuses `--secondmate` on `backend=tern`).
 - The away-mode `/afk` supervisor backend does not support tern; only `tmux`, `herdr`, and `rex` supervisor panes are accepted.
 - Native agent state requires a Tern window control endpoint; remote-host or headless daemon access that can `ls`/`capture` may still lack `ctl`.

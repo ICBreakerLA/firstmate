@@ -498,7 +498,7 @@ test_bootstrap_reporting() {
     fi
     # FM_ROOT_OVERRIDE points the worktree-tangle check at the non-git home dir so
     # it stays inert: this suite pins tool detection, not the tangle guard, and the
-    # ambient checkout (CI runs on a feature branch) must not leak a TANGLE line in.
+    # ambient checkout (a hosted runner checks out a feature branch) must not leak a TANGLE line in.
     out=$(PATH="$fakebin:$base" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP="$lease" FM_FAKE_QUOTA_AXI_VERSION="$quota_version" "$ROOT/bin/fm-bootstrap.sh")
     case "$mode" in

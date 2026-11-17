@@ -22,8 +22,8 @@ document:
     evidence destination, and unique safety facts, then review the complete
     branch diff again after every documentation or lint fix.
 
-# Pin lint to the same owner CI invokes instead of leaving it to no-mistakes'
-# default handling, which does not invoke the repository's canonical lint gate.
+# Pin lint to the repository's canonical owner instead of leaving it to
+# no-mistakes' default handling, which does not invoke that gate.
 # `bin/fm-lint.sh` owns the context-sensitive ShellCheck modes and GitHub
 # workflow lint via pinned actionlint in `bin/fm-lint-workflows.sh`.
 # Invocation wiring is asserted by `tests/fm-lint.test.sh` and
@@ -32,18 +32,36 @@ document:
 # The output scan runs first so it still runs when the lint tools cannot (a sandbox
 # without ShellCheck); it checks only the lines the branch adds, never a manual gate.
 # Strict dual-SDK compilation belongs to this compiler-owning phase, not Test.
-# The existing type-regression owner also runs in the required portable CI lane.
-# Keep commands.test absent; the firstmate-coding-guidelines skill owns this policy.
+# The existing type-regression owner also runs in the portable serial lane.
+#
+# The local no-mistakes gate owns broad deterministic regression. The coverage guard
+# plus the three portable lanes below, composed by their single owner
+# `bin/fm-test-run.sh`, cover the whole deterministic portable suite, including
+# `tests/fm-repo-invariants.test.sh` and the hermetic `tests/fm-backend-hc.test.sh`.
+# The real-Herdr family, the pinned hc family, and the live-harness opt-in family
+# deliberately stay out: every lane excludes live-harness-optin and hc-pinned, and
+# FM_LIVE=0 stops any remaining default-on fm_live_gate guard, so a gate round never
+# drives a live Herdr session, uses a real hc binary, or downloads release binaries,
+# and `--all` is never selected. This fork runs no hosted Linux suite;
+# `.github/workflows/macos-bash.yml` keeps only the path-filtered stock macOS Bash
+# check, and CONTRIBUTING.md "Fork divergence: no hosted Linux suite" owns the reason
+# and the sync rule.
+#
+# The full portable walk takes roughly 3.5-4 hours. The operator raised the host's
+# global no-mistakes `test_agent_timeout` to 5h on 2026-11-16; no-mistakes reads
+# that key only from its global config, so a copy in this file is ignored.
 commands:
   lint: 'bin/fm-output-scan.sh --diff && bin/fm-lint.sh && bash tests/fm-pi-primary-types.test.sh'
+  test: 'FM_LIVE=0 bin/fm-test-run.sh --check-coverage && FM_LIVE=0 bin/fm-test-run.sh --lane portable-parallel-1 --exclude-family live-harness-optin --exclude-family hc-pinned && FM_LIVE=0 bin/fm-test-run.sh --lane portable-parallel-2 --exclude-family live-harness-optin --exclude-family hc-pinned && FM_LIVE=0 bin/fm-test-run.sh --lane portable-serial --exclude-family live-harness-optin --exclude-family hc-pinned'
 
 # Publish each run's test evidence to the orphan no-mistakes/evidence branch linked from the PR.
 # The evidence is not committed to the feature or default branch.
 test:
   instructions: |
-    Validate only what the diff changes, and finish the whole Test step in about five minutes.
-    Run the added or changed tests/*.test.sh files and the one or two existing tests of the touched subject, each under bash, then stop; CI owns the broad suite, so never walk it.
-    Run a new regression test once against the base to see it fail and once against the change to see it pass, then move on; do not repeat a proof a deterministic test already gives.
+    commands.test runs the complete deterministic portable suite: the coverage guard, both portable parallel lanes, and the portable serial remainder, which includes the repo invariants test.
+    That run is the Test evidence; do not walk the suite again.
+    The real-Herdr and pinned hc families and the live-harness opt-in family deliberately stay out: every lane excludes live-harness-optin and hc-pinned, and FM_LIVE=0 stops any remaining default-on guard, so a gate round never drives a live Herdr session, uses a real hc binary, or downloads release binaries; record a capability-skipped family as untested in one line.
+    Add a scenario beyond that suite only when no deterministic test reaches the behavior: run a new regression once against the base to see it fail and once against the change to see it pass, then move on; do not repeat a proof a deterministic test already gives.
     Start a live scenario only when the diff changes launch, lifecycle, or harness behavior that no deterministic test can reach.
     Before starting one, check that its tools exist here (tmux, herdr, the harness CLI). When one is absent, as in a sandboxed ship, record that scenario as untested in one line and go on; never probe for a workaround or build a stand-in.
     Run live Herdr scenarios only through bin/fm-herdr-lab.sh with a named non-default fm-lab-* session, following that helper's prepare, provision, run, and teardown contract exactly.

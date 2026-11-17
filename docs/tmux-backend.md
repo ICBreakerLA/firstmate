@@ -70,7 +70,7 @@ An unrelated tool that ships a binary named exactly `cortex` is still classified
 Kiro is anchored to the exact `kiro-cli` foreground identity for the same reason (its toolbox/aim-sandbox wrapper is the foreground process, with the compiled binary a descendant), so unrelated names containing that fragment remain ambiguous.
 Cursor is identified from its exact `cursor-agent` identity or versioned install tree in the foreground process path or structured argv[0]; a bare `node` or unrelated `agent` remains ambiguous.
 
-The CI-enforced portable regression and opt-in real-harness drift guard follow the split owned by `.agents/skills/firstmate-coding-guidelines/SKILL.md`.
+The portable regression enforced by the local gate and the opt-in real-harness drift guard follow the split owned by `.agents/skills/firstmate-coding-guidelines/SKILL.md`.
 Run the real-harness guard after any harness upgrade and before trusting refreshed evidence.
 
 ### Composer, busy state, and delivery

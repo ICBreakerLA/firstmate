@@ -8,7 +8,7 @@
 # omp's identity, launch, and lifecycle checks are HARNESS-DEPENDENT: their
 # verdicts come from what the vendor emits (a process name, a settings schema,
 # an extension event). This suite pins the LOGIC with real processes, a fake
-# omp binary, and a plain Node host, so CI enforces it with no omp installed;
+# omp binary, and a plain Node host, so the portable suite enforces it with no omp installed;
 # FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh is the live guard that
 # catches vendor drift against a real omp. Neither replaces the other.
 #

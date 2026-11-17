@@ -969,7 +969,8 @@ test_backend_source_shell_portable() {
 }
 
 # One adapter-precheck condition. Each case is its own TAP test so the
-# stock-bash completeness check counts both without a hard-coded 2 in CI.
+# stock-bash completeness check counts both without a hard-coded 2 in the
+# stock macOS workflow.
 _backend_source_adapter_condition() {  # missing|unreadable
   local dir adapter exit_status continuation out rc condition test_bash
   condition=$1
@@ -1727,9 +1728,9 @@ test_spawn_autodetect_nesting_resolves_tmux_silently() {
   pass "fm-spawn.sh: auto-detect resolves nested tmux-in-herdr to tmux and stays silent end to end"
 }
 
-# CI's stock macOS Bash lane sets FM_TEST_STOCK_BASH=1 to run just the adapter
-# adapter and helper prechecks. Adding another stock-bash case adds it here,
-# not to ci.yml.
+# The stock macOS Bash job in .github/workflows/macos-bash.yml sets
+# FM_TEST_STOCK_BASH=1 to run just the adapter and helper prechecks. Adding
+# another stock-bash case adds it here, not to the workflow.
 if [ -n "${FM_TEST_STOCK_BASH:-}" ]; then
   fm_test_run \
     test_backend_source_requires_missing_adapter_file \

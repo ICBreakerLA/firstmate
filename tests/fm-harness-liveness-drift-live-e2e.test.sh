@@ -24,10 +24,10 @@
 # unauthenticated harness still starts its process, which is all the liveness
 # probe reads.
 #
-# Portable serial CI installs the public Pi package but no credentials, so this
-# guard checks that available token-free surface there and runs against every installed
-# harness on more capable hosts. The portable counterpart in
-# tests/fm-tmux-agent-liveness.test.sh pins the classifier logic in CI. Run this
+# The portable serial lane installs the public Pi package but no credentials, so
+# this guard checks that available token-free surface there and runs against every
+# installed harness on more capable hosts. The portable counterpart in
+# tests/fm-tmux-agent-liveness.test.sh pins the classifier logic. Run this
 # guard after any harness upgrade and before trusting refreshed evidence.
 set -u
 

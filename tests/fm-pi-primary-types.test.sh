@@ -81,7 +81,7 @@ JSON
   typebox@1.3.27 @types/node@22.19.19 typescript@5.9.3)
 
 # Emit real installed versions and npm-verified package integrity before the
-# temporary lock/vendor tree is removed; compiler diagnostics stay in CI logs.
+# temporary lock/vendor tree is removed; compiler diagnostics stay in the gate logs.
 node - "$TMP_ROOT" "$version" <<'JS'
 const { readFileSync } = require("node:fs");
 const root = process.argv[2];

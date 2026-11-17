@@ -144,7 +144,7 @@ seen_sig() {
 # Stop an owned watcher. TERM must end it through its EXIT cleanup, so one still
 # alive after the file's standard 100-tick budget fails the case here, with the
 # process evidence wait_for_exit prints, instead of an unbounded wait hanging
-# the whole suite until the CI job timeout.
+# the whole suite until the hosted job timeout.
 reap() {
   local rc
   kill "$1" 2>/dev/null || true

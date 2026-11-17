@@ -140,6 +140,18 @@ release_gone() {
   [ ! -e "$FM_LOCAL_LLM_LOCK.handoff" ] || fail "a released claim must remove the handoff FIFO"
 }
 
+# release_bg <task-id> <prefix>: run a release in a background subshell so a
+# test can act inside its probe and flock windows; $RELEASE_BG is the running
+# release, and <prefix>.rc/.out/.err collect its verdict once waited.
+release_bg() {
+  local id=$1 pre=$2
+  (
+    fm_local_llm_release "$id" >"$TMP_ROOT/$pre.out" 2>"$TMP_ROOT/$pre.err"
+    echo $? >"$TMP_ROOT/$pre.rc"
+  ) &
+  RELEASE_BG=$!
+}
+
 test_a_claim_refuses_a_second_and_names_its_task() {
   local out
   fm_local_llm_claim task-a || fail "a free slot must be claimed"
@@ -361,6 +373,157 @@ test_a_claim_without_a_persisted_pid_is_ended_through_the_handoff() {
   pass "a claim with no persisted pid is ended through the handoff's EOF, never by unlinking the lock under a live holder"
 }
 
+test_a_wrapper_taking_over_during_a_release_keeps_its_claim() {
+  local marker="$TMP_ROOT/takeover.marker" wrapper
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  # The merge/cleanup release races the same task's wrapper. The release's
+  # one-second handoff probe and its two-second flock window are the interval
+  # the takeover is scheduled into: the wrapper takes the handoff over after
+  # the release's entry probe has passed, mid-release.
+  release_bg task-a takeover
+  sleep 1.3
+  (
+    fm_local_llm_take_claim task-a || exit 3
+    : >"$marker"
+    sleep 30
+  ) &
+  wrapper=$!
+  sleep 0.2
+  wait "$RELEASE_BG"
+  expect_code 1 "$(cat "$TMP_ROOT/takeover.rc")" "a release racing a handoff takeover must refuse"
+  assert_contains "$(cat "$TMP_ROOT/takeover.err")" "handoff" "the refusal says the handoff is what it refused on"
+  [ -e "$marker" ] || fail "the racing wrapper must have taken over the handoff"
+  [ -e "$FM_LOCAL_LLM_LOCK" ] || fail "a release racing a takeover must leave the claim file in place"
+  assert_equals "task-a" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the claim racing a takeover must keep its name"
+  [ -p "$FM_LOCAL_LLM_LOCK.handoff" ] || fail "the handoff of a claim racing a takeover must stay in place"
+  kill -0 "$wrapper" 2>/dev/null || fail "the refused release must leave the live wrapper untouched"
+  kill "$wrapper" 2>/dev/null || true
+  wait "$wrapper" 2>/dev/null || true
+  end_holder
+  lock_free || fail "the slot must free once the racing wrapper has ended"
+  fm_local_llm_release task-a || fail "the release must succeed once the racing wrapper has ended"
+  release_gone
+  pass "a release racing a same-task handoff takeover refuses, kills nothing, and never unlinks the takeover's claim"
+}
+
+test_a_new_holder_installed_during_a_release_is_never_killed() {
+  local new_holder
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  release_bg task-a reholder
+  # The release's claim dies mid-release and the same task relaunches,
+  # installing a new holder: the release must target only the claim instance
+  # it sampled, never the relaunch.
+  sleep 0.3
+  kill "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  sleep 0.2
+  (
+    fm_local_llm_claim task-a && printf '%s\n' "$FM_LOCAL_LLM_HOLDER" >"$TMP_ROOT/reholder.pid"
+  ) &
+  sleep 1.0
+  wait "$RELEASE_BG"
+  new_holder=$(cat "$TMP_ROOT/reholder.pid")
+  expect_code 1 "$(cat "$TMP_ROOT/reholder.rc")" "a release racing a same-task relaunch must refuse"
+  assert_contains "$(cat "$TMP_ROOT/reholder.err")" "taken with a new holder" "the refusal names the new holder it refused to touch"
+  kill -0 "$new_holder" 2>/dev/null || fail "a racing release must never kill the relaunch's live holder"
+  assert_equals "task-a" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the relaunch's claim must keep its name"
+  assert_equals "$new_holder" "$(sed -n 2p "$FM_LOCAL_LLM_LOCK")" "the relaunch's claim must keep its own holder pid"
+  [ -p "$FM_LOCAL_LLM_LOCK.handoff" ] || fail "the relaunch's handoff must stay in place"
+  # The relaunch's own wrapper takes over as any live claim's does.
+  ( fm_local_llm_take_claim task-a ) || fail "the relaunch's wrapper must take over its own claim"
+  lock_free || fail "the relaunch's claim must free the slot when its wrapper exits"
+  fm_local_llm_release task-a || fail "the release must succeed once the relaunch's claim has ended"
+  release_gone
+  pass "a release whose claim is replaced by a new holder mid-release refuses and leaves the new claim whole"
+}
+
+test_a_release_never_kills_a_live_holder_of_a_reclaimed_claim() {
+  local lock=$FM_LOCAL_LLM_LOCK holder
+  # The shape of a live claim: a holder holding the lock under the flock and
+  # blocked at the handoff, its pid recorded. The task-id line of that claim
+  # is then rewritten to name the releasing task while the release runs -
+  # a reclaimed slot whose live holder happens to reuse the recorded pid.
+  rm -f "$lock" "$lock.handoff"
+  mkdir -p "$(dirname "$lock")"
+  mkfifo -m 600 "$lock.handoff"
+  (
+    exec 9>>"$lock"
+    flock -n 9
+    exec cat "$lock.handoff"
+  ) </dev/null >/dev/null 2>&1 &
+  holder=$!
+  printf 'task-a\n%s\n' "$holder" >"$lock"
+  release_bg task-a reuse
+  sleep 1.3
+  printf 'task-b\n%s\n' "$holder" >"$lock"
+  sleep 1.9
+  wait "$RELEASE_BG"
+  expect_code 1 "$(cat "$TMP_ROOT/reuse.rc")" "a release racing a re-claim that reused its holder pid must refuse"
+  assert_contains "$(cat "$TMP_ROOT/reuse.err")" "taken with a new holder" "the refusal names the claim whose live holder it refused to kill"
+  kill -0 "$holder" 2>/dev/null || fail "a racing release must never kill the reclaimed claim's live holder"
+  assert_equals "task-b" "$(head -n 1 "$lock")" "the reclaimed claim must keep its name"
+  assert_equals "$holder" "$(sed -n 2p "$lock")" "the reclaimed claim must keep its holder"
+  fm_local_llm_claim task-c 2>/dev/null && fail "the reclaimed claim's live lease must still refuse a third task"
+  end_holder
+  lock_free || fail "the reclaimed claim must free the slot once its handoff is opened"
+  fm_local_llm_release task-b || fail "the reclaimed claim must release cleanly"
+  release_gone
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  pass "a release racing a re-claim onto the recorded pid refuses, kills the live holder of nothing, and unlinks nothing"
+}
+
+test_a_release_that_cannot_open_the_lock_file_refuses() {
+  if [ "$(id -u)" = 0 ]; then
+    pass "the lock-open refusal test skips as root, which bypasses file permissions"
+    return
+  fi
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  # The claim stands and the lock file cannot be opened for write: the
+  # release must say the slot was not freed and leave the claim in place.
+  chmod 400 "$FM_LOCAL_LLM_LOCK"
+  local out rc
+  out=$(fm_local_llm_release task-a 2>&1)
+  rc=$?
+  chmod 600 "$FM_LOCAL_LLM_LOCK"
+  expect_code 1 "$rc" "a release that cannot open the lock file must refuse"
+  assert_contains "$out" "could not open the local-model claim lock" "the refusal names the lock file it could not open"
+  assert_contains "$out" "task-a" "the refusal names the task whose slot was not freed"
+  [ -e "$FM_LOCAL_LLM_LOCK" ] || fail "a refused release must leave the claim file in place"
+  assert_equals "task-a" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the claim must keep its name"
+  kill -0 "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || fail "a refused release must not end the holder"
+  fm_local_llm_claim task-b 2>/dev/null && fail "the live claim must still refuse a second task"
+  end_holder
+  lock_free || fail "the claim must free the slot once its handoff is opened"
+  fm_local_llm_release task-a || fail "the release must succeed once the lock file is openable again"
+  release_gone
+  pass "a release that cannot open the lock file names it, refuses, and leaves the claim claimed"
+}
+
+test_a_release_racing_a_concurrent_unlink_is_silent() {
+  local benign
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  benign=$FM_LOCAL_LLM_HOLDER
+  # The benign shape of the open failure: a concurrent release unlinked the
+  # claim while this release ran, so its slot is free and nothing is left.
+  chmod 400 "$FM_LOCAL_LLM_LOCK"
+  ( sleep 0.3; rm -f "$FM_LOCAL_LLM_LOCK" ) &
+  release_bg task-a benign-open
+  sleep 0.2
+  wait "$RELEASE_BG"
+  expect_code 0 "$(cat "$TMP_ROOT/benign-open.rc")" "a release racing a concurrent unlink of its claim must report the slot free"
+  [ ! -s "$TMP_ROOT/benign-open.err" ] || fail "the benign race must stay silent: $(cat "$TMP_ROOT/benign-open.err")"
+  chmod 600 "$FM_LOCAL_LLM_LOCK" 2>/dev/null || true
+  kill "$benign" 2>/dev/null || true
+  wait "$benign" 2>/dev/null || true
+  lock_free || fail "the concurrent unlink must leave the flock free"
+  fm_local_llm_claim task-b || fail "the slot must be claimable by the next task after the benign race"
+  end_holder
+  lock_free || fail "the next claim must end cleanly"
+  fm_local_llm_release task-b || fail "the next claim must release cleanly"
+  release_gone
+  pass "a release whose claim a concurrent release already removed is a silent success leaving a claimable slot"
+}
+
 # select_case <sandbox 0|1> [config-dir]: reset the world, then run the
 # availability decision in this shell; $OUT holds the notice, $RC the verdict.
 SERVER_UP='{"data":[{"id":"qwen3.8-27b-gsq-rco"}]}'
@@ -555,6 +718,11 @@ test_a_background_job_without_the_descriptor_does_not_keep_the_claim
 test_a_worker_running_on_the_handoff_is_never_released
 test_a_process_holding_the_lock_file_open_is_not_the_holder
 test_a_claim_without_a_persisted_pid_is_ended_through_the_handoff
+test_a_wrapper_taking_over_during_a_release_keeps_its_claim
+test_a_new_holder_installed_during_a_release_is_never_killed
+test_a_release_never_kills_a_live_holder_of_a_reclaimed_claim
+test_a_release_that_cannot_open_the_lock_file_refuses
+test_a_release_racing_a_concurrent_unlink_is_silent
 test_select_uses_the_local_model_when_every_check_holds
 test_select_names_an_invalid_health_bound_and_falls_back
 test_select_keeps_the_local_model_when_the_server_is_slow_to_answer

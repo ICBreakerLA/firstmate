@@ -231,6 +231,15 @@ fm_local_llm_holder_matches() {
   esac
 }
 
+# fm_local_llm_claim_instance <lock-file> <task-id> <holder-pid>
+# 0 only when the lock file names <task-id> and records <holder-pid>,
+# exactly the claim instance a release samples at its entry. Every re-check
+# of a release's target runs on this, so a relaunch's claim with a new
+# holder is never the old release's kill, drain, or unlink target.
+fm_local_llm_claim_instance() {
+  [ "$(head -n 1 "$1" 2>/dev/null)" = "$2" ] && [ "$(sed -n 2p "$1" 2>/dev/null)" = "$3" ]
+}
+
 # fm_local_llm_handoff_writer <fifo>
 # 0 only while some live process currently has <fifo> open for writing,
 # which after handoff is exactly the task's running wrapper: a blocking
@@ -269,23 +278,32 @@ fm_local_llm_drain_handoff() {
 # fm_local_llm_release <task-id>
 # End <task-id>'s claim of the one local-model slot: the detached holder,
 # the lock file, and its handoff FIFO, so the slot is free for the next
-# claim. The live lease is ended first - a matched holder is killed, a
-# pre-upgrade claim with no persisted pid is ended through the handoff's
-# EOF - which is race-free because that same lease makes the flock refuse
-# for every fresh claim trying to take the slot while it is being ended.
-# The claim is unlinked only under the held flock, after a final check
-# that it is still this task's, so a claim that raced in is never unlinked
-# and no live holder's lock is removed out from under it. 0 - the slot is
-# free of this task's claim - when the lock file is absent, names another
-# task (that claim is left running), names this task with a dead, zombie,
-# stale, or reused pid (nothing is killed, the file is unlinked), names
-# this task with a matching live holder that is ended here, or names this
-# task's persisted-pid-less claim whose holder is ended through the EOF.
+# claim. The release targets one claim instance - the task name and holder
+# pid the lock file records when the release begins - and re-verifies that
+# instance before its kill, its drain, and its unlink, and re-probes the
+# handoff under the flock, so a relaunch that installed a new holder while
+# the release ran, and a wrapper that took the handoff over while it ran,
+# are left standing: never killed, never drained, never unlinked. The live
+# lease is ended first - a matched holder is killed, a pre-upgrade claim
+# with no persisted pid is ended through the handoff's EOF - which is
+# race-free because that same lease makes the flock refuse for every fresh
+# claim trying to take the slot while it is being ended. The claim is
+# unlinked only under the held flock, after the final checks that it is
+# still the sampled instance and that no worker is on the handoff, so a
+# claim that raced in is never unlinked and no live holder's lock is
+# removed out from under it. 0 - the slot is free of this task's claim -
+# when the lock file is absent, names another task (that claim is left
+# running), names this task with a dead, zombie, stale, or reused pid
+# (nothing is killed, the file is unlinked), names this task with a
+# matching live holder that is ended here, or names this task's
+# persisted-pid-less claim whose holder is ended through the EOF.
 # 1 only when the claim is left in place because it must not be broken:
-# the task's worker is still running on the handoff (the slot is in live
-# use), the handoff cannot be probed or drained because the timeout binary
-# is missing, a live lease outlived the kill or drain, or a fresh claim
-# raced in and holds the lock. Safe to call twice.
+# the task's worker is on the handoff at the probe or at the re-probe
+# under the flock, the handoff cannot be probed or drained because the
+# timeout binary is missing, the claim was re-taken with a new holder
+# while the release ran, a live lease outlived the kill or drain, the
+# lock file cannot be opened, or a fresh claim raced in and holds the
+# lock. Safe to call twice.
 fm_local_llm_release() {
   local id=$1 f pid
   f=$(fm_local_llm_lock_file)
@@ -296,8 +314,10 @@ fm_local_llm_release() {
     echo "warning: task $id's local-model worker is still running on the handoff; its claim was left in place" >&2
     return 1
   fi
-  if ! exec 8<>"$f" 2>/dev/null; then
-    return 0
+  if ! { exec 8<>"$f"; } 2>/dev/null; then
+    [ "$(head -n 1 "$f" 2>/dev/null)" = "$id" ] || return 0
+    echo "error: could not open the local-model claim lock $f; task $id's release left its claim in place" >&2
+    return 1
   fi
   if ! flock -w 2 8; then
     # A live lease on this claim file blocks this flock, and the same
@@ -306,7 +326,15 @@ fm_local_llm_release() {
     # the flock. A matched holder is killed; a pre-upgrade claim with no
     # persisted pid is ended through the handoff's EOF, which pairs with
     # that holder and with nothing else, because the lease blocks every
-    # fresh claim from reaching its holder spawn.
+    # fresh claim from reaching its holder spawn. The kill and the drain
+    # target only the claim instance sampled at entry: a relaunch that
+    # installed a new holder in this window made the claim live again,
+    # and this release refuses it.
+    if [ -e "$f" ] && ! fm_local_llm_claim_instance "$f" "$id" "$pid"; then
+      exec 8>&-
+      echo "warning: task $id's local-model claim was taken with a new holder during its release; the new claim was left in place" >&2
+      return 1
+    fi
     if [ -n "$pid" ] && fm_local_llm_holder_matches "$pid" "$f"; then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -322,12 +350,28 @@ fm_local_llm_release() {
       return 1
     fi
   fi
-  # Under this flock a fresh claim cannot write into this file, so this
-  # final check proves the claim is still this task's; a fresh claim
-  # that took the slot after the lease died is left untouched.
-  if [ "$(head -n 1 "$f" 2>/dev/null)" = "$id" ]; then
-    rm -f "$f" "$f.handoff"
+  # Under this flock a fresh claim cannot write into this file, and a
+  # wrapper's take-over refuses for want of a live lease, so these final
+  # checks prove the claim is still the instance this release sampled:
+  # same task, same recorded holder, and no worker on the handoff. A
+  # claim that raced in - a new holder for this task, a wrapper live on
+  # the handoff - is left standing, and another task's claim is never
+  # unlinked.
+  if [ ! -e "$f" ] || [ "$(head -n 1 "$f" 2>/dev/null)" != "$id" ]; then
+    exec 8>&-
+    return 0
   fi
+  if [ "$(sed -n 2p "$f" 2>/dev/null)" != "$pid" ]; then
+    exec 8>&-
+    echo "warning: task $id's local-model claim was taken with a new holder during its release; the new claim was left in place" >&2
+    return 1
+  fi
+  if fm_local_llm_handoff_writer "$f.handoff"; then
+    exec 8>&-
+    echo "warning: task $id's local-model worker took over the handoff during its release; its claim was left in place" >&2
+    return 1
+  fi
+  rm -f "$f" "$f.handoff"
   exec 8>&-
 }
 

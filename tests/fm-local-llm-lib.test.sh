@@ -199,7 +199,7 @@ test_killing_the_holder_releases_the_claim() {
 
 test_a_matching_claim_is_released_and_the_slot_is_claimable_again() {
   fm_local_llm_claim task-a || fail "a free slot must be claimed"
-  assert_equals "$FM_LOCAL_LLM_HOLDER" "$(sed -n 2p "$FM_LOCAL_LLM_LOCK")" "the claim persists its holder's pid on the lock file's second line"
+  assert_equals "$FM_LOCAL_LLM_HOLDER $(fm_local_llm_proc_start "$FM_LOCAL_LLM_HOLDER")" "$(sed -n 2p "$FM_LOCAL_LLM_LOCK")" "the claim persists its holder's pid beside its start time on the lock file's second line"
   fm_local_llm_claim task-b 2>/dev/null && fail "the claim must refuse a second task until it is released"
   fm_local_llm_release task-a || fail "releasing this task's own claim must succeed"
   wait "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
@@ -260,10 +260,10 @@ test_a_claim_left_by_a_dead_holder_is_cleaned_up() {
   pass "a release cleans the leftover file and FIFO of a claim whose holder is gone"
 }
 
-test_a_reused_pid_is_never_killed() {
+test_a_live_recorded_pid_that_is_not_the_holder_is_never_killed() {
   sleep 30 &
   local victim=$!
-  printf 'task-a\n%s\n' "$victim" >"$FM_LOCAL_LLM_LOCK"
+  printf 'task-a\n%s %s\n' "$victim" "$(fm_local_llm_proc_start "$victim")" >"$FM_LOCAL_LLM_LOCK"
   rm -f "$FM_LOCAL_LLM_LOCK.handoff"
   mkfifo -m 600 "$FM_LOCAL_LLM_LOCK.handoff"
   fm_local_llm_release task-a || fail "releasing a stale claim must succeed"
@@ -275,7 +275,7 @@ test_a_reused_pid_is_never_killed() {
   wait "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
   kill "$victim" 2>/dev/null || true
   wait "$victim" 2>/dev/null || true
-  pass "a recorded pid that is not this claim's holder is treated as gone: removed, never killed"
+  pass "a live pid recorded with its identity is killed only on its holder command line: this one is removed, never killed"
 }
 
 test_a_zombie_holder_is_treated_as_gone() {
@@ -341,19 +341,30 @@ test_a_process_holding_the_lock_file_open_is_not_the_holder() {
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
   lock_free || fail "the ended holder must release the flock"
-  # A claim whose recorded pid has been reused by a live host process that
-  # merely has the lock file open on a descriptor: no holder command line.
+  # A claim whose recorded pid names a live host process that merely has the
+  # lock file open on a descriptor: no holder command line, and no start time
+  # recorded to prove the pid is the process the claim named. The release
+  # signals nothing, leaves the claim in place, and reports the slot held.
   printf 'task-a\n%s\n' "$bystander" >"$FM_LOCAL_LLM_LOCK"
-  fm_local_llm_release task-a || fail "releasing a claim whose pid names a lock-file bystander must succeed"
-  kill -0 "$bystander" 2>/dev/null || fail "a live process holding the lock file open without the holder command line must never be matched or killed"
+  local out rc
+  out=$(fm_local_llm_release task-a 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "a release must refuse to signal a live pid whose claim records no start time"
+  assert_contains "$out" "$bystander" "the refusal names the pid it refused to signal"
+  assert_contains "$out" "left the claim in place" "the refusal says the claim stays claimed"
+  kill -0 "$bystander" 2>/dev/null || fail "a live process holding the lock file open must never be signaled"
+  [ -e "$FM_LOCAL_LLM_LOCK" ] || fail "a refused release must leave the claim file in place"
+  assert_equals "task-a" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the claim must keep its name"
+  assert_equals "$bystander" "$(sed -n 2p "$FM_LOCAL_LLM_LOCK")" "the refusal must leave the recorded pid intact"
+  kill "$bystander" 2>/dev/null || true
+  wait "$bystander" 2>/dev/null || true
+  fm_local_llm_release task-a || fail "the release must clean the claim once the recorded pid is gone"
   release_gone
   lock_free || fail "the slot must be free"
   fm_local_llm_claim task-b || fail "the slot must be claimable"
   end_holder
   lock_free || fail "the next claim must end cleanly"
-  kill "$bystander" 2>/dev/null || true
-  wait "$bystander" 2>/dev/null || true
-  pass "a live process holding the lock file open without the holder command line is not matched and never killed"
+  pass "a release signals nothing for a live pid that is not its recorded holder, and cleans the claim once that pid is gone"
 }
 
 test_a_claim_without_a_persisted_pid_is_ended_through_the_handoff() {
@@ -426,7 +437,7 @@ test_a_new_holder_installed_during_a_release_is_never_killed() {
   assert_contains "$(cat "$TMP_ROOT/reholder.err")" "taken with a new holder" "the refusal names the new holder it refused to touch"
   kill -0 "$new_holder" 2>/dev/null || fail "a racing release must never kill the relaunch's live holder"
   assert_equals "task-a" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the relaunch's claim must keep its name"
-  assert_equals "$new_holder" "$(sed -n 2p "$FM_LOCAL_LLM_LOCK")" "the relaunch's claim must keep its own holder pid"
+  assert_equals "$new_holder $(fm_local_llm_proc_start "$new_holder")" "$(sed -n 2p "$FM_LOCAL_LLM_LOCK")" "the relaunch's claim must keep its own holder pid and start time"
   [ -p "$FM_LOCAL_LLM_LOCK.handoff" ] || fail "the relaunch's handoff must stay in place"
   # The relaunch's own wrapper takes over as any live claim's does.
   ( fm_local_llm_take_claim task-a ) || fail "the relaunch's wrapper must take over its own claim"
@@ -437,11 +448,12 @@ test_a_new_holder_installed_during_a_release_is_never_killed() {
 }
 
 test_a_release_never_kills_a_live_holder_of_a_reclaimed_claim() {
-  local lock=$FM_LOCAL_LLM_LOCK holder
+  local lock=$FM_LOCAL_LLM_LOCK holder ident
   # The shape of a live claim: a holder holding the lock under the flock and
-  # blocked at the handoff, its pid recorded. The task-id line of that claim
-  # is then rewritten to name the releasing task while the release runs -
-  # a reclaimed slot whose live holder happens to reuse the recorded pid.
+  # blocked at the handoff, its pid recorded beside its start time. The
+  # task-id line of that claim is then rewritten to name the releasing task
+  # while the release runs - a reclaimed slot whose live holder happens to
+  # reuse the recorded pid.
   rm -f "$lock" "$lock.handoff"
   mkdir -p "$(dirname "$lock")"
   mkfifo -m 600 "$lock.handoff"
@@ -451,17 +463,18 @@ test_a_release_never_kills_a_live_holder_of_a_reclaimed_claim() {
     exec cat "$lock.handoff"
   ) </dev/null >/dev/null 2>&1 &
   holder=$!
-  printf 'task-a\n%s\n' "$holder" >"$lock"
+  ident=$(fm_local_llm_proc_start "$holder")
+  printf 'task-a\n%s %s\n' "$holder" "$ident" >"$lock"
   release_bg task-a reuse
   sleep 1.3
-  printf 'task-b\n%s\n' "$holder" >"$lock"
+  printf 'task-b\n%s %s\n' "$holder" "$ident" >"$lock"
   sleep 1.9
   wait "$RELEASE_BG"
   expect_code 1 "$(cat "$TMP_ROOT/reuse.rc")" "a release racing a re-claim that reused its holder pid must refuse"
   assert_contains "$(cat "$TMP_ROOT/reuse.err")" "taken with a new holder" "the refusal names the claim whose live holder it refused to kill"
   kill -0 "$holder" 2>/dev/null || fail "a racing release must never kill the reclaimed claim's live holder"
   assert_equals "task-b" "$(head -n 1 "$lock")" "the reclaimed claim must keep its name"
-  assert_equals "$holder" "$(sed -n 2p "$lock")" "the reclaimed claim must keep its holder"
+  assert_equals "$holder $ident" "$(sed -n 2p "$lock")" "the reclaimed claim must keep its holder and start time"
   fm_local_llm_claim task-c 2>/dev/null && fail "the reclaimed claim's live lease must still refuse a third task"
   end_holder
   lock_free || fail "the reclaimed claim must free the slot once its handoff is opened"
@@ -470,6 +483,76 @@ test_a_release_never_kills_a_live_holder_of_a_reclaimed_claim() {
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
   pass "a release racing a re-claim onto the recorded pid refuses, kills the live holder of nothing, and unlinks nothing"
+}
+
+test_a_live_holder_without_the_recorded_start_time_is_never_killed() {
+  local lock=$FM_LOCAL_LLM_LOCK holder out rc
+  # The exact corner of a reused pid value: a live process carries the
+  # recorded pid value, and the claim's recorded start time is one this
+  # live pid never had. The release may signal only the very process the
+  # claim recorded, so it signals nothing and the slot stays claimed.
+  rm -f "$lock" "$lock.handoff"
+  mkdir -p "$(dirname "$lock")"
+  mkfifo -m 600 "$lock.handoff"
+  (
+    exec cat "$lock.handoff"
+  ) </dev/null >/dev/null 2>&1 &
+  holder=$!
+  printf 'task-a\n%s 0\n' "$holder" >"$lock"
+  out=$(fm_local_llm_release task-a 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "a release must refuse to signal a live pid that does not carry the recorded start time"
+  assert_contains "$out" "$holder" "the refusal names the pid it refused to signal"
+  assert_contains "$out" "left the claim in place" "the refusal says the claim stays claimed"
+  kill -0 "$holder" 2>/dev/null || fail "a live pid that does not carry the recorded start time must never be signaled"
+  [ -e "$lock" ] || fail "a refused release must leave the claim file in place"
+  assert_equals "task-a" "$(head -n 1 "$lock")" "the claim must keep its name"
+  assert_equals "$holder 0" "$(sed -n 2p "$lock")" "a refused release must leave the recorded identity intact"
+  [ -p "$lock.handoff" ] || fail "a refused release must leave the handoff FIFO in place"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  fm_local_llm_release task-a || fail "the release must clean the claim once its recorded pid is gone"
+  release_gone
+  lock_free || fail "the slot must be free for the next task"
+  fm_local_llm_claim task-b || fail "the slot must be claimable once the identity refusal is resolved"
+  end_holder
+  lock_free || fail "the next claim must end cleanly"
+  pass "a live pid that does not carry the recorded start time is signaled by nothing and its claim stays in place"
+}
+
+test_a_live_holder_without_a_recorded_identity_is_never_killed() {
+  local lock=$FM_LOCAL_LLM_LOCK holder out rc
+  # A claim line that records no identity for its live pid: the release
+  # cannot prove the live pid is the process it recorded, so it signals
+  # nothing, keeps the lock file and the FIFO, and reports the slot held
+  # for the next dispatch to inspect.
+  rm -f "$lock" "$lock.handoff"
+  mkdir -p "$(dirname "$lock")"
+  mkfifo -m 600 "$lock.handoff"
+  (
+    exec cat "$lock.handoff"
+  ) </dev/null >/dev/null 2>&1 &
+  holder=$!
+  printf 'task-a\n%s\n' "$holder" >"$lock"
+  out=$(fm_local_llm_release task-a 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "a release must refuse a live pid whose claim records no start time"
+  assert_contains "$out" "$holder" "the refusal names the pid it refused to signal"
+  assert_contains "$out" "left the claim in place" "the refusal says the claim stays claimed"
+  kill -0 "$holder" 2>/dev/null || fail "a live pid with no recorded identity must never be signaled"
+  [ -e "$lock" ] || fail "a refused release must leave the claim file in place"
+  assert_equals "task-a" "$(head -n 1 "$lock")" "the claim must keep its name"
+  assert_equals "$holder" "$(sed -n 2p "$lock")" "a refused release must leave the recorded pid intact"
+  [ -p "$lock.handoff" ] || fail "a refused release must leave the handoff FIFO in place"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  fm_local_llm_release task-a || fail "the release must clean the claim once its recorded pid is gone"
+  release_gone
+  lock_free || fail "the slot must be free for the next task"
+  fm_local_llm_claim task-b || fail "the slot must be claimable once the identity refusal is resolved"
+  end_holder
+  lock_free || fail "the next claim must end cleanly"
+  pass "a live pid with no recorded identity is signaled by nothing and its claim stays claimed"
 }
 
 test_a_release_that_cannot_open_the_lock_file_refuses() {
@@ -712,7 +795,7 @@ test_release_leaves_another_tasks_claim_running
 test_releasing_no_claim_is_a_clean_noop
 test_release_is_safe_to_call_twice
 test_a_claim_left_by_a_dead_holder_is_cleaned_up
-test_a_reused_pid_is_never_killed
+test_a_live_recorded_pid_that_is_not_the_holder_is_never_killed
 test_a_zombie_holder_is_treated_as_gone
 test_a_background_job_without_the_descriptor_does_not_keep_the_claim
 test_a_worker_running_on_the_handoff_is_never_released
@@ -721,6 +804,8 @@ test_a_claim_without_a_persisted_pid_is_ended_through_the_handoff
 test_a_wrapper_taking_over_during_a_release_keeps_its_claim
 test_a_new_holder_installed_during_a_release_is_never_killed
 test_a_release_never_kills_a_live_holder_of_a_reclaimed_claim
+test_a_live_holder_without_the_recorded_start_time_is_never_killed
+test_a_live_holder_without_a_recorded_identity_is_never_killed
 test_a_release_that_cannot_open_the_lock_file_refuses
 test_a_release_racing_a_concurrent_unlink_is_silent
 test_select_uses_the_local_model_when_every_check_holds

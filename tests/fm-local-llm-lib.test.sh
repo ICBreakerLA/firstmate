@@ -295,6 +295,72 @@ test_a_background_job_without_the_descriptor_does_not_keep_the_claim() {
   pass "a background job started without the descriptor does not keep the claim alive"
 }
 
+test_a_worker_running_on_the_handoff_is_never_released() {
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  (
+    exec 5<>"$FM_LOCAL_LLM_LOCK.handoff"
+    sleep 30
+  ) &
+  local wrapper=$!
+  sleep 0.3
+  fm_local_llm_release task-a && fail "a release must refuse while the task's worker is on the handoff"
+  [ -e "$FM_LOCAL_LLM_LOCK" ] || fail "a refused release must leave the claim file in place"
+  assert_equals "task-a" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" "the claim must keep its name"
+  kill -0 "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || fail "a refused release must not end the holder"
+  fm_local_llm_claim task-b 2>/dev/null && fail "the live claim must still refuse a second task"
+  kill "$wrapper" 2>/dev/null || true
+  wait "$wrapper" 2>/dev/null || true
+  end_holder
+  lock_free || fail "the claim must free the slot once its worker is gone"
+  fm_local_llm_release task-a || fail "the release must succeed after the worker ends"
+  release_gone
+  pass "a release refuses while the task's worker is on the handoff and succeeds once that worker has ended"
+}
+
+test_a_process_holding_the_lock_file_open_is_not_the_holder() {
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  local holder=$FM_LOCAL_LLM_HOLDER
+  (
+    exec 7<"$FM_LOCAL_LLM_LOCK"
+    sleep 30
+  ) &
+  local bystander=$!
+  sleep 0.3
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  lock_free || fail "the ended holder must release the flock"
+  # A claim whose recorded pid has been reused by a live host process that
+  # merely has the lock file open on a descriptor: no holder command line.
+  printf 'task-a\n%s\n' "$bystander" >"$FM_LOCAL_LLM_LOCK"
+  fm_local_llm_release task-a || fail "releasing a claim whose pid names a lock-file bystander must succeed"
+  kill -0 "$bystander" 2>/dev/null || fail "a live process holding the lock file open without the holder command line must never be matched or killed"
+  release_gone
+  lock_free || fail "the slot must be free"
+  fm_local_llm_claim task-b || fail "the slot must be claimable"
+  end_holder
+  lock_free || fail "the next claim must end cleanly"
+  kill "$bystander" 2>/dev/null || true
+  wait "$bystander" 2>/dev/null || true
+  pass "a live process holding the lock file open without the holder command line is not matched and never killed"
+}
+
+test_a_claim_without_a_persisted_pid_is_ended_through_the_handoff() {
+  fm_local_llm_claim task-a || fail "a free slot must be claimed"
+  local holder=$FM_LOCAL_LLM_HOLDER
+  # The shape of claims made before holder pids were persisted: the live
+  # holder is blocked at the handoff and no pid names it.
+  printf 'task-a\n' >"$FM_LOCAL_LLM_LOCK"
+  fm_local_llm_release task-a || fail "a release must end a persisted-pid-less claim"
+  wait "$holder" 2>/dev/null || true
+  ! kill -0 "$holder" 2>/dev/null || fail "the release must end the holder blocked at the handoff"
+  release_gone
+  lock_free || fail "the slot must be free"
+  fm_local_llm_claim task-b || fail "the slot must be claimable"
+  end_holder
+  lock_free || fail "the next claim must end cleanly"
+  pass "a claim with no persisted pid is ended through the handoff's EOF, never by unlinking the lock under a live holder"
+}
+
 # select_case <sandbox 0|1> [config-dir]: reset the world, then run the
 # availability decision in this shell; $OUT holds the notice, $RC the verdict.
 SERVER_UP='{"data":[{"id":"qwen3.8-27b-gsq-rco"}]}'
@@ -486,6 +552,9 @@ test_a_claim_left_by_a_dead_holder_is_cleaned_up
 test_a_reused_pid_is_never_killed
 test_a_zombie_holder_is_treated_as_gone
 test_a_background_job_without_the_descriptor_does_not_keep_the_claim
+test_a_worker_running_on_the_handoff_is_never_released
+test_a_process_holding_the_lock_file_open_is_not_the_holder
+test_a_claim_without_a_persisted_pid_is_ended_through_the_handoff
 test_select_uses_the_local_model_when_every_check_holds
 test_select_names_an_invalid_health_bound_and_falls_back
 test_select_keeps_the_local_model_when_the_server_is_slow_to_answer

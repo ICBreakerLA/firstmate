@@ -1803,7 +1803,7 @@ The wrapper never takes or waits for the lock itself: it refuses to start unless
 A spawn that fails before its launch is live releases the claim at once.
 A launched pane that never starts its wrapper leaves the claim with the holder until that process is ended.
 A finished task's claim is released with it: `bin/fm-pr-merge.sh` and `bin/fm-merge-local.sh` release it as part of a merge that landed, and `bin/fm-teardown.sh` releases it during cleanup, so the next local-model dispatch finds the slot free with no manual cleanup.
-A release never touches another task's claim, and it kills a recorded pid only after proving that pid is that claim's holder; a claim whose recorded pid is dead, zombied, stale, or reused is removed without any kill.
+A release never touches another task's claim, and it kills a recorded pid only after proving that pid is that claim's holder by its command line: a process that merely holds the lock file open is not the holder and is never matched or killed. A release refuses, leaving the claim in place with a warning, while the task's worker is still running on the handoff, so cleanup never frees the slot under a live worker; a claim whose recorded pid is dead, zombied, stale, or reused is removed without any kill. A claim made before holder pids were persisted has its holder ended through the handoff's EOF before the file is removed, and the final check and unlink happen under the held flock, so a claim that races in is never unlinked.
 
 #### Fallback to Claude Haiku and the optional server start
 

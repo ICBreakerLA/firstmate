@@ -1,0 +1,3 @@
+ok - fm-pr-merge releases the task's local-model slot as part of a landed merge
+ok - fm-pr-merge leaves the slot claim standing when the merge fails
+ok - fm-pr-merge never touches another task's slot claim

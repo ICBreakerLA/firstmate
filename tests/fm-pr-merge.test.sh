@@ -11,6 +11,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=bin/fm-local-llm-lib.sh
+. "$ROOT/bin/fm-local-llm-lib.sh"
 fm_git_identity fmtest fmtest@example.invalid
 
 PR_MERGE="$ROOT/bin/fm-pr-merge.sh"
@@ -5760,9 +5762,93 @@ test_squash_summary_ignores_headings_inside_code_fences() {
   pass "fm-pr-merge ignores headings inside fenced code, and treats a backtick run holding a backtick as inline code, when reading the What Changed section"
 }
 
+test_merge_success_releases_the_local_model_slot() {
+  local case_dir rc claim_pid
+  case_dir=$(make_case merge-releases-slot)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" deadbeefcafefeed0000000000000000deadbeef
+  : > "$case_dir/gh-axi.log"
+  export FM_LOCAL_LLM_LOCK="$case_dir/llm.lock"
+  fm_local_llm_claim task-x1 || fail "merge-releases-slot: the task must claim the slot"
+  claim_pid=$FM_LOCAL_LLM_HOLDER
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/71 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "merge-releases-slot: the merge should succeed: $(cat "$case_dir/stderr")"
+  wait "$claim_pid" 2>/dev/null || true
+  ! kill -0 "$claim_pid" 2>/dev/null || fail "merge-releases-slot: the merge must end the task's slot holder"
+  [ ! -e "$FM_LOCAL_LLM_LOCK" ] || fail "merge-releases-slot: the merge must remove the claim file"
+  [ ! -e "$FM_LOCAL_LLM_LOCK.handoff" ] || fail "merge-releases-slot: the merge must remove the handoff FIFO"
+  fm_local_llm_claim task-next || fail "merge-releases-slot: the next task must claim the freed slot"
+  kill "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  wait "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+  unset FM_LOCAL_LLM_LOCK
+  pass "fm-pr-merge releases the task's local-model slot as part of a landed merge"
+}
+
+test_merge_failure_keeps_the_slot_claim() {
+  local case_dir rc claim_pid
+  case_dir=$(make_case merge-fails-keeps-slot)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks_merge_fails "$case_dir"
+  : > "$case_dir/gh-axi.log"
+  export FM_LOCAL_LLM_LOCK="$case_dir/llm.lock"
+  fm_local_llm_claim task-x1 || fail "merge-fails-keeps-slot: the task must claim the slot"
+  claim_pid=$FM_LOCAL_LLM_HOLDER
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/72 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "merge-fails-keeps-slot: the merge should fail"
+  assert_equals "task-x1" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" \
+    "merge-fails-keeps-slot: a failed merge must leave the claim file naming the task"
+  kill -0 "$claim_pid" 2>/dev/null || fail "merge-fails-keeps-slot: a failed merge must leave the holder running"
+  kill "$claim_pid" 2>/dev/null || true
+  wait "$claim_pid" 2>/dev/null || true
+  unset FM_LOCAL_LLM_LOCK
+  pass "fm-pr-merge leaves the slot claim standing when the merge fails"
+}
+
+test_merge_leaves_another_tasks_slot_claim_untouched() {
+  local case_dir rc claim_pid
+  case_dir=$(make_case merge-keeps-foreign-slot)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" deadbeefcafefeed0000000000000000deadbeef
+  : > "$case_dir/gh-axi.log"
+  export FM_LOCAL_LLM_LOCK="$case_dir/llm.lock"
+  # The slot is claimed by a different task; task-x1 merges without holding it.
+  fm_local_llm_claim task-other || fail "merge-keeps-foreign-slot: the other task must claim the slot"
+  claim_pid=$FM_LOCAL_LLM_HOLDER
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/73 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "merge-keeps-foreign-slot: the merge should succeed: $(cat "$case_dir/stderr")"
+  assert_equals "task-other" "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" \
+    "merge-keeps-foreign-slot: the merge must leave the other task's claim file"
+  kill -0 "$claim_pid" 2>/dev/null || fail "merge-keeps-foreign-slot: the merge must never kill the other task's holder"
+  kill "$claim_pid" 2>/dev/null || true
+  wait "$claim_pid" 2>/dev/null || true
+  unset FM_LOCAL_LLM_LOCK
+  pass "fm-pr-merge never touches another task's slot claim"
+}
+
 test_squash_summary_uses_title_and_what_changed
 test_squash_summary_reads_crlf_bodies
 test_squash_summary_falls_back_to_repository_default
 test_squash_summary_caller_commit_text_wins
 test_squash_summary_leaves_gitlab_and_forgejo_untouched
 test_squash_summary_ignores_headings_inside_code_fences
+test_merge_success_releases_the_local_model_slot
+test_merge_failure_keeps_the_slot_claim
+test_merge_leaves_another_tasks_slot_claim_untouched

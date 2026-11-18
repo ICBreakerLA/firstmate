@@ -139,11 +139,15 @@ fm_local_llm_server_processing() {
 
 # fm_local_llm_claim <task-id>
 # The spawn's atomic claim of the one local-model slot, taken before anything
-# else exists. On success the lock file names the task and the lock is held by
-# a detached holder that waits on the lock's handoff FIFO; the claim lasts
-# until the task's wrapper has opened that FIFO (fm_local_llm_take_claim) and
-# ended, however it ends. FM_LOCAL_LLM_HOLDER is the holder's pid, which the
-# spawn kills to release a claim no wrapper will take.
+# else exists. On success the lock file names the task on its first line and
+# carries the detached holder's pid and start time on its second, and the
+# lock is held by that holder, which waits on the lock's handoff FIFO; the
+# claim lasts until the task's wrapper has opened that FIFO
+# (fm_local_llm_take_claim) and ended, however it ends. FM_LOCAL_LLM_HOLDER
+# is the holder's pid, which the spawn kills to release a claim no wrapper
+# will take; fm_local_llm_release ends a finished task's claim by that
+# recorded pid only after its start time matches the recorded one, which is
+# why the pair is persisted.
 fm_local_llm_claim() {
   local id=$1 f
   f=$(fm_local_llm_lock_file)
@@ -175,6 +179,20 @@ fm_local_llm_claim() {
   ) </dev/null >/dev/null 2>&1 &
   # shellcheck disable=SC2034 # Read by the sourcing script (fm-spawn.sh).
   FM_LOCAL_LLM_HOLDER=$!
+  # Persist the holder's pid with its start time while this shell still
+  # holds the flock, so fm_local_llm_release can prove, after the spawn is
+  # long gone, that the recorded pid is still the very process recorded -
+  # a pid reused by a fresh process has a different start time. A start
+  # time that cannot be read records an empty identity, which makes every
+  # later release of a live holder refuse and leave the claim in place.
+  holder_start=$(fm_local_llm_proc_start "$FM_LOCAL_LLM_HOLDER") || holder_start=
+  if ! printf '%s %s\n' "$FM_LOCAL_LLM_HOLDER" "$holder_start" >>"$f"; then
+    kill "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
+    rm -f "$f" "$f.handoff"
+    exec 9>&-
+    echo "error: could not prepare the local-model claim at $f" >&2
+    return 1
+  fi
   exec 9>&-
 }
 
@@ -195,6 +213,248 @@ fm_local_llm_take_claim() {
     echo "error: could not take over the local-model claim for $id" >&2
     return 1
   }
+}
+
+# fm_local_llm_proc_start <pid>
+# The start time of process <pid> as one line, the identity a claim records
+# beside the holder's pid so a release can prove that pid is still the very
+# process it recorded. On Linux this is field 22 of /proc/<pid>/stat; the
+# comm field (field 2) may itself hold spaces and parentheses, so the fields
+# past comm are counted after the last ')'. Where /proc is absent, ps names
+# the start time. 1 when <pid> has no readable start time.
+fm_local_llm_proc_start() {
+  local pid=$1 stat
+  case "$pid" in
+  '' | *[!0-9]*) return 1 ;;
+  esac
+  if [ -r "/proc/$pid/stat" ]; then
+    stat=$(head -n 1 "/proc/$pid/stat" 2>/dev/null) || return 1
+    stat=${stat##*) }
+    stat=$(printf '%s' "$stat" | cut -d' ' -f20)
+  else
+    stat=$(ps -o lstart= -p "$pid" 2>/dev/null) || return 1
+    stat=$(printf '%s' "$stat" | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//')
+  fi
+  [ -n "$stat" ] || return 1
+  printf '%s\n' "$stat"
+}
+
+# fm_local_llm_holder_identity <pid> <recorded-start-time>
+# 0 only when <pid>'s current start time is the one the claim recorded:
+# that pid is still the very process the claim named, because a process's
+# start time never changes and a reused pid is a fresh process with a
+# different one. An empty recorded identity and an unreadable current start
+# time both refuse: a kill is never approved on a bare pid.
+fm_local_llm_holder_identity() {
+  local recorded=$2 current
+  [ -n "$recorded" ] || return 1
+  current=$(fm_local_llm_proc_start "$1") || return 1
+  [ "$current" = "$recorded" ]
+}
+
+# fm_local_llm_holder_matches <pid> <lock-file>
+# 0 only when <pid> is provably the detached holder of the claim on
+# <lock-file>: its command line is the holder's `cat <lock-file>.handoff`.
+# Every other verdict - a dead pid, a zombie (whose command line is empty),
+# a live pid whose command line is something else - says the recorded pid
+# is not this claim's killable holder, so a pid reused by an unrelated host
+# process - including one that merely holds the lock file open - can never
+# be killed by a late release. kill -0 alone is deliberately not the test:
+# a zombie passes it, and an open file descriptor is not holder identity.
+fm_local_llm_holder_matches() {
+  local pid=$1 f=$2 cmd
+  case "$pid" in
+  '' | *[!0-9]*) return 1 ;;
+  esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  cmd=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null) || cmd=
+  case "$cmd" in
+  "cat $f.handoff"*) return 0 ;;
+  *) return 1 ;;
+  esac
+}
+
+# fm_local_llm_claim_instance <lock-file> <task-id> <holder-line>
+# 0 only when the lock file names <task-id> and its second line is exactly
+# <holder-line> - the recorded holder pid and start time a release samples
+# at its entry. Every re-check of a release's target runs on this, so a
+# relaunch's claim with a new holder is never the old release's kill,
+# drain, or unlink target.
+# fm_local_llm_holder_gone <pid>
+# 0 once the recorded holder can no longer hold the lease on its descriptor:
+# the process is gone, its state cannot be read, or it is a zombie whose
+# descriptors the kernel has closed. A stopped process is not gone: its
+# queued TERM never runs and its lease descriptor stays open, so it is the
+# one holder a TERM alone cannot end.
+fm_local_llm_holder_gone() {
+  local stat
+  kill -0 "$1" 2>/dev/null || return 0
+  [ -r "/proc/$1/stat" ] || return 0
+  stat=$(head -n 1 "/proc/$1/stat" 2>/dev/null) || return 0
+  stat=${stat##*) }
+  [ "${stat%% *}" = Z ]
+}
+
+fm_local_llm_claim_instance() {
+  [ "$(head -n 1 "$1" 2>/dev/null)" = "$2" ] && [ "$(sed -n 2p "$1" 2>/dev/null)" = "$3" ]
+}
+
+# fm_local_llm_handoff_writer <fifo>
+# 0 only while some live process currently has <fifo> open for writing,
+# which after handoff is exactly the task's running wrapper: a blocking
+# reader-open completes the moment a writer is there and never otherwise,
+# so a short timeout turns "no writer" into a refusal in bounded time.
+# Without the timeout binary the probe cannot be bounded, so it answers
+# "writer present": a release fails closed and leaves the claim alone
+# rather than risk freeing the slot under a live worker.
+fm_local_llm_handoff_writer() {
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "warning: timeout is unavailable, so the local-model handoff cannot be probed; the release refuses" >&2
+    return 0
+  fi
+  # shellcheck disable=SC2016 # $1 arrives as the sh positional on purpose.
+  timeout 1 sh -c 'exec 9<"$1"' probe "$1" >/dev/null 2>&1
+}
+
+# fm_local_llm_drain_handoff <fifo>
+# End a holder that is blocked at the opening of <fifo> (a claim made
+# before holder pids were persisted, so no pid names it): a writer-open
+# meets the blocked open, the holder reads EOF and exits, releasing the
+# flock it inherited. With no reader the open stays unmet and the timeout
+# bounds it; nothing is killed and no lock file is touched. 1 only when
+# the timeout binary is missing and the drain cannot be bounded, in which
+# case a release must refuse rather than unlink a lock whose live
+# pid-less holder cannot be proven ended.
+fm_local_llm_drain_handoff() {
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "warning: timeout is unavailable, so the local-model handoff cannot be drained; the claim was left in place" >&2
+    return 1
+  fi
+  # shellcheck disable=SC2016 # $1 arrives as the sh positional on purpose.
+  timeout 1 sh -c 'exec 9>"$1"' drain "$1" >/dev/null 2>&1 || true
+}
+
+# fm_local_llm_release <task-id>
+# End <task-id>'s claim of the one local-model slot: the detached holder,
+# the lock file, and its handoff FIFO, so the slot is free for the next
+# claim. The release targets one claim instance - the task name and the
+# recorded holder line (pid and start time) the lock file carries when the
+# release begins - and re-verifies that instance before its kill, its
+# drain, and its unlink, and it signals the recorded pid only when that
+# live pid's current start time matches the recorded one: a live pid
+# carrying a different start time is a fresh process that reuses the pid
+# value, it is signaled by nothing, its claim is left in place with a
+# warning naming the pid, and the release returns the not-released result
+# so the caller reports the slot as still held. The live lease is ended
+# first - an identity-verified holder is killed, its TERM escalated to
+# SIGKILL when the holder is stopped and the TERM would never run, a
+# pre-upgrade claim with no persisted pid is ended through the handoff's
+# EOF - which is race-free
+# because that same lease makes the flock refuse for every fresh claim
+# trying to take the slot while it is being ended. The claim is unlinked
+# only under the held flock, after the final checks that it is still the
+# sampled instance and that no worker is on the handoff, so a claim that
+# raced in is never unlinked and no live holder's lock is removed out from
+# under it. 0 - the slot is free of this task's claim - when the lock file
+# is absent, names another task (that claim is left running), names this
+# task with a dead, zombie, or stale pid (nothing is killed, the file is
+# unlinked), names this task with a live pid whose command line is not
+# this claim's holder (nothing is killed, the file is unlinked), names
+# this task with an identity-matched live holder that is ended here, or
+# names this task's persisted-pid-less claim whose holder is ended through
+# the EOF.
+# 1 only when the claim is left in place because it must not be broken:
+# the task's worker is on the handoff at the probe or at the re-probe
+# under the flock, the handoff cannot be probed or drained because the
+# timeout binary is missing, the claim was re-taken with a new holder
+# while the release ran, a live recorded pid does not carry its recorded
+# start time (or its start time cannot be read, or the claim recorded
+# none for it), a live lease outlived the kill or drain, the lock file
+# cannot be opened, or a fresh claim raced in and holds the lock. Safe to
+# call twice.
+fm_local_llm_release() {
+  local id=$1 f line pid start
+  f=$(fm_local_llm_lock_file)
+  [ -e "$f" ] || return 0
+  [ "$(head -n 1 "$f" 2>/dev/null)" = "$id" ] || return 0
+  line=$(sed -n 2p "$f" 2>/dev/null) || line=
+  pid=${line%% *}
+  start=${line#* }
+  [ "$start" = "$line" ] && start=
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && ! fm_local_llm_holder_identity "$pid" "$start"; then
+    echo "warning: task $id's local-model claim records pid $pid with start time ${start:-none}, which that live pid does not carry; the release signaled nothing and left the claim in place" >&2
+    return 1
+  fi
+  if fm_local_llm_handoff_writer "$f.handoff"; then
+    echo "warning: task $id's local-model worker is still running on the handoff; its claim was left in place" >&2
+    return 1
+  fi
+  if ! { exec 8<>"$f"; } 2>/dev/null; then
+    [ "$(head -n 1 "$f" 2>/dev/null)" = "$id" ] || return 0
+    echo "error: could not open the local-model claim lock $f; task $id's release left its claim in place" >&2
+    return 1
+  fi
+  if ! flock -w 2 8; then
+    # A live lease on this claim file blocks this flock, and the same
+    # lease makes every fresh claim's own flock refuse, so no new claim
+    # can start while it is being ended: end the lease first, then take
+    # the flock. A matched holder is killed; a pre-upgrade claim with no
+    # persisted pid is ended through the handoff's EOF, which pairs with
+    # that holder and with nothing else, because the lease blocks every
+    # fresh claim from reaching its holder spawn. The kill escalates a
+    # stopped holder's blocked TERM to SIGKILL, the escalation targeting
+    # only the same pid the identity checks verified. The kill and the
+    # drain target only the claim instance sampled at entry: a relaunch
+    # that installed a new holder in this window made the claim live
+    # again, and this release refuses it.
+    if [ -e "$f" ] && ! fm_local_llm_claim_instance "$f" "$id" "$line"; then
+      exec 8>&-
+      echo "warning: task $id's local-model claim was taken with a new holder during its release; the new claim was left in place" >&2
+      return 1
+    fi
+    if [ -n "$pid" ] && fm_local_llm_holder_matches "$pid" "$f"; then
+      kill "$pid" 2>/dev/null || true
+      for _ in $(seq 1 20); do
+        fm_local_llm_holder_gone "$pid" && break
+        sleep 0.1
+      done
+      fm_local_llm_holder_gone "$pid" || kill -9 "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    elif [ -z "$pid" ] && [ -p "$f.handoff" ]; then
+      if ! fm_local_llm_drain_handoff "$f.handoff"; then
+        exec 8>&-
+        return 1
+      fi
+    fi
+    if ! flock -w 10 8; then
+      exec 8>&-
+      echo "error: the local-model claim lock is held by a live claim; task $id's release left it in place" >&2
+      return 1
+    fi
+  fi
+  # Under this flock a fresh claim cannot write into this file, and a
+  # wrapper's take-over refuses for want of a live lease, so these final
+  # checks prove the claim is still the instance this release sampled:
+  # same task, same recorded holder, and no worker on the handoff. A
+  # claim that raced in - a new holder for this task, a wrapper live on
+  # the handoff - is left standing, and another task's claim is never
+  # unlinked.
+  if [ ! -e "$f" ] || [ "$(head -n 1 "$f" 2>/dev/null)" != "$id" ]; then
+    exec 8>&-
+    return 0
+  fi
+  if [ "$(sed -n 2p "$f" 2>/dev/null)" != "$line" ]; then
+    exec 8>&-
+    echo "warning: task $id's local-model claim was taken with a new holder during its release; the new claim was left in place" >&2
+    return 1
+  fi
+  if fm_local_llm_handoff_writer "$f.handoff"; then
+    exec 8>&-
+    echo "warning: task $id's local-model worker took over the handoff during its release; its claim was left in place" >&2
+    return 1
+  fi
+  rm -f "$f" "$f.handoff"
+  exec 8>&-
 }
 
 # fm_local_llm_env

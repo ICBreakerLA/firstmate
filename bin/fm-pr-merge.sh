@@ -257,6 +257,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# shellcheck source=bin/fm-local-llm-lib.sh
+. "$SCRIPT_DIR/fm-local-llm-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -2031,6 +2033,11 @@ esac
 # Reached only after the forge confirmed the merge landed: set -e exits on a
 # refused or failed merge above, and a queued forge merge exits without an
 # outcome while its existing poll remains armed.
+# The merged task is finished, so its local-model slot claim, if it held
+# one, is released as part of the merge: the next local-model dispatch
+# finds the slot free with no manual cleanup. A release never touches
+# another task's claim, and its failure is a warning, never a merge failure.
+fm_local_llm_release "$ID" || printf 'warning: merged %s, but task %s did not release the local-model slot (see the error above)\n' "$URL" "$ID" >&2
 outcome_rc=0
 fm_merge_outcome_report "$FM_HOME" "$STATE" "$ID" "$URL" self \
   "${FM_PR_MERGE_AUTHORITY:-}" || outcome_rc=$?

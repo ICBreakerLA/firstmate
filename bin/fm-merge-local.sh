@@ -34,6 +34,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
+# shellcheck source=bin/fm-local-llm-lib.sh
+. "$SCRIPT_DIR/fm-local-llm-lib.sh"
 if [ "$#" -ne 1 ] || ! fm_pr_task_id_valid "$1"; then
   echo "error: invalid local merge request" >&2
   exit 2
@@ -200,6 +202,11 @@ MERGE_META_LOCK=
 fm_lock_release "$MERGE_CONTROL_LOCK" || true
 MERGE_CONTROL_LOCK=
 [ "$merge_status" -eq 0 ] || exit "$merge_status"
+# The landed task is finished, so its local-model slot claim, if it held
+# one, is released with the landing: the next local-model dispatch finds the
+# slot free with no manual cleanup. A release never touches another task's
+# claim, and its failure is a warning, never a landing failure.
+fm_local_llm_release "$ID" || echo "warning: task $ID did not release the local-model slot (see the error above)" >&2
 after=$(git -C "$PROJ" rev-parse --short "$DEFAULT")
 fm_lock_release "$MERGE_PROJECT_LOCK" || true
 MERGE_PROJECT_LOCK=

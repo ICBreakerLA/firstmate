@@ -1,0 +1,51 @@
+FM_TEST_BEGIN 2026-11-17T23:19:52Z tests/fm-teardown.test.sh family=pr-forge expected_gate_skip=none
+ok - teardown leaves opencode's busy plugin in the returned pool worktree as on main
+ok - hidden untracked work is refused before return while a clean control returns
+ok - content fallback distinguishes unavailable Git proof, containment, conflicts, and unlanded content
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - orca/reap-refusal: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-orca-reap-refusal/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - orca/tracked: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-orca-tracked/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - orca/untracked: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-orca-untracked/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - orca/commit: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-orca-commit/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - orca/clean: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-orca-clean/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - orca/force: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-orca-force/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - orca/scout: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-orca-scout/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - tmux/reap-refusal: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-tmux-reap-refusal/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - tmux/tracked: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-tmux-tracked/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - tmux/untracked: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-tmux-untracked/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - tmux/commit: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-tmux-commit/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - tmux/clean: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-tmux-clean/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - tmux/force: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-tmux-force/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+tests/fm-teardown.test.sh: line 682: tasks-axi: command not found
+tests/fm-teardown.test.sh: line 684: tasks-axi: command not found
+not ok - tmux/scout: did not reach the reaper: error: task task-x1 cannot be torn down because its backlog data directory is inaccessible: /tmp/fm-teardown-tests.1Or5W1/post-reap-tmux-scout/data (automatic backlog transitions require tasks-axi 0.2.6 or newer with the required update and mv features)
+not ok - 14 post-reap boundary cases failed
+FM_TEST_END 2026-11-17T23:20:09Z tests/fm-teardown.test.sh exit=1 duration_ms=17581 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=17660
+FM_TEST_SUMMARY_FAMILY family=pr-forge count=1 duration_ms=17581 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-teardown.test.sh duration_ms=17581

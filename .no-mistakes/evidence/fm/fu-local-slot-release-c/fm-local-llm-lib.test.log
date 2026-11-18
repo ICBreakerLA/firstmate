@@ -1,0 +1,47 @@
+FM_TEST_BEGIN 2026-11-17T23:13:48Z tests/fm-local-llm-lib.test.sh family=unclassified expected_gate_skip=none
+ok - only the local model id selects the profile
+ok - a server that is not answering refuses with a clear message
+ok - a server that lacks the model refuses
+ok - a server listing the model passes
+ok - the health check uses 5 seconds by default and honours the override
+ok - an invalid health bound is refused before any request
+ok - the environment maps every tier to the local model and carries no host secret
+ok - a claim holds the slot for its task and refuses a second
+ok - the claiming task takes over the claim and its exit releases it
+ok - a wrapper without its own held claim is refused
+ok - the spawn releases an untaken claim by killing its holder
+ok - a release ends the holder, removes the claim, and frees the slot for the next task
+ok - a release leaves another task's running claim untouched
+ok - a release with no claim file is a clean no-op
+ok - calling a release twice succeeds
+ok - a release cleans the leftover file and FIFO of a claim whose holder is gone
+ok - a live pid recorded with its identity is killed only on its holder command line: this one is removed, never killed
+ok - a zombie of the recorded pid is treated as gone: the claim is removed, never held
+ok - a background job started without the descriptor does not keep the claim alive
+warning: task task-a's local-model worker is still running on the handoff; its claim was left in place
+ok - a release refuses while the task's worker is on the handoff and succeeds once that worker has ended
+ok - a release signals nothing for a live pid that is not its recorded holder, and cleans the claim once that pid is gone
+ok - a claim with no persisted pid is ended through the handoff's EOF, never by unlinking the lock under a live holder
+ok - a release racing a same-task handoff takeover refuses, kills nothing, and never unlinks the takeover's claim
+ok - a release whose claim is replaced by a new holder mid-release refuses and leaves the new claim whole
+ok - a release racing a re-claim onto the recorded pid refuses, kills the live holder of nothing, and unlinks nothing
+ok - a live pid that does not carry the recorded start time is signaled by nothing and its claim stays in place
+ok - a live pid with no recorded identity is signaled by nothing and its claim stays claimed
+ok - a stopped holder whose TERM is blocked is escalated to SIGKILL, its lease ends, and the slot releases
+ok - a release that cannot open the lock file names it, refuses, and leaves the claim claimed
+ok - a release whose claim a concurrent release already removed is a silent success leaving a claimable slot
+ok - every check holding keeps the local model silently
+ok - an invalid health bound is named in the fallback notice
+ok - a server slower than the pre-launch health bound keeps its dispatch-chosen model
+ok - the start path applies the dispatch health bound, so a slow server does not fall back
+ok - the checks run in order and each failure is named in one notice line
+ok - a sandbox-less home falls back without running the start command
+ok - a down server is started once and the local model is used
+ok - a start that times out or fails falls back
+ok - ComfyUI holding the GPU blocks both the start and an already-running server
+ok - the GPU probe reads powershell.exe, with no powershell.exe as no conflict and every other probe failure fail-closed as a conflict
+# all fm-local-llm-lib tests passed
+FM_TEST_END 2026-11-17T23:15:14Z tests/fm-local-llm-lib.test.sh exit=0 duration_ms=85557 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=85630
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=85557 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-local-llm-lib.test.sh duration_ms=85557

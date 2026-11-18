@@ -373,7 +373,7 @@ fm_local_llm_drain_handoff() {
 # cannot be opened, or a fresh claim raced in and holds the lock. Safe to
 # call twice.
 fm_local_llm_release() {
-  local id=$1 f line pid start i
+  local id=$1 f line pid start
   f=$(fm_local_llm_lock_file)
   [ -e "$f" ] || return 0
   [ "$(head -n 1 "$f" 2>/dev/null)" = "$id" ] || return 0
@@ -414,7 +414,7 @@ fm_local_llm_release() {
     fi
     if [ -n "$pid" ] && fm_local_llm_holder_matches "$pid" "$f"; then
       kill "$pid" 2>/dev/null || true
-      for i in $(seq 1 20); do
+      for _ in $(seq 1 20); do
         fm_local_llm_holder_gone "$pid" && break
         sleep 0.1
       done

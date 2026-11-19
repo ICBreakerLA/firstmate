@@ -19,6 +19,18 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# ps renders non-ASCII argv in the caller's locale: with none set it substitutes
+# '?' for the UTF-8 bytes the /proc provider returns verbatim, and the route
+# equivalence cases compare the two. Pin a C.UTF-8 locale when the host has one
+# so both routes decode the fixture's UTF-8 argv the same way.
+for fm_utf8_locale in C.utf8 C.UTF-8; do
+  if locale -a 2>/dev/null | grep -qx "$fm_utf8_locale"; then
+    export LC_ALL=$fm_utf8_locale
+    break
+  fi
+done
+unset fm_utf8_locale
+
 TMP_ROOT=$(fm_test_tmproot fm-session-lock-ps-denied)
 
 LIB="$ROOT/bin/fm-session-lock-lib.sh"

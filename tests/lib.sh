@@ -98,6 +98,14 @@ unset TASKS_AXI_FILE TASKS_AXI_BACKEND
 # can find the CLI; a case that verifies detection sets these itself.
 unset REX_SESSION REX_BLOCK
 
+# Clear the Claude Code auto-updater switch. bin/fm-spawn.sh forwards an ambient
+# DISABLE_AUTOUPDATER into every launch line, and a sandbox launcher exports it
+# (bin/fm-sbx-run.sh) so a worker's Claude never self-updates; a suite asserting
+# the exact launch line then sees a stray `export DISABLE_AUTOUPDATER=...` the
+# fixture never asked for. fm_live_gate re-exports it for a live run, and a case
+# about the forwarding sets it itself.
+unset DISABLE_AUTOUPDATER
+
 # Write the tracked default backlog configuration into a fixture home. Never copy
 # "$ROOT/.tasks.toml": an operator's primary checkout keeps a gitignored override
 # there (for example a beads backend at its live backlog), so a copy points the

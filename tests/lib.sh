@@ -119,6 +119,16 @@ TOML
 # shellcheck disable=SC2034
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# One-line opt-in for a test that hands a tracked .ts path to node: call
+# `fm_test_ts_loader || exit 1` after sourcing this library. Sourced on first
+# use so a suite that copies this library into a fixture needs no extra file;
+# tests/ts-loader-helpers.sh owns the mechanism.
+_FM_TEST_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fm_test_ts_loader() {
+  # shellcheck source=tests/ts-loader-helpers.sh
+  . "$_FM_TEST_LIB_DIR/ts-loader-helpers.sh" && fm_test_ts_loader
+}
+
 # --- reporters --------------------------------------------------------------
 
 fail() {

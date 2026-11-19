@@ -25,6 +25,7 @@ fi
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+fm_test_ts_loader || exit 1
 
 unset NO_MISTAKES_GATE
 

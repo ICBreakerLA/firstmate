@@ -51,11 +51,17 @@ wait_gone() { # <pid> <seconds>
   ! alive "$pid"
 }
 
-# Wait up to <seconds> for <pid> to have a live child; 0 when it does.
+# Print <pid>'s --serve child. A supervisor also forks short-lived children
+# (command substitutions, sleeps) that are not the serving child.
+serving_child() { # <pid>
+  pgrep -P "$1" -f -- ' --serve$' 2>/dev/null | head -n 1
+}
+
+# Wait up to <seconds> for <pid> to have a live serving child; 0 when it does.
 wait_child() { # <pid> <seconds>
   local pid=$1 deadline=$(( $(date +%s) + $2 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    [ -n "$(pgrep -P "$pid" 2>/dev/null || true)" ] && return 0
+    [ -n "$(serving_child "$pid")" ] && return 0
     sleep 0.1
   done
   return 1
@@ -140,7 +146,7 @@ WORKER=$(start_worker "$CASE1/remote-root" "$CASE1/account" "$CASE1/remote-jobs"
   fail "could not start the fixture remote job worker"
 track "$WORKER"
 wait_child "$WORKER" 10 || fail "the fixture worker never started its serving child"
-SERVE=$(pgrep -P "$WORKER" | head -n 1)
+SERVE=$(serving_child "$WORKER")
 
 [ "$(pgid_of "$WORKER")" = "$WORKER" ] ||
   fail "the started worker is not its own process group leader, so its tree cannot be signalled as one group"
@@ -172,7 +178,7 @@ alive "$WORKER" || fail "the reaper stopped a worker whose code root still exist
 pass "a worker whose code root still exists is never reaped"
 
 # Prune the code root the way a returned worktree does.
-SURVIVOR=$(pgrep -P "$WORKER" | head -n 1)
+SURVIVOR=$(serving_child "$WORKER")
 rm -rf "$CASE1/remote-root"
 wait_gone "$WORKER" 60 || fail "the worker survived its code root being pruned"
 wait_gone "$SURVIVOR" 60 || fail "a serving child outlived the abandoned supervisor"
@@ -209,7 +215,7 @@ STALE=$!
 set +m
 track "$STALE"
 wait_child "$STALE" 10 || fail "the stand-in worker never started its serving child"
-STALE_SERVE=$(pgrep -P "$STALE" | head -n 1)
+STALE_SERVE=$(serving_child "$STALE")
 
 rm -rf "$CASE2/remote-root"
 

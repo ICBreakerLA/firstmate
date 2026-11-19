@@ -13,6 +13,16 @@ set -u
 # shellcheck source=bin/fm-agent-process-lib.sh
 . "$ROOT/bin/fm-agent-process-lib.sh"
 TMP_ROOT=$(fm_test_tmproot fm-cortex-harness)
+# The dialog fixtures are width-sensitive: under the POSIX locale bash counts
+# bytes, so a box drawn around multibyte glyphs drifts and stops exercising the
+# identity gate. Pin a UTF-8 locale explicitly, selecting it the same way
+# tests/fm-remote-job.test.sh does.
+UTF8_LOCALE=
+for CANDIDATE in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+  if locale -a 2>/dev/null | grep -qx "$CANDIDATE"; then UTF8_LOCALE=$CANDIDATE; break; fi
+done
+[ -n "$UTF8_LOCALE" ] || fail "no UTF-8 locale is available for the composer dialog fixtures"
+export LC_ALL="$UTF8_LOCALE"
 HARNESS="$ROOT/bin/fm-harness.sh"
 unset CLAUDECODE PI_CODING_AGENT GROK_AGENT CURSOR_AGENT CURSOR_INVOKED_AS GEMINI_CLI FM_OMP_HARNESS ATLASSIAN_AGENT_TYPE ROVODEV_CLI HERDR_ENV HERDR_PANE_ID HERDR_BIN_PATH
 

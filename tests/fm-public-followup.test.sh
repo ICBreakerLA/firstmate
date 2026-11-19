@@ -67,6 +67,16 @@ trap 'pf_test_cleanup; exit 143' TERM
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
 
+# The over-long outcome is bounded by codepoint, so its assertion counts
+# characters. Under the POSIX locale bash counts bytes instead and 600
+# codepoints read as 1200. Pin a UTF-8 locale explicitly, selecting it the same
+# way tests/fm-remote-job.test.sh does.
+UTF8_LOCALE=
+for CANDIDATE in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+  if locale -a 2>/dev/null | grep -qx "$CANDIDATE"; then UTF8_LOCALE=$CANDIDATE; break; fi
+done
+[ -n "$UTF8_LOCALE" ] || fail "no UTF-8 locale is available for the codepoint-bounded outcome text"
+
 # A fakebin `curl` standing in for the relay. It logs every call so a test can
 # prove exactly how many public posts happened, and honours FAKE_FOLLOWUP_CODE so
 # a transport failure can be simulated.
@@ -326,7 +336,7 @@ test_ambient_tasks_axi_env_never_reaches_a_real_backlog() {
 # non-ASCII characters, and control characters must never survive into the typed
 # event or the thread.
 test_outcome_text_is_bounded_without_corrupting_characters() {
-  local home event text long
+  local home event text long chars
   home=$(make_home outcome-text)
   seed_commitment "$home" pf-text req-text discord main work-text
 
@@ -352,7 +362,8 @@ test_outcome_text_is_bounded_without_corrupting_characters() {
   event=$(find "$home/state/public-followup/events" -name '*.json' | head -1)
   text=$(jq -r '.public_safe_outcome' "$event") \
     || fail "an over-long outcome must still produce valid JSON"
-  [ "${#text}" -le 600 ] || fail "the outcome text was not bounded, got ${#text} characters"
+  chars=$(printf '%s' "$text" | LC_ALL="$UTF8_LOCALE" wc -m | tr -d '[:space:]')
+  [ "$chars" -le 600 ] || fail "the outcome text was not bounded, got $chars characters"
   case "$text" in
     *[!é]*) fail "codepoint bounding split a multi-byte character" ;;
   esac

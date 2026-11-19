@@ -326,7 +326,7 @@ test_ambient_tasks_axi_env_never_reaches_a_real_backlog() {
 # non-ASCII characters, and control characters must never survive into the typed
 # event or the thread.
 test_outcome_text_is_bounded_without_corrupting_characters() {
-  local home event text long
+  local home event text long chars
   home=$(make_home outcome-text)
   seed_commitment "$home" pf-text req-text discord main work-text
 
@@ -343,7 +343,7 @@ test_outcome_text_is_bounded_without_corrupting_characters() {
 
   # A very long sentence is capped by codepoint, so the JSON stays valid.
   rm -f "$event"
-  long=$(python3 -c 'print("é" * 5000, end="")')
+  long=$(python3 -c 'import sys; sys.stdout.buffer.write("\u00e9".encode("utf-8") * 5000)')
   "$EMIT" --home "$home" --obligation pf-text --relation rel-code \
     --source-home main --work-id work-text --generation 1 --outcome pr-merged \
     --deliverable pr_url=https://github.com/example/repo/pull/4 \
@@ -352,10 +352,12 @@ test_outcome_text_is_bounded_without_corrupting_characters() {
   event=$(find "$home/state/public-followup/events" -name '*.json' | head -1)
   text=$(jq -r '.public_safe_outcome' "$event") \
     || fail "an over-long outcome must still produce valid JSON"
-  [ "${#text}" -le 600 ] || fail "the outcome text was not bounded, got ${#text} characters"
-  case "$text" in
-    *[!é]*) fail "codepoint bounding split a multi-byte character" ;;
-  esac
+  # Count codepoints in jq, never with bash ${#text}: that counts bytes under a
+  # POSIX/C locale and would read 600 x U+00E9 as 1200.
+  chars=$(jq -r '.public_safe_outcome | length' "$event")
+  [ "$chars" -le 600 ] || fail "the outcome text was not bounded, got $chars codepoints"
+  jq -e '.public_safe_outcome | explode | all(. == 233)' "$event" >/dev/null \
+    || fail "codepoint bounding split a multi-byte character"
   pass "outcome text is collapsed to one line, bounded by codepoint, and never corrupts characters"
 }
 

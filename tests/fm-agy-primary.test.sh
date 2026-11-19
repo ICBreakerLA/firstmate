@@ -127,7 +127,7 @@ SH
       cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$$" >> "$FM_HOME/state/arm-ran"
-sleep 1.5
+sleep 2.5
 printf 'watcher: FAILED - cycle ended without an actionable reason\n'
 exit 1
 SH
@@ -298,7 +298,7 @@ run_agy_stop() {
     printf "%s\n" "$$" > "$FM_HOME/state/.lock"
     "$FM_HOME/bin/fm-turnend-guard-agy.sh"
   '
-  printf '%s' "$payload" | run_under_agy FM_HOME="$dir" FM_AGY_PARK_POLL=1 2>/dev/null
+  printf '%s' "$payload" | run_under_agy FM_HOME="$dir" FM_AGY_PARK_POLL="${FM_AGY_PARK_POLL:-1}" 2>/dev/null
 }
 
 test_turnend_guard_agy_actionable_wake_followup() {
@@ -364,7 +364,10 @@ test_turnend_guard_agy_park_timeout_rearms() {
   dir=$(make_primary_dir "$TMP_ROOT/stop-timeout-total")
   : > "$dir/state/task1.meta"
   write_arm_fixture "$dir" slow-failed
-  out=$(FM_AGY_PARK_TIMEOUT=2 run_agy_stop "$dir" "$payload")
+  # The guard spends its budget in poll ticks, not elapsed time. A 1-tick
+  # budget is spent by the first 3s poll, and the arm fails at 2.5s, so only a
+  # guard starved for more than 2.5s before its first poll could relaunch it.
+  out=$(FM_AGY_PARK_POLL=3 FM_AGY_PARK_TIMEOUT=1 run_agy_stop "$dir" "$payload")
   [ "$(wc -l < "$dir/state/arm-ran")" -eq 1 ] \
     || fail "FM_AGY_PARK_TIMEOUT must bound the total park, not grant each arm attempt a fresh budget"
   pass "fm-turnend-guard-agy: park timeout stops the arm and returns continue with [supervision-park]"
@@ -434,18 +437,17 @@ test_turnend_guard_agy_loop_ceiling() {
 }
 
 test_turnend_guard_agy_supersession() {
-  local dir payload first_pid waited first_out
+  local dir payload first_pid deadline first_out
   dir=$(make_primary_dir "$TMP_ROOT/stop-supersede")
   : > "$dir/state/task1.meta"
   write_arm_fixture "$dir" slow
   payload='{"sessionId":"s-1","conversationId":"c-1","executionNum":1,"terminationReason":"NO_TOOL_CALL"}'
   ( run_agy_stop "$dir" "$payload" > "$dir/state/first-out" ) &
   first_pid=$!
-  waited=0
+  deadline=$((SECONDS + 30))
   while [ ! -s "$dir/state/.agy-park-owner" ] || [ ! -e "$dir/state/arm-ran" ]; do
     sleep 0.05
-    waited=$((waited + 1))
-    [ "$waited" -lt 100 ] || fail "first park never wrote state/.agy-park-owner"
+    [ "$SECONDS" -lt "$deadline" ] || fail "first park never wrote state/.agy-park-owner"
   done
   printf 'superseded-owner\n' > "$dir/state/.agy-park-owner"
   wait "$first_pid" 2>/dev/null || true

@@ -441,7 +441,11 @@ run_extension_section_lane() {
 
 # The coordinator stops any section lane, including the aggregate run's, that
 # outlives this bound, so no wait inside a section can usefully run longer.
-EXTENSION_SECTION_LANE_MAX_SECONDS=34
+# It is a hang tripwire, not a speed target: the five aggregate lanes cost
+# about 90s together (the longest alone 55-80s) on an idle four-core sandbox
+# where each node start takes 0.3-0.8s, so any bound near the 11s CI figure
+# fails a healthy run there, and a P4 pass roughly doubles it.
+EXTENSION_SECTION_LANE_MAX_SECONDS=300
 
 run_extension_section_lanes() {
   local section result_file section_rc timeout_seconds deadline deadline_epoch index remaining launched total maximum_sections

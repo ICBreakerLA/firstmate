@@ -17,8 +17,9 @@ set -u
 . "$ROOT/bin/fm-tasks-axi-lib.sh"
 
 BEARINGS="$ROOT/bin/fm-bearings-snapshot.sh"
-TASKS_AXI_BIN=$(command -v tasks-axi || true)
 TMP_ROOT=$(fm_test_tmproot fm-bearings)
+fm_test_provide_tasks_axi "$TMP_ROOT" || exit 1
+TASKS_AXI_BIN=$(command -v tasks-axi || true)
 # Keep disposable homes outside the snapshot's fixture repo boundary even when
 # TMPDIR is inside an isolated source worktree.
 FM_ROOT_OVERRIDE="$TMP_ROOT/fixture-root"

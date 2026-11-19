@@ -20,9 +20,16 @@ trap 'rm -rf "$DEPENDENCY_ROOT"' EXIT
 
 # Own the npm cache rather than trusting an ambient NPM_CONFIG_CACHE: sandboxed
 # workers (bin/fm-sbx-npm-seed.sh, bin/fm-spawn.sh) mount a shared cache
-# read-only for offline `npm ci`, and this test's real registry `npm install`
-# still needs to write cache entries even on a hit.
+# read-only, and this test's `npm install` still needs to write cache entries
+# even on a hit. A mounted cache is copied into the owned one and installed from
+# offline; with no ambient cache directory the install uses the real registry.
+SEED_CACHE=${NPM_CONFIG_CACHE:-}
 export NPM_CONFIG_CACHE="$DEPENDENCY_ROOT/npm-cache"
+NPM_OFFLINE_FLAG=()
+if [ -n "$SEED_CACHE" ] && [ -d "$SEED_CACHE" ]; then
+  cp -a "$SEED_CACHE" "$NPM_CONFIG_CACHE" || { echo "could not copy the seeded npm cache" >&2; exit 1; }
+  NPM_OFFLINE_FLAG=(--offline)
+fi
 
 printf 'Pi production-consumer typechecks: npm %s\n' "$(npm --version)"
 result=0
@@ -74,7 +81,7 @@ JSON
 
 # Pin the directly imported Pi packages together rather than allowing npm's
 # semver ranges to make the older SDK consumer resolve newer sibling types.
-(cd "$TMP_ROOT" && npm install --ignore-scripts --no-audit --no-fund --save-exact \
+(cd "$TMP_ROOT" && npm install ${NPM_OFFLINE_FLAG[@]+"${NPM_OFFLINE_FLAG[@]}"} --ignore-scripts --no-audit --no-fund --save-exact \
   "@earendil-works/pi-coding-agent@$version" \
   "@earendil-works/pi-ai@$version" \
   "@earendil-works/pi-tui@$version" \

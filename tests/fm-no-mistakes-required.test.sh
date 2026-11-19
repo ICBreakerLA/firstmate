@@ -16,9 +16,13 @@ COMPLETED_STEPS='[{"step":"review","status":"completed"},{"step":"test","status"
 fetch_shared_verifier() {
   command -v curl >/dev/null 2>&1 || fail "curl is required to exercise the pinned shared action"
   command -v python3 >/dev/null 2>&1 || fail "python3 is required to exercise the pinned shared action"
+  local path=.github/actions/require-no-mistakes/verify.py
   curl --fail --silent --show-error --location \
-    "https://raw.githubusercontent.com/kunchenguid/no-mistakes/${ACTION_REF}/.github/actions/require-no-mistakes/verify.py" \
-    > "$VERIFY" || fail "could not fetch the pinned shared action verifier"
+    "https://raw.githubusercontent.com/kunchenguid/no-mistakes/${ACTION_REF}/${path}" \
+    > "$VERIFY" 2>/dev/null \
+    || curl --fail --silent --show-error --location -H "Accept: application/vnd.github.raw" \
+      "https://api.github.com/repos/kunchenguid/no-mistakes/contents/${path}?ref=${ACTION_REF}" \
+      > "$VERIFY" || fail "could not fetch the pinned shared action verifier"
   [ -s "$VERIFY" ] || fail "the pinned shared action verifier was empty"
 }
 

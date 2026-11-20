@@ -38,6 +38,10 @@
 #                   entry is a host name, optionally host:PORT, which opens
 #                   only that port for that host).
 #   --npm-cache DIR a read-only npm seed cache (bin/fm-sbx-npm-seed.sh).
+#                   The pinned tasks-axi (bin/sbx-tasks-axi) is installed from it
+#                   offline into every sandbox at start and linked into the
+#                   user's ~/.local/bin (fm_sbx_tasks_axi in bin/fm-sbx-lib.sh);
+#                   no registry rule is added.
 #   --verify app
 #                   the host verification broker (bin/fm-sbx-verify-broker.sh,
 #                   docs/sbx-verify-broker.md): a writable request spool and a
@@ -419,6 +423,11 @@ if [ "$NM" = 1 ]; then
   ALLOW="$FM_SBX_GITHUB_ALLOW${ALLOW:+,$ALLOW}"
 fi
 [ "$NM" != 1 ] || [ "$KIND" != ship ] || fm_sbx_lint_tools "$NAME" "$ROOT"
+if [ -n "$NPM_CACHE" ] && [ -d "$NPM_CACHE" ]; then
+  fm_sbx_tasks_axi "$NAME" "$ROOT" "$NPM_CACHE"
+else
+  echo "notice: no npm seed cache is mounted in $NAME, so it gets no tasks-axi and tasks-axi needing steps will fail; seed one with bin/fm-sbx-npm-seed.sh" >&2
+fi
 # A ship of the Firstmate fork delivers to the fork, so its sandbox starts with
 # the fork-only token in place of the home's own GitHub token, and its clone's
 # origin names the fork rather than any other remote of the project.

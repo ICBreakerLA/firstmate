@@ -54,6 +54,7 @@ fm_test_ts_loader() {
       fi
       # A concurrent test may have installed the same lockfile first; the
       # symlink is atomic, so whichever loses discards its copy.
+      if [ -L "$final" ] && [ ! -e "$final" ]; then rm -f "$final"; fi
       ln -s "$tmp" "$final" 2>/dev/null || rm -rf "$tmp"
       if [ ! -f "$final/node_modules/typescript/package.json" ]; then
         echo "not ok - ts loader: no TypeScript under $final" >&2

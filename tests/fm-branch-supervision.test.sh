@@ -12,6 +12,9 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-branch-supervision)
+# The away-branch spawn gate reads the backlog row through the real tasks-axi;
+# provide the pinned one.
+fm_test_provide_tasks_axi "$TMP_ROOT" || exit 1
 fm_git_identity fmtest fmtest@example.invalid
 
 # --- byte-stable branch prompt ------------------------------------------------

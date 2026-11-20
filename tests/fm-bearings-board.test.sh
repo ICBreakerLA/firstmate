@@ -12,6 +12,9 @@ BOARD="$ROOT/bin/fm-bearings-board.sh"
 TMP_ROOT=$(fm_test_tmproot fm-bearings-board)
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
+# The order-proof captain hold goes through fm-captain-hold, which drives the
+# real tasks-axi; provide the pinned one.
+fm_test_provide_tasks_axi "$TMP_ROOT" || exit 1
 
 # A lavish-axi stub that reproduces the shapes verified against the real
 # lavish-axi 0.1.61, because the build's liveness verdict is read from what the

@@ -16,6 +16,8 @@ fm_git_identity fmtest fmtest@example.invalid
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
 BRIDGE="$ROOT/bin/fm-sbx-bridge.sh"
 TMP_ROOT=$(fm_test_tmproot fm-teardown-sandbox)
+# Teardown consults the captain-call gate, which needs a compatible tasks-axi.
+fm_test_provide_tasks_axi "$TMP_ROOT" || exit 1
 SBXNAME=fm-sbx-aaaaaaaa-task-x1-0000
 
 # make_case <name> [kind] [sandbox-name]: a project with a pushed task branch, a

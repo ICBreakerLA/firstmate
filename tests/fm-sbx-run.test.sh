@@ -100,6 +100,8 @@ exec)
   *"gh --version"*) [ ! -f "$W/gh.fail" ] || exit 1 ;;
   *"shellcheck --version"*) cat "$W/vm.shellcheck" 2>/dev/null; exit 0 ;;
   *"actionlint -version"*) cat "$W/vm.actionlint" 2>/dev/null; exit 0 ;;
+  *"tasks-axi --version"*) cat "$W/vm.tasksaxi" 2>/dev/null; exit 0 ;;
+  *"npm ci --offline"*) [ ! -f "$W/tasksaxi.fail" ] || exit 1 ;;
   esac
   ;;
 run)
@@ -489,6 +491,37 @@ test_nm_without_a_host_binary_refuses_and_still_removes() {
   assert_not_contains "$(log)" "run --name" "claude never starts"
   [ ! -s "$LIVE" ] || fail "the half-built sandbox must be removed: $(cat "$LIVE")"
   pass "a missing host no-mistakes refuses and leaves no sandbox"
+}
+
+test_tasks_axi_is_installed_offline_from_the_mounted_cache() {
+  local out pin
+  pin=$(sed -n 's/^[[:space:]]*"tasks-axi":[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/bin/sbx-tasks-axi/package.json" | head -1)
+  [ -n "$pin" ] || fail "the fixture manifest must pin tasks-axi"
+  new_world taxi
+  mkdir -p "$W/cache"
+  printf '%s\n' "$pin" >"$W/vm.tasksaxi"
+  out=$(wrap --root "$ROOT" --kind scout --npm-cache "$W/cache" -- claude 2>&1) || fail "run failed: $out"
+  assert_contains "$(log)" "cp $ROOT/bin/sbx-tasks-axi/package-lock.json $NAME:/tmp/fm-tasks-axi/package-lock.json" "the fixture lockfile is copied in"
+  assert_contains "$(log)" "npm ci --offline --ignore-scripts" "the install is offline and runs no scripts"
+  assert_contains "$(log)" "$W/cache" "the mounted cache is the source"
+  assert_not_contains "$(log)" "npm i " "no registry install"
+  assert_not_contains "$(log)" "policy allow network --sandbox $NAME registry" "the registry is never allowed"
+  assert_not_contains "$out" "tasks-axi" "nothing is reported when tasks-axi is in place"
+  new_world taxi-nocache
+  out=$(wrap --root "$ROOT" --kind scout -- claude 2>&1) || fail "a run without a cache must not stop: $out"
+  assert_contains "$out" "no npm seed cache is mounted" "an absent cache is reported"
+  assert_not_contains "$(log)" "npm ci" "nothing is installed without a cache"
+  new_world taxi-fail
+  mkdir -p "$W/cache"
+  : >"$W/tasksaxi.fail"
+  out=$(wrap --root "$ROOT" --kind scout --npm-cache "$W/cache" -- claude 2>&1) || fail "a failed install must not stop the worker: $out"
+  assert_contains "$out" "could not install tasks-axi $pin offline" "a failed offline install is reported"
+  new_world taxi-wrong
+  mkdir -p "$W/cache"
+  printf '9.9.9\n' >"$W/vm.tasksaxi"
+  out=$(wrap --root "$ROOT" --kind scout --npm-cache "$W/cache" -- claude 2>&1) || fail "a wrong version must not stop the worker: $out"
+  assert_contains "$out" "reports '9.9.9' but $pin is pinned" "a version mismatch is reported"
+  pass "tasks-axi is installed offline from the mounted seed cache, and a gap is reported rather than hidden"
 }
 
 test_npm_cache_is_mounted_read_only_with_offline_settings() {
@@ -1173,6 +1206,7 @@ test_nm_version_mismatch_and_pin_refuse
 test_nm_init_failure_refuses_and_removes
 test_nm_without_a_host_binary_refuses_and_still_removes
 test_npm_cache_is_mounted_read_only_with_offline_settings
+test_tasks_axi_is_installed_offline_from_the_mounted_cache
 test_user_claude_agents_are_copied_only_when_the_folder_exists
 test_hooks_path_mount_requires_the_homes_own_state
 test_links_resolve_the_brief_paths_inside_the_vm

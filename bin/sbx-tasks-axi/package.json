@@ -1,0 +1,9 @@
+{
+  "name": "fm-sbx-tasks-axi",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pins the tasks-axi the sandbox launcher installs offline from the seeded npm cache (bin/fm-sbx-lib.sh fm_sbx_tasks_axi).",
+  "dependencies": {
+    "tasks-axi": "0.2.6"
+  }
+}

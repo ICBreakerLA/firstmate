@@ -371,7 +371,15 @@ test_attended_close_that_turns_main_only_before_its_turn_passes_to_main() {
   ' "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$home/pi-offer-state" "signal: $home/state/demo.status")
   [ "$pi_offer" = true ] || fail "the host-only transition veto changed Pi's existing offer rule"
   assert_re '	pass-through	attended	main-only	signal:' "$home/state/.supervision-host.log" "the ledger must record why the close went to main"
-  watcher_live "$home" || fail "the pass-through left no successor watcher"
+  # The fixture's own decision status reaches the successor while it runs, and
+  # a watcher cycle closes on any actionable wake, so by now it may have ended
+  # by delivering that decision. What a pass-through must never do is retire
+  # it: the host records the successor it left, and a cycle that is gone ended
+  # on a signal (this one and the first arm's), not on a stop.
+  [ -s "$home/state/.supervision-host-left" ] || fail "the pass-through did not record the successor it left for main"
+  watcher_live "$home" \
+    || [ "$(grep -c 'reason=actionable-signal' "$home/state/.watch-cycle-exits.log" 2>/dev/null)" -ge 2 ] \
+    || fail "the pass-through left no successor watcher"
   pass "host: an attended close whose task turns main-only before its turn still reaches main unchanged"
 }
 
@@ -916,6 +924,33 @@ test_incomplete_engine_result_hands_the_wake_to_main() {
   pass "host: an engine turn whose result is incomplete hands its wake to main"
 }
 
+# TERM can land inside the host's own lock acquire, between the wake queue's
+# steal mutex being created under the host's pid and the frame that releases
+# it. The grant release below runs as a child with another pid, so it can never
+# adopt that mutex: it must be dropped by the host's own exit path.
+test_term_with_its_own_queue_steal_mutex_held_still_stops_the_host() {
+  local home pid owner
+  home=$(make_home term-own-steal attended)
+  start_host "$home"
+  wait_until 150 watcher_live "$home" || fail "own steal mutex: the host never started a watcher cycle"
+  append_status "$home" 'step one'
+  wait_until 250 handled_at_least "$home" 1 \
+    || fail "own steal mutex: the wake was not handled on the engine: $(cat "$home/state/.supervision-host.log")"
+  pid=$(awk -F '\t' '$1 == "host" { print $2; exit }' "$home/state/.supervision-host")
+  [ -n "$pid" ] || fail "fixture: no host record"
+  owner="$home/state/.wake-queue.lock.steal.owner.interrupted"
+  { mkdir "$owner" && printf '%s\n' "$pid" > "$owner/pid" \
+      && ln -s "$owner" "$home/state/.wake-queue.lock.steal"; } \
+    || fail "fixture: could not plant the host's steal mutex"
+  kill -TERM "$pid"
+  wait_until_deadline 60 host_exited "$home" \
+    || fail "own steal mutex: the host did not stop on TERM while holding its own queue steal mutex"
+  [ ! -e "$home/state/.wake-queue.lock.steal" ] && [ ! -L "$home/state/.wake-queue.lock.steal" ] \
+    || fail "own steal mutex: the stopped host left its steal mutex behind"
+  stop_home_processes "$home"
+  pass "host: a host stopped while holding its own queue steal mutex drops it and exits"
+}
+
 fm_test_run \
   test_park_exit_probe_uses_half_second_child_sleeps \
   test_attended_routine_wake_is_handled_on_the_engine_and_stays_off_main \
@@ -929,6 +964,7 @@ fm_test_run \
   test_main_only_pass_through_leaves_the_successor_watcher_running \
   test_attended_close_with_unidentified_main_session_passes_to_main \
   test_close_accepted_away_that_turns_attended_passes_to_main \
+  test_term_with_its_own_queue_steal_mutex_held_still_stops_the_host \
   test_attended_close_that_turns_main_only_before_its_turn_passes_to_main \
   test_primary_without_a_verified_mirror_runs_away_only \
   test_attended_wake_carries_the_dialog_mirror \

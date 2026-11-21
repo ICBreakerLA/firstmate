@@ -21,6 +21,12 @@
 # implies, so fixture refs, commits, and worktree registrations would land in
 # the caller's repository instead. A suite that wants one sets it after sourcing.
 #
+# An inherited author/committer identity (a sandbox launcher exporting
+# GIT_AUTHOR_* and GIT_COMMITTER_*) is cleared for the same reason: those
+# variables outrank repository-local user.name/user.email, so a fixture that
+# configures its own identity would still commit under the caller's. A suite
+# that wants one sets it after sourcing; `fm_git_identity` in tests/lib.sh does.
+#
 # tests/lib.sh and tests/herdr-test-safety.sh source this for every suite that
 # uses them, bin/fm-test-run.sh sources it per suite in run_script_bounded, and a
 # suite reaching none of those sources it directly so a hand-run invocation is
@@ -30,3 +36,5 @@
 
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE
+unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE

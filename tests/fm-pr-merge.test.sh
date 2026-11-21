@@ -42,6 +42,50 @@ FJ_STALE_HEAD=dddddddddddddddddddddddddddddddddddddddd
 JQ_BIN=$(command -v jq) || fail "these tests read glab's JSON with the real jq, which was not found"
 REAL_MV=$(command -v mv) || fail "these tests need mv to simulate a failed poll publish"
 
+# A tasks-axi boundary for the merge's captain-hold check, which asks whether the
+# task is still held before it lands anything. It answers the compatibility
+# probes and reports every row absent, except ids listed in held-rows beside it,
+# which it reports as captain-held; a backlog file that cannot be read fails the
+# read, as the real CLI does. The real add and hold paths belong to
+# tests/fm-captain-hold-lifecycle.test.sh, so the merge's verdict is proved
+# without a host-installed CLI.
+write_tasks_axi_boundary() {  # <fakebin>
+  cat > "$1/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --version) printf '%s\n' '0.2.6' ;;
+  update)
+    [ "${2:-}" = --help ] || exit 1
+    printf '%s\n' '--archive-body'
+    ;;
+  mv)
+    [ "${2:-}" = --help ] || exit 1
+    printf '%s\n' 'usage: tasks-axi mv [<id>...]'
+    ;;
+  show)
+    id=${2:-}
+    [ "$#" -lt 2 ] || shift 2
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --file ] && [ -e "${2:-}" ] && [ ! -r "$2" ]; then
+        printf 'error: cannot read %s: permission denied\n' "$2" >&2
+        exit 1
+      fi
+      shift
+    done
+    if grep -qxF -- "$id" "$(dirname "$0")/held-rows" 2>/dev/null; then
+      printf '%s\n' 'task:' "  id: $id" '  state: queued' '  held: yes' \
+        '  blocked: no' '  hold_kind: captain' '  body: ""'
+      exit 0
+    fi
+    printf 'error: no task %s in this backlog\ncode: NOT_FOUND\n' "$id" >&2
+    exit 1
+    ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$1/tasks-axi"
+}
+
 # Build a fresh sandbox for one test case: a state dir with task metadata and a
 # directory for its forge-command mocks. Echoes the case directory.
 make_case() {
@@ -49,6 +93,7 @@ make_case() {
   case_dir="$TMP_ROOT/$name"
   fakebin="$case_dir/fakebin"
   mkdir -p "$case_dir/state" "$case_dir/home/data" "$case_dir/home/config" "$fakebin"
+  write_tasks_axi_boundary "$fakebin"
   fm_git_init_commit "$case_dir/wt"
   git -C "$case_dir/wt" update-ref refs/remotes/origin/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
   fm_test_tasks_toml "$case_dir/home/.tasks.toml"
@@ -3057,16 +3102,8 @@ test_expected_head_keeps_existing_refusals() {
   case_dir=$(make_case expected-head-hold)
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" "$head"
-  # Queued is enough. The hold check reads the captain-hold mark, and
-  # fm-tasks-axi.sh refuses add --start without a dispatch record.
-  FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
-    "$ROOT/bin/fm-tasks-axi.sh" add task-x1 "Held merge" --kind ship --repo example \
-    > "$case_dir/hold-add.out" 2> "$case_dir/hold-add.err" \
-    || fail "expected-head-hold: could not add the task: $(cat "$case_dir/hold-add.err")"
-  FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
-    "$ROOT/bin/fm-captain-hold.sh" hold task-x1 --reason "captain merge approval pending" \
-    > "$case_dir/hold.out" 2> "$case_dir/hold.err" \
-    || fail "expected-head-hold: could not hold the task: $(cat "$case_dir/hold.err")"
+  # The hold check reads the captain-hold mark, so the boundary reports task-x1 held.
+  printf '%s\n' task-x1 > "$case_dir/fakebin/held-rows"
   set +e
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/214 \
     --expected-head "$head" \

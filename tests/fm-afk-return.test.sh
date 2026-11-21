@@ -18,6 +18,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-afk-return-tests)
+# The brief and held-set cases drive the real tasks-axi; provide the pinned one.
+fm_test_provide_tasks_axi "$TMP_ROOT" || exit 1
 
 install_runner() {  # <case-dir>
   local dir=$1

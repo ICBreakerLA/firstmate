@@ -393,6 +393,52 @@ _fm_sbx_tool_version() {
   esac
 }
 
+# fm_sbx_tasks_axi <name> <code-root> <npm-cache>
+# Give a sandbox the tasks-axi the backlog tooling and its tests need: install
+# the version pinned by <code-root>/bin/sbx-tasks-axi/package-lock.json offline
+# from the read-only npm seed cache that is mounted at <npm-cache>, and link it
+# into the VM user's ~/.local/bin.
+# The read-only cache is copied to a scratch directory first because npm writes
+# into its cache, and `npm ci --offline --ignore-scripts` runs inside a
+# directory holding only the fixture manifests; the sandbox registry rule is
+# never touched.
+# A cache that lacks the package leaves tasks-axi out with a notice, as with the
+# lint tools, and whatever needs it then fails naming it.
+fm_sbx_tasks_axi() {
+  local name=$1 root=$2 cache=$3 fixture pin got
+  fixture="$root/bin/sbx-tasks-axi"
+  pin=$(sed -n 's/^[[:space:]]*"tasks-axi":[[:space:]]*"\([^"]*\)".*/\1/p' "$fixture/package.json" 2>/dev/null | head -1)
+  if [ -z "$pin" ] || [ ! -f "$fixture/package-lock.json" ]; then
+    echo "notice: could not read the pinned tasks-axi from $fixture, so $name gets no tasks-axi" >&2
+    return 0
+  fi
+  # shellcheck disable=SC2016 # the script runs in the VM, where $1 and $HOME expand
+  if sbx exec "$name" mkdir -p /tmp/fm-tasks-axi >/dev/null 2>&1 &&
+    sbx cp "$fixture/package.json" "$name:/tmp/fm-tasks-axi/package.json" >/dev/null 2>&1 &&
+    sbx cp "$fixture/package-lock.json" "$name:/tmp/fm-tasks-axi/package-lock.json" >/dev/null 2>&1 &&
+    sbx exec "$name" sh -c '
+      set -eu
+      cache=$(mktemp -d)
+      trap "rm -rf \"$cache\"" EXIT
+      dst=$HOME/.local/share/fm-tasks-axi
+      rm -rf "$dst"
+      mkdir -p "$dst" "$HOME/.local/bin"
+      cp /tmp/fm-tasks-axi/package.json /tmp/fm-tasks-axi/package-lock.json "$dst/"
+      cp -a "$1/." "$cache/"
+      chmod -R u+w "$cache"
+      cd "$dst"
+      NPM_CONFIG_CACHE=$cache NPM_CONFIG_LOGS_DIR=$cache/_logs NPM_CONFIG_PREFER_OFFLINE=true \
+        npm ci --offline --ignore-scripts --no-audit --no-fund >/dev/null
+      ln -sfn "$dst/node_modules/.bin/tasks-axi" "$HOME/.local/bin/tasks-axi"
+    ' sh "$cache" >/dev/null 2>&1; then
+    got=$(sbx exec "$name" tasks-axi --version 2>/dev/null | head -1) || got=
+    [ "$got" = "$pin" ] && return 0
+    echo "notice: tasks-axi inside $name reports '${got:-nothing}' but $pin is pinned, so tasks-axi needing steps will fail" >&2
+    return 0
+  fi
+  echo "notice: could not install tasks-axi $pin offline from $cache into $name, so tasks-axi needing steps will fail; seed it with bin/fm-sbx-npm-seed.sh" >&2
+}
+
 # fm_sbx_exists <name>: true when sbx lists the sandbox.
 fm_sbx_exists() {
   sbx ls -q 2>/dev/null | grep -Fxq -- "$1"

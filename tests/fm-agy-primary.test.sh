@@ -14,7 +14,7 @@ fm_git_identity fmtest fmtest@example.invalid
 
 FAKEBIN=$(fm_fakebin "$TMP_ROOT")
 CC_BIN=$(command -v cc 2>/dev/null || command -v gcc 2>/dev/null || true)
-[ -n "$CC_BIN" ] || fail "a C compiler is required to build the fake agy process"
+[ -n "$CC_BIN" ] || { echo "skip: a C compiler (cc or gcc) is required to build the fake agy process"; exit 0; }
 cat > "$TMP_ROOT/fake-agy.c" <<'C'
 #include <errno.h>
 #include <string.h>

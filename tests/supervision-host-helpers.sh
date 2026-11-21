@@ -20,6 +20,10 @@ FM_SUPERVISION_HOST_HELPERS_SOURCED=1
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 
+# DISPATCH is a .mjs that imports the .ts branch-dispatch module, so every suite
+# sourcing these fixtures needs the .ts loader on nodes without type stripping.
+fm_test_ts_loader || exit 1
+
 HOST="$ROOT/bin/fm-supervision-host.sh"
 # shellcheck disable=SC2034 # read by the sourcing fm-supervision-host*.test.sh files
 REPORT="$ROOT/bin/fm-branch-report.sh"

@@ -844,6 +844,8 @@ test_target_exists_rejects_orca_error_json() {
 
 test_scout_teardown_removes_orca_worktree_via_helper() {
   local proj wt data state config id out rc neutral
+  # Teardown consults the captain-call gate, which needs a compatible tasks-axi.
+  fm_test_provide_tasks_axi "$TMP_ROOT" || exit 1
   id="orcateardownz3"
   proj="$TMP_ROOT/teardown-project"
   wt="$TMP_ROOT/teardown-wt"

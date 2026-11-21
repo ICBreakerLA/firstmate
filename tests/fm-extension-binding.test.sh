@@ -441,7 +441,13 @@ run_extension_section_lane() {
 
 # The coordinator stops any section lane, including the aggregate run's, that
 # outlives this bound, so no wait inside a section can usefully run longer.
-EXTENSION_SECTION_LANE_MAX_SECONDS=34
+# A loaded host stretches each section lane's chain of short fixture processes:
+# under four-way parallel load the orphan-recovery section reached its runner
+# wait with only ~5s left of the old 34s bound, and the recovery was then
+# failed by a 2s shrink. On this four-core host's ambient load the same class
+# of lane needs ~90-100s, and a 60s bound killed a lane that needed 64-67s;
+# 120s leaves the runner wait a window that matches its work.
+EXTENSION_SECTION_LANE_MAX_SECONDS=120
 
 run_extension_section_lanes() {
   local section result_file section_rc timeout_seconds deadline deadline_epoch index remaining launched total maximum_sections
@@ -630,7 +636,9 @@ if [ "$extension_segment" = all ] || [ "$extension_segment" = coordinator ]; the
     coordinator-pass; then
     fail "the section coordinator accepted more than its bounded allowlist"
   fi
-  if FM_EXTENSION_BINDING_COORDINATOR_TIMEOUT_SECONDS=2 \
+  # A 2s deadline is shorter than a loaded host needs to even start the stalled
+  # child; 15s still proves the coordinator stops it at its deadline.
+  if FM_EXTENSION_BINDING_COORDINATOR_TIMEOUT_SECONDS=15 \
     FM_EXTENSION_BINDING_COORDINATOR_READY="$coordinator_ready" \
     FM_EXTENSION_BINDING_COORDINATOR_PID="$coordinator_pid" \
     run_extension_section_lanes "coordinator-stubborn"; then
@@ -1481,7 +1489,10 @@ done
 [ -L "$FM_PROCEVENT_CLAIM_ROOT/order-source.lock" ] || fail "neither lock-order contender took the source lock"
 sleep 0.2
 touch "$order_release"
-order_deadline=$((SECONDS + 12))
+# Both contenders are short host and fixture processes; a loaded host (the
+# gate lane shares four cores) stretches them well past a 12s window without
+# any deadlock. 30s still bounds a real deadlock while matching the work.
+order_deadline=$((SECONDS + 30))
 while kill -0 "$order_register_pid" 2>/dev/null || kill -0 "$order_reconcile_pid" 2>/dev/null; do
   if [ "$SECONDS" -ge "$order_deadline" ]; then
     # Killing registration lets lock recovery free reconcile for cleanup.
@@ -2427,7 +2438,7 @@ printf 'fixture\n' > "$REMOTE_ROOT/AGENTS.md"
 for remote_file in \
   fm-extension.mjs fm-extension-deadline.mjs fm-extension-launch-barrier.mjs fm-extension.sh fm-procevent.sh fm-procevent-lib.sh fm-procevent-extension-capture.pl fm-procevent-lavish.sh \
   fm-pr-lib.sh fm-wake-lib.sh fm-path-lib.sh fm-remote-entrypoint.sh fm-remote-job-lib.sh \
-  fm-remote-job-worker.sh; do
+  fm-remote-job-worker.sh fm-task-inbox-lib.sh fm-backend.sh; do
   cp "$ROOT/bin/$remote_file" "$REMOTE_ROOT/bin/$remote_file"
 done
 chmod +x "$REMOTE_ROOT/bin"/fm-*.sh "$REMOTE_ROOT/bin/fm-extension.mjs" "$REMOTE_ROOT/bin/fm-extension-launch-barrier.mjs"

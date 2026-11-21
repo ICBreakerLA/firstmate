@@ -10,6 +10,7 @@ set -u
 
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
+fm_test_ts_loader || exit 1
 
 TMP_ROOT=$(fm_test_tmproot fm-calm-omp-extension)
 export NODE_NO_WARNINGS=1

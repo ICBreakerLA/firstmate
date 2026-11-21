@@ -98,6 +98,14 @@ unset TASKS_AXI_FILE TASKS_AXI_BACKEND
 # can find the CLI; a case that verifies detection sets these itself.
 unset REX_SESSION REX_BLOCK
 
+# Clear the Claude Code auto-updater switch. bin/fm-spawn.sh forwards an ambient
+# DISABLE_AUTOUPDATER into every launch line, and a sandbox launcher exports it
+# (bin/fm-sbx-run.sh) so a worker's Claude never self-updates; a suite asserting
+# the exact launch line then sees a stray `export DISABLE_AUTOUPDATER=...` the
+# fixture never asked for. fm_live_gate re-exports it for a live run, and a case
+# about the forwarding sets it itself.
+unset DISABLE_AUTOUPDATER
+
 # Write the tracked default backlog configuration into a fixture home. Never copy
 # "$ROOT/.tasks.toml": an operator's primary checkout keeps a gitignored override
 # there (for example a beads backend at its live backlog), so a copy points the
@@ -118,6 +126,16 @@ TOML
 # test files, not by this library, so it reads as "unused" here.
 # shellcheck disable=SC2034
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# One-line opt-in for a test that hands a tracked .ts path to node: call
+# `fm_test_ts_loader || exit 1` after sourcing this library. Sourced on first
+# use so a suite that copies this library into a fixture needs no extra file;
+# tests/ts-loader-helpers.sh owns the mechanism.
+_FM_TEST_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fm_test_ts_loader() {
+  # shellcheck source=tests/ts-loader-helpers.sh
+  . "$_FM_TEST_LIB_DIR/ts-loader-helpers.sh" && fm_test_ts_loader
+}
 
 # --- reporters --------------------------------------------------------------
 
@@ -457,6 +475,52 @@ fm_test_tmproot() {
     return 1
   fi
   printf '%s\n' "$root"
+}
+
+# fm_test_provide_tasks_axi <parent-dir>: give the calling script its own real
+# tasks-axi, the pin in bin/sbx-tasks-axi (package.json + package-lock.json),
+# installed with `npm ci --offline --ignore-scripts` from a writable copy of the
+# mounted NPM_CONFIG_CACHE (the same recipe as fm_sbx_tasks_axi; with no cache
+# mounted the install uses the real registry, as tests/fm-pi-primary-types.test.sh
+# does), then prepends its node_modules/.bin to PATH. It never reads an ambient
+# tasks-axi and never skips: a failed install or a version other than the pin
+# returns 1 with a "not ok" line, and the caller exits. The install is exported
+# as FM_TEST_TASKS_AXI_BIN so child test runs reuse it instead of reinstalling.
+fm_test_provide_tasks_axi() {
+  local parent=${1:?parent dir} pin seed dst bindir log
+  local -a offline=()
+  pin=$(sed -n 's/.*"tasks-axi": *"\([^"]*\)".*/\1/p' "$ROOT/bin/sbx-tasks-axi/package.json" | head -n 1)
+  [ -n "$pin" ] || { echo "not ok - tasks-axi pin not found in bin/sbx-tasks-axi/package.json"; return 1; }
+  if [ -n "${FM_TEST_TASKS_AXI_BIN:-}" ] && [ -x "$FM_TEST_TASKS_AXI_BIN/tasks-axi" ]; then
+    PATH="$FM_TEST_TASKS_AXI_BIN:$PATH"; export PATH
+    return 0
+  fi
+  command -v npm >/dev/null 2>&1 || { echo "not ok - npm is required to install the pinned tasks-axi $pin"; return 1; }
+  dst=$(mktemp -d "${parent%/}/tasks-axi.XXXXXX") || { echo "not ok - could not create the tasks-axi install dir"; return 1; }
+  log="$dst/install.log"
+  seed=${NPM_CONFIG_CACHE:-}
+  mkdir -p "$dst/pkg" "$dst/logs"
+  cp "$ROOT/bin/sbx-tasks-axi/package.json" "$ROOT/bin/sbx-tasks-axi/package-lock.json" "$dst/pkg/" ||
+    { echo "not ok - could not copy the tasks-axi fixture"; return 1; }
+  if [ -n "$seed" ] && [ -d "$seed" ]; then
+    if ! cp -a "$seed" "$dst/npm-cache" || ! chmod -R u+w "$dst/npm-cache"; then
+      echo "not ok - could not copy the seeded npm cache"
+      return 1
+    fi
+    offline=(--offline)
+  else
+    mkdir -p "$dst/npm-cache"
+  fi
+  if ! (cd "$dst/pkg" && NPM_CONFIG_CACHE="$dst/npm-cache" NPM_CONFIG_LOGS_DIR="$dst/logs" \
+    npm ci ${offline[@]+"${offline[@]}"} --ignore-scripts --no-audit --no-fund) >"$log" 2>&1; then
+    echo "not ok - could not install tasks-axi $pin from the npm cache: $(tail -n 5 "$log" | tr '\n' ' ')"
+    return 1
+  fi
+  bindir="$dst/pkg/node_modules/.bin"
+  [ "$("$bindir/tasks-axi" --version 2>/dev/null)" = "$pin" ] ||
+    { echo "not ok - the installed tasks-axi does not report the pinned $pin"; return 1; }
+  FM_TEST_TASKS_AXI_BIN=$bindir; export FM_TEST_TASKS_AXI_BIN
+  PATH="$bindir:$PATH"; export PATH
 }
 
 trap fm_test_cleanup EXIT

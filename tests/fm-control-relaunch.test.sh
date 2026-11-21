@@ -2962,6 +2962,10 @@ herdr_case_or_skip() {  # <name> <id> [session] [surviving-pane]
 
 test_herdr_relaunch_resumes_only_the_registered_pi_session() {
   local dir out rc=0 command registered
+  command -v pi >/dev/null 2>&1 || {
+    echo "skip - Herdr Pi relaunch needs the pi executable on PATH"
+    return 0
+  }
   for registered in pi claude; do
     herdr_case_or_skip "resume-$registered" "resume-$registered" || {
       echo "skip - herdr relaunch needs jq (the herdr adapter parses JSON with it)"

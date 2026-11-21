@@ -12,6 +12,7 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+fm_test_ts_loader || exit 1
 
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-supervision-lib.sh"

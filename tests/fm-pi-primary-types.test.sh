@@ -20,9 +20,16 @@ trap 'rm -rf "$DEPENDENCY_ROOT"' EXIT
 
 # Own the npm cache rather than trusting an ambient NPM_CONFIG_CACHE: sandboxed
 # workers (bin/fm-sbx-npm-seed.sh, bin/fm-spawn.sh) mount a shared cache
-# read-only for offline `npm ci`, and this test's real registry `npm install`
-# still needs to write cache entries even on a hit.
+# read-only, and this test's `npm install` still needs to write cache entries
+# even on a hit. A mounted cache is copied into the owned one and installed from
+# offline; with no ambient cache directory the install uses the real registry.
+SEED_CACHE=${NPM_CONFIG_CACHE:-}
 export NPM_CONFIG_CACHE="$DEPENDENCY_ROOT/npm-cache"
+NPM_OFFLINE_FLAG=()
+if [ -n "$SEED_CACHE" ] && [ -d "$SEED_CACHE" ]; then
+  cp -a "$SEED_CACHE" "$NPM_CONFIG_CACHE" || { echo "could not copy the seeded npm cache" >&2; exit 1; }
+  NPM_OFFLINE_FLAG=(--offline)
+fi
 
 printf 'Pi production-consumer typechecks: npm %s\n' "$(npm --version)"
 result=0
@@ -74,7 +81,7 @@ JSON
 
 # Pin the directly imported Pi packages together rather than allowing npm's
 # semver ranges to make the older SDK consumer resolve newer sibling types.
-(cd "$TMP_ROOT" && npm install --ignore-scripts --no-audit --no-fund --save-exact \
+(cd "$TMP_ROOT" && npm install ${NPM_OFFLINE_FLAG[@]+"${NPM_OFFLINE_FLAG[@]}"} --ignore-scripts --no-audit --no-fund --save-exact \
   "@earendil-works/pi-coding-agent@$version" \
   "@earendil-works/pi-ai@$version" \
   "@earendil-works/pi-tui@$version" \
@@ -117,31 +124,16 @@ else
   result=1
 fi
 if [ "$(uname -s)" = Linux ]; then
-  # The fixture imports the tracked extension's .ts source. Distribution Node
-  # builds such as Debian's omit built-in type stripping (process.features.typescript
-  # is false; --experimental-strip-types fails with ERR_NO_TYPESCRIPT), so load .ts
-  # through this run's pinned compiler instead and fail on any syntax diagnostic.
-  cat > "$TMP_ROOT/ts-load-hooks.mjs" <<'JS'
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import ts from "typescript";
-export async function load(url, context, nextLoad) {
-  if (!url.startsWith("file:") || !url.endsWith(".ts")) return nextLoad(url, context);
-  const fileName = fileURLToPath(url);
-  const { outputText, diagnostics } = ts.transpileModule(await readFile(fileName, "utf8"), {
-    fileName, reportDiagnostics: true,
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext },
-  });
-  if (diagnostics.length) {
-    throw new Error(ts.formatDiagnostics(diagnostics, { getCanonicalFileName: (f) => f, getCurrentDirectory: () => "", getNewLine: () => "\n" }));
-  }
-  return { format: "module", source: outputText, shortCircuit: true };
-}
-JS
-  printf '%s\n' 'import { register } from "node:module";' \
-    'register("./ts-load-hooks.mjs", import.meta.url);' > "$TMP_ROOT/ts-load-register.mjs"
-  if node --import "$TMP_ROOT/ts-load-register.mjs" "$ROOT/tests/fixtures/fm-read-repetition-sdk.mjs" \
-      "$TMP_ROOT/node_modules/@earendil-works/pi-coding-agent" "$TMP_ROOT/read-guard-lab"; then
+  # The fixture imports the tracked extension's .ts source; tests/ts-loader-helpers.sh
+  # owns loading it on a node without built-in type stripping. Point it at this
+  # run's pinned compiler so no second install happens.
+  if (
+    . "$ROOT/tests/ts-loader-helpers.sh"
+    export FM_TEST_TS_DIR="$TMP_ROOT"
+    fm_test_ts_loader &&
+      node "$ROOT/tests/fixtures/fm-read-repetition-sdk.mjs" \
+        "$TMP_ROOT/node_modules/@earendil-works/pi-coding-agent" "$TMP_ROOT/read-guard-lab"
+  ); then
     printf 'ok - read guard real SDK events/abort against Pi %s\n' "$version"
   else
     printf 'not ok - read guard real SDK events/abort against Pi %s\n' "$version" >&2

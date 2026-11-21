@@ -6,17 +6,20 @@ set -eu
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# Keep fixture types readable using Node's built-in TypeScript stripping.
+fm_test_ts_loader || exit 1
+
+# Keep fixture types readable by running the assertions as a .ts file.
 # One process shares the imports; only completed assertions emit named results.
-if ! policy_results=$(
-  cd "$ROOT"
-  NODE_NO_WARNINGS=1 node --input-type=module-typescript <<'TS'
+# The run is cwd-anchored at the repository root, so the fixture imports name it
+# through @ROOT@ rather than a path relative to the file.
+POLICY_TS=$(fm_test_tmproot fm-read-repetition)/policy-assertions.ts
+sed "s|@ROOT@|$ROOT|g" > "$POLICY_TS" <<'TS'
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
-import { HISTORY_TYPE, NOTICE_TYPE, identifyRead, ReadRepetition, WINDOW_MS, readLimits, DEFAULT_LIMITS } from "./.pi/extensions/lib/fm-primary-read-repetition-policy.ts";
-import managedGuard, { loadReadRepetitionLimits, primaryOwnsContext, registerReadRepetitionGuard } from "./.pi/extensions/fm-primary-read-repetition.ts";
+import { HISTORY_TYPE, NOTICE_TYPE, identifyRead, ReadRepetition, WINDOW_MS, readLimits, DEFAULT_LIMITS } from "@ROOT@/.pi/extensions/lib/fm-primary-read-repetition-policy.ts";
+import managedGuard, { loadReadRepetitionLimits, primaryOwnsContext, registerReadRepetitionGuard } from "@ROOT@/.pi/extensions/fm-primary-read-repetition.ts";
 
 // Assertions stay synchronous; Bash owns reporting and the subject exit status.
 function check(name: string, body: () => void, enabled = true) {
@@ -555,7 +558,7 @@ check("excerpt additions do not recognize writes, substitutions or unknown flags
 });
 
 TS
-); then
+if ! policy_results=$(cd "$ROOT" && NODE_NO_WARNINGS=1 node "$POLICY_TS"); then
   printf '%s\n' "$policy_results" >&2
   fail 'read-repetition policy assertions failed'
 fi

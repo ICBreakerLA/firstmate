@@ -1,0 +1,8 @@
+{
+  "name": "fm-test-ts-loader",
+  "private": true,
+  "description": "Pinned TypeScript compiler that tests/ts-loader.sh installs for portable tests that import tracked .ts sources",
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

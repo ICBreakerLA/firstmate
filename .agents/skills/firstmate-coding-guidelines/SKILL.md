@@ -114,12 +114,13 @@ Run `bin/fm-doc-audience-check.sh`; it enforces classification, README setup rou
 
 ## No-mistakes test configuration
 
-The local no-mistakes gate owns broad deterministic regression through `commands.test`.
-In this fork that command runs `bin/fm-test-run.sh --check-coverage` and the three portable lanes with `--exclude-family live-harness-optin --exclude-family hc-pinned` under `FM_LIVE=0`, and the portable serial lane includes `tests/fm-repo-invariants.test.sh` and the hermetic `tests/fm-backend-hc.test.sh`.
+Hosted `.github/workflows/ci.yml` owns broad deterministic regression in this fork.
+The local no-mistakes gate keeps a work-in-progress suite in `commands.test` and becomes the owner again only when that suite is 100% green locally.
+That command runs `bin/fm-test-run.sh --check-coverage` and the three portable lanes with `--exclude-family live-harness-optin --exclude-family hc-pinned` under `FM_LIVE=0`, and the portable serial lane includes `tests/fm-repo-invariants.test.sh` and the hermetic `tests/fm-backend-hc.test.sh`.
 Never add `--all` or the real-Herdr family to that command: `--all` selects the live-Herdr family, and the family exclusions plus `FM_LIVE=0` keep every live Herdr session, release download, and hc binary out of the gate.
-Targeted validation beyond that suite belongs to the no-mistakes evidence path; add a scenario only when no deterministic test reaches the behavior.
+Targeted validation beyond the suite belongs to the no-mistakes evidence path; add a scenario only when no deterministic test reaches the behavior.
 Firstmate PR #3644 demonstrated why an ad hoc script walk is not the alternative: pinning a 75-162-script walk took 32.7 minutes per validation, while the lane composition keeps broad regression bounded and reproducible.
-Stock macOS Bash compatibility stays out of the gate and remains covered by the single path-filtered `.github/workflows/macos-bash.yml` workflow.
+Stock macOS Bash compatibility stays out of the gate; hosted `.github/workflows/ci.yml` and the path-filtered `.github/workflows/macos-bash.yml` cover it.
 Other repositories keep their own suite-ownership policy rather than inheriting this fork's command.
 
 ## Repo style rules

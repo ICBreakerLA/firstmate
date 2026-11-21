@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Repo invariants the former hosted-CI invariants job enforced: the AGENTS.md
+# Repo invariants the hosted-CI invariants job enforces: the AGENTS.md
 # pointer files stay intact and personal fleet paths stay untracked. The local
-# no-mistakes gate runs this through the portable serial lane.
+# no-mistakes gate also runs this through the portable serial lane.
 set -u
 
 # shellcheck source=tests/lib.sh

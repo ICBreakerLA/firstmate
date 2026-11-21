@@ -1,10 +1,8 @@
-# Stock macOS Bash compatibility, kept as the fork's only hosted Bash-compatibility job.
+# Path-filtered stock macOS Bash compatibility job, kept alongside ci.yml's own macOS job.
 #
-# The fork runs no hosted Linux suite: the no-mistakes gate runs the portable
-# lanes locally (CONTRIBUTING.md "Fork divergence: no hosted Linux suite"). The local
-# gate cannot supply macOS's stock Bash 3.2.57, so this one job keeps that
-# coverage. It runs only when a pull request touches shell portability, and on
-# demand; tests/fm-macos-workflow.test.sh guards the trigger shape.
+# The local gate cannot supply macOS's stock Bash 3.2.57 (CONTRIBUTING.md "Hosted
+# CI and the local gate"), so this job keeps that coverage. It runs only when a
+# pull request touches shell portability, and on demand; tests/fm-macos-workflow.test.sh guards the trigger shape.
 name: macOS Bash compatibility
 
 on:

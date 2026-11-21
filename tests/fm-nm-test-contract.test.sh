@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Contract: .no-mistakes.yaml's commands.test walks the deterministic portable
+# Contract: .no-mistakes.yaml's commands.test, the local gate's work-in-progress suite (hosted ci.yml owns the broad suite), walks the deterministic portable
 # lanes through bin/fm-test-run.sh, excludes the live-harness and pinned-hc
 # families a gate must never drive, keeps the hermetic hc suite, and disables
 # every default-on live guard.
@@ -269,7 +269,7 @@ doc = doc or {}
 commands = doc.get("commands")
 command = commands.get("test") if isinstance(commands, dict) else None
 if command is None or command is False or not str(command).strip():
-    fail("commands.test must be present: the local no-mistakes gate owns broad deterministic regression")
+    fail("commands.test must be present: the local no-mistakes gate keeps its work-in-progress portable suite")
 
 parsed = [split_clause(clause) for clause in split_clauses(str(command))]
 lanes = ["portable-parallel-1", "portable-parallel-2", "portable-serial"]

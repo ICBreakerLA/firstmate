@@ -32,7 +32,7 @@ GitHub Actions and Dependabot are exempt so their automation keeps working, but 
 
 ### The `full-ci` label
 
-This section describes the upstream template's hosted Linux workflow, which this fork does not run; see [Fork divergence: no hosted Linux suite](#fork-divergence-no-hosted-linux-suite).
+This section describes the hosted workflow `.github/workflows/ci.yml`; see [Hosted CI and the local gate](#hosted-ci-and-the-local-gate).
 
 CI on a pull request from an author without write access runs only the quick checks at first: `Test coverage guard`, `Repo invariants`, and the no-mistakes body check.
 Lint and the behavior suites wait for a maintainer, or the maintainer's fleet, to add the `full-ci` label when the pull request is picked up for review.
@@ -49,7 +49,7 @@ Before dispatching an agent-driven contribution, follow the [Firstmate role and 
 
 ## Maintaining required checks
 
-This section describes the public template's hosted checks; this fork no longer produces most of those contexts, so prune the retired names from its ruleset before relying on required checks (see [Fork divergence: no hosted Linux suite](#fork-divergence-no-hosted-linux-suite)).
+This section describes the hosted checks `.github/workflows/ci.yml` produces; confirm this fork's ruleset names only contexts that workflow still emits (see [Hosted CI and the local gate](#hosted-ci-and-the-local-gate)).
 
 GitHub required checks are configured in the repository's existing main ruleset, not activated by committing workflow YAML.
 When applying this CI layout, preserve its existing pull-request, merge-method, linear-history, deletion, non-fast-forward, and administrator-bypass settings.
@@ -84,7 +84,7 @@ Coordinate any workflow rollback with its required-check names so a retired chec
   Each starts with a usage header comment; keep it accurate when you change behavior.
   Test scripts and helpers in `tests/` are plain bash too.
   `bin/fm-lint.sh` must pass: it is the single owner of the lint definition (the shellcheck file set, config, pinned shellcheck version, pinned actionlint workflow lint, and the backend-purity check rejecting direct Beads CLI calls in core `bin/` scripts).
-  The local no-mistakes gate uses its context-selected default; the full canonical partitions belonged to the deleted hosted workflow.
+  The local no-mistakes gate uses its context-selected default; the hosted workflow runs the full canonical partitions.
   `docs/fm-test-portable-shards.md` owns partition verification and performance evidence.
   Its header and `--help` output own the exact local lint modes, file-set selection, and analysis flags.
   Local runs take a host-wide slot (one at a time by default, shared by every checkout) so concurrent lint runs cannot exhaust memory; the header owns `FM_LINT_HOST_SLOTS` and its siblings.
@@ -99,19 +99,20 @@ Coordinate any workflow rollback with its required-check names so a retired chec
 - `README.md` stays a concise overview plus pointers: it never carries a wall of inline detail.
   Route detail to the most specific `docs/` file (architecture, configuration, or a backend guide) and link to it instead.
 
-## Fork divergence: no hosted Linux suite
+## Hosted CI and the local gate
 
-This fork's `main` deliberately deletes `.github/workflows/ci.yml` while the public template keeps it.
-An upstream template sync reintroduces that file, and the sync worker deletes it again on the same branch and keeps `commands.test` in `.no-mistakes.yaml`.
-The reason is measured cost: the October 2026 usage report attributes 10,206 Linux minutes and 309 macOS minutes to that workflow, 83% of the account's 12,735 hosted minutes.
-The local no-mistakes gate replaces the Linux suite: `commands.test` runs the coverage guard and the three portable lanes through `bin/fm-test-run.sh`, and the portable serial lane includes `tests/fm-repo-invariants.test.sh`.
-Every lane excludes the live-harness-optin and hc-pinned families and runs under `FM_LIVE=0`, so a gate round never drives a live Herdr session, downloads release binaries, or uses a real hc binary.
+GitHub Actions owns the broad deterministic suite; the local no-mistakes gate suite is kept as a work in progress and becomes the owner again only when it is 100% green locally.
+The hosted GitHub Actions workflow `.github/workflows/ci.yml` runs on pull requests and on pushes to `main`: lint, the coverage guard and repo invariants, the portable parallel and serial lanes, the real-Herdr and pinned-hc lanes, stock macOS Bash, and the `Full suite` gate.
+The local no-mistakes gate still runs before a branch is pushed, as the work-in-progress suite: `commands.test` runs the coverage guard and the three portable lanes through `bin/fm-test-run.sh`, and the portable serial lane includes `tests/fm-repo-invariants.test.sh`.
+Every gate lane excludes the live-harness-optin and hc-pinned families and runs under `FM_LIVE=0`, so a gate round never drives a live Herdr session, downloads release binaries, or uses a real hc binary; the hosted real-Herdr and pinned-hc lanes own those families on every pull request.
 The hermetic `tests/fm-backend-hc.test.sh` stays in the portable serial lane.
-Deleting the workflow also removed the only automation for the real-Herdr and pinned-hc lanes: they are manual/pre-merge lanes now, run before merging a Herdr or hc change with `--family real-herdr-gated --fail-on-gate-skip herdr` and `--family hc-pinned --fail-on-gate-skip 'hc not found'` against the pinned build, and they are no longer automated on every pull request.
-The full portable walk takes roughly 3.5-4 hours; the operator raised the gate host's global no-mistakes `test_agent_timeout` to 5h on 2026-11-16, and [fm-test-portable-shards.md](docs/fm-test-portable-shards.md#gate-execution-bounds) owns that bound.
-Stock macOS Bash coverage is kept, not dropped: `.github/workflows/macos-bash.yml` runs its single stock Bash job only on a pull request that touches `bin/**`, `tests/**`, or `.github/workflows/**`, and on demand through `workflow_dispatch`.
-No hosted job runs on a push to `main`.
-CI prose elsewhere in this repository describes the public template rather than this fork, and this fork's externally configured ruleset still names checks the deleted workflow produced, so prune those names before relying on required checks.
+`.github/workflows/macos-bash.yml` also runs the stock macOS Bash job on a pull request that touches `bin/**`, `tests/**`, or `.github/workflows/**` and on demand through `workflow_dispatch`; `ci.yml` carries its own macOS job, so the two overlap on those paths.
+The fork is public, so hosted minutes cost nothing here.
+`#56` deleted `ci.yml` because October 2026's usage report attributed 10,206 Linux minutes and 309 macOS minutes to it, 83% of the account's 12,735 hosted minutes; the file was restored once that cost no longer applied, with the local gate work kept.
+An upstream template sync keeps `ci.yml` and `commands.test` both; never delete either on a sync.
+The `FM_CI_SKIP_PUSH` and `FM_CI_SKIP_MACOS` repository variables opt a fork out of the push run and the macOS job; this fork sets neither, so both run.
+The full portable walk takes roughly 3.5-4 hours locally; the operator raised the gate host's global no-mistakes `test_agent_timeout` to 5h on 2026-11-16, and [fm-test-portable-shards.md](docs/fm-test-portable-shards.md#gate-execution-bounds) owns that bound.
+Prune any required-check name in this fork's externally configured ruleset that `ci.yml` does not produce.
 
 ## Development
 
@@ -124,9 +125,9 @@ When supervising live crewmates, keep firstmate's own long validation or build c
 Crewmate validation follows the installed no-mistakes version's SKILL.md and live `axi` help instead of duplicating gate mechanics in firstmate docs.
 Firstmate's wrapper still matters: crewmates route every `ask-user` finding to firstmate, which applies `ask-user-authority`, and crewmates never pass `--yes` or `-y` because either flag bypasses that check and any required captain escalation.
 [`docs/configuration.md`](docs/configuration.md#gate-defaults-no-mistakesyaml) owns the tracked `.no-mistakes.yaml` gate defaults.
-The `firstmate-coding-guidelines` skill owns the rule that the local no-mistakes gate runs broad deterministic regression through `commands.test`, while extra scenarios stay targeted.
+The `firstmate-coding-guidelines` skill owns the suite-ownership rule (hosted CI owns broad deterministic regression while the local `commands.test` suite is a work in progress), while extra scenarios stay targeted.
 Verify the same way the gate does: reach for `bin/fm-test-run.sh` with the subjects you care about rather than chaining `bash tests/a.test.sh && bash tests/b.test.sh`, because a list of script paths gets the same bounded concurrency as `--changed`.
-The pipeline publishes that evidence itself, so never hand-commit `.no-mistakes/` paths onto a feature branch; the local gate's repo invariants test rejects them as tracked personal fleet paths.
+The pipeline publishes that evidence itself, so never hand-commit `.no-mistakes/` paths onto a feature branch; the repo invariants test (hosted CI and the local gate) rejects them as tracked personal fleet paths.
 
 Check and test the toolbelt before pushing:
 
@@ -163,10 +164,10 @@ Portable shard balance evidence lives in `docs/fm-test-portable-shards.md`.
 `bin/fm-test-linux.sh` is optional and never part of the gate: on macOS, run it before publishing a branch whose tests depend on `stat`, `date`, or process behavior, because BSD and GNU tools differ.
 Its header owns selection, runtime detection, and exit codes.
 Family selection is the ordinary local path; `--all` is deliberate full regression only.
-The local no-mistakes gate owns broad deterministic regression: `commands.test` runs the coverage guard and the three portable lanes (both parallel lanes and the portable serial remainder, which includes `tests/fm-repo-invariants.test.sh`) through `bin/fm-test-run.sh`.
+Hosted `ci.yml` owns broad deterministic regression; the local gate's work-in-progress suite, `commands.test`, runs the coverage guard and the three portable lanes (both parallel lanes and the portable serial remainder, which includes `tests/fm-repo-invariants.test.sh`) through `bin/fm-test-run.sh`.
 The gate excludes the real-Herdr, hc-pinned, and live-harness opt-in families and sets `FM_LIVE=0`, so a gate round never drives a live Herdr session or the real fleet; run those lanes directly when a change needs them, as [fm-test-portable-shards.md](docs/fm-test-portable-shards.md#manual-backend-and-live-lanes) describes.
-This fork runs no hosted Linux suite, and [Fork divergence: no hosted Linux suite](#fork-divergence-no-hosted-linux-suite) owns the reason and the sync rule.
-Stock macOS Bash compatibility stays covered by the single path-filtered [`.github/workflows/macos-bash.yml`](.github/workflows/macos-bash.yml) workflow.
+Hosted `ci.yml` also runs on every pull request and push to `main`; [Hosted CI and the local gate](#hosted-ci-and-the-local-gate) owns how the two owners divide the work.
+Stock macOS Bash compatibility is covered by `ci.yml` and by the path-filtered [`.github/workflows/macos-bash.yml`](.github/workflows/macos-bash.yml) workflow.
 Use `bin/fm-test-run.sh --list-lanes` for exact lane names and `--help` for `--jobs` rules and required gate-skip flags when reproducing a lane locally.
 Leave the `sleep 0.1` cadence in the suites' bounded condition waits alone.
 Those sleeps look like recoverable overhead - the watch-triage suite (`fm-watch-triage.test.sh`, `fm-watch-triage-pause.test.sh`, and `fm-watch-triage-wedge-defer.test.sh`) issues about 1,900 of them, each paying a flat ~100ms scheduler wake-up penalty on macOS - but they are not overhead added to the clock; they are how a test waits for a subject that only moves on `fm-watch.sh`'s own one-second `FM_POLL` cadence.

@@ -66,7 +66,7 @@ An auto-detected Herdr spawn stays silent, matching the verified tmux default pa
 Spawn stops before creating a Herdr container or acquiring a task worktree when `herdr`, `jq`, or the protocol floor is unavailable.
 No separate first-run provisioning is required.
 
-The real-Herdr lane is a manual/pre-merge lane, not automated on every pull request, and uses the pinned installers in `bin/fm-install-herdr.sh` and `bin/fm-install-treehouse.sh`; [`fm-test-portable-shards.md`](fm-test-portable-shards.md#manual-backend-and-live-lanes) owns the manual lane set.
+The real-Herdr lane runs in the hosted `tests-herdr` job on every pull request (the local gate excludes it), and uses the pinned installers in `bin/fm-install-herdr.sh` and `bin/fm-install-treehouse.sh`; [`fm-test-portable-shards.md`](fm-test-portable-shards.md#manual-backend-and-live-lanes) owns the manual lane set.
 Those script headers own release assets, checksums, download bounds, and post-install gates.
 Real harness credential tests remain opt-in rather than part of the local gate.
 

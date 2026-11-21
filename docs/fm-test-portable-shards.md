@@ -2,7 +2,7 @@
 
 `bin/fm-test-run.sh` owns portable lane composition and execution.
 `bin/fm-test-isolation-proof.sh` owns the proven-isolated candidate set.
-This fork runs no hosted Linux suite: the local no-mistakes gate runs the same lanes (CONTRIBUTING.md "Fork divergence: no hosted Linux suite").
+Hosted `.github/workflows/ci.yml` owns these lanes and the local no-mistakes gate mirrors them as a work-in-progress suite that becomes the owner again only when 100% green locally (CONTRIBUTING.md "Hosted CI and the local gate").
 The measurements below were captured from upstream Ubuntu CI runs before the workflow was deleted, and they remain the packing weights the gate uses.
 
 ## Verification inputs
@@ -60,7 +60,7 @@ The two parallel lanes use longest-processing-time assignment over those hints.
 [`bin/fm-test-run.sh`](../bin/fm-test-run.sh) holds the duration values in `portable_parallel_weight_hints` and the ordered memberships and lane-specific prerequisite constraints beside `list_portable_parallel_1` and `list_portable_parallel_2`.
 Read the derived packing estimates with that runner's `--check-coverage`; its header and `--help` own the output fields and the selection-specific `--list-scheduled` weight rules.
 The largest individual hint sets a lower bound on the estimated duration of any split, regardless of how evenly the remaining work is assigned.
-The local gate has no hosted job cap; [Gate execution bounds](#gate-execution-bounds) below owns the runner's own bounds.
+The local gate has no hosted job cap; the hosted jobs keep theirs, and [Gate execution bounds](#gate-execution-bounds) below owns the local runner's own bounds.
 
 [`tests/fm-test-run.test.sh`](../tests/fm-test-run.test.sh), in `test_portable_parallel_lanes_stay_duration_balanced`, requires every parallel member to have a hint and the lane sums to differ by no more than five percent of the larger sum.
 Its scheduling regressions also check stored parallel lane order and preserve serial-weight scheduling for other selections.
@@ -166,7 +166,7 @@ The hermetic `tests/fm-backend-hc.test.sh` remains in the portable serial lane.
 
 ## Gate execution bounds
 
-The hosted workflow's three-tier job timeouts died with it, and the macOS workflow keeps one normal-tier 30-minute tripwire on its own job.
+The hosted workflow keeps its three-tier job timeouts, and the macOS workflow keeps one normal-tier 30-minute tripwire on its own job.
 The local gate runs the coverage guard and the three portable lanes serially with no hosted job cap.
 no-mistakes bounds one Test-step agent invocation with its global `test_agent_timeout`, not with these runner flags; the full portable walk takes roughly 3.5-4 hours, and the operator raised that global value to 5h on 2026-11-16. no-mistakes reads the key only from its global config, so a copy in `.no-mistakes.yaml` is ignored.
 The runner's optional `--per-script-timeout-secs` and `--max-wall-ms` are per-script result checks or hang tripwires, never a packing estimate or a runtime target.
@@ -176,8 +176,8 @@ A passing coverage guard does not establish a healthy duration; refresh the heal
 
 ## Manual backend and live lanes
 
-Deleting the hosted workflow removed the only automation for the real-Herdr family and the pinned hc family, so neither is automated on every pull request any more.
-Run them by hand before merging a change that touches Herdr, hc, or their pinned installers:
+The hosted `tests-herdr` and `tests-hc` jobs automate the real-Herdr family and the pinned hc family on every pull request, and the gate excludes them.
+To reproduce either locally, or when no hosted run is available, run them by hand before merging a change that touches Herdr, hc, or their pinned installers:
 
 - `bin/fm-test-run.sh --family real-herdr-gated --fail-on-gate-skip herdr`, which needs an installed Herdr binary and the pinned Treehouse build.
 - `bin/fm-test-run.sh --family hc-pinned --fail-on-gate-skip 'hc not found'` with `FM_HC_BIN` pointing at the pinned herdr-core build from `bin/fm-install-hc.sh`; its smokes need `jq`.

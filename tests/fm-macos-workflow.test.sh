@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Contract: .github/workflows/macos-bash.yml is the fork's only hosted workflow
-# for the suite. It keeps exactly the stock macOS Bash job, triggered only by a
-# path-filtered pull request and by hand, so it cannot grow back into a second
-# full CI and never runs on a push to main.
+# Contract: .github/workflows/macos-bash.yml keeps exactly the stock macOS Bash
+# job, triggered only by a path-filtered pull request and by hand, so it cannot
+# grow into a second full CI and never runs on a push to main.
 set -u
 
 # shellcheck source=tests/lib.sh

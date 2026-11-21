@@ -447,8 +447,13 @@ cleanup() {
   # A signal can land inside the handled-turn settle, which holds the queue and
   # marker locks; the grant release below needs the queue lock, so drop any of
   # them this process still owns first (fm_lock_release ignores foreign owners).
+  # The same signal can also land inside a stale-owner steal, which holds the
+  # lock's ".steal" mutex under this pid; the grant release child has another
+  # pid and would wait on that mutex forever, so drop both mutexes too.
   fm_lock_release "$STATE/.watcher-down.lock" 2>/dev/null || true
+  fm_lock_release "$STATE/.watcher-down.lock.steal" 2>/dev/null || true
   fm_lock_release "$FM_WAKE_QUEUE_LOCK" 2>/dev/null || true
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK.steal" 2>/dev/null || true
   if [ "$ENGINE_RUNNING" -eq 1 ]; then
     stop_engine_turn
   fi

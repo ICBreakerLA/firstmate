@@ -477,51 +477,11 @@ fm_test_tmproot() {
   printf '%s\n' "$root"
 }
 
-# fm_test_provide_tasks_axi <parent-dir>: give the calling script its own real
-# tasks-axi, the pin in bin/sbx-tasks-axi (package.json + package-lock.json),
-# installed with `npm ci --offline --ignore-scripts` from a writable copy of the
-# mounted NPM_CONFIG_CACHE (the same recipe as fm_sbx_tasks_axi; with no cache
-# mounted the install uses the real registry, as tests/fm-pi-primary-types.test.sh
-# does), then prepends its node_modules/.bin to PATH. It never reads an ambient
-# tasks-axi and never skips: a failed install or a version other than the pin
-# returns 1 with a "not ok" line, and the caller exits. The install is exported
-# as FM_TEST_TASKS_AXI_BIN so child test runs reuse it instead of reinstalling.
-fm_test_provide_tasks_axi() {
-  local parent=${1:?parent dir} pin seed dst bindir log
-  local -a offline=()
-  pin=$(sed -n 's/.*"tasks-axi": *"\([^"]*\)".*/\1/p' "$ROOT/bin/sbx-tasks-axi/package.json" | head -n 1)
-  [ -n "$pin" ] || { echo "not ok - tasks-axi pin not found in bin/sbx-tasks-axi/package.json"; return 1; }
-  if [ -n "${FM_TEST_TASKS_AXI_BIN:-}" ] && [ -x "$FM_TEST_TASKS_AXI_BIN/tasks-axi" ]; then
-    PATH="$FM_TEST_TASKS_AXI_BIN:$PATH"; export PATH
-    return 0
-  fi
-  command -v npm >/dev/null 2>&1 || { echo "not ok - npm is required to install the pinned tasks-axi $pin"; return 1; }
-  dst=$(mktemp -d "${parent%/}/tasks-axi.XXXXXX") || { echo "not ok - could not create the tasks-axi install dir"; return 1; }
-  log="$dst/install.log"
-  seed=${NPM_CONFIG_CACHE:-}
-  mkdir -p "$dst/pkg" "$dst/logs"
-  cp "$ROOT/bin/sbx-tasks-axi/package.json" "$ROOT/bin/sbx-tasks-axi/package-lock.json" "$dst/pkg/" ||
-    { echo "not ok - could not copy the tasks-axi fixture"; return 1; }
-  if [ -n "$seed" ] && [ -d "$seed" ]; then
-    if ! cp -a "$seed" "$dst/npm-cache" || ! chmod -R u+w "$dst/npm-cache"; then
-      echo "not ok - could not copy the seeded npm cache"
-      return 1
-    fi
-    offline=(--offline)
-  else
-    mkdir -p "$dst/npm-cache"
-  fi
-  if ! (cd "$dst/pkg" && NPM_CONFIG_CACHE="$dst/npm-cache" NPM_CONFIG_LOGS_DIR="$dst/logs" \
-    npm ci ${offline[@]+"${offline[@]}"} --ignore-scripts --no-audit --no-fund) >"$log" 2>&1; then
-    echo "not ok - could not install tasks-axi $pin from the npm cache: $(tail -n 5 "$log" | tr '\n' ' ')"
-    return 1
-  fi
-  bindir="$dst/pkg/node_modules/.bin"
-  [ "$("$bindir/tasks-axi" --version 2>/dev/null)" = "$pin" ] ||
-    { echo "not ok - the installed tasks-axi does not report the pinned $pin"; return 1; }
-  FM_TEST_TASKS_AXI_BIN=$bindir; export FM_TEST_TASKS_AXI_BIN
-  PATH="$bindir:$PATH"; export PATH
-}
+# fm_test_provide_tasks_axi <parent-dir>: the pinned tasks-axi; the helper file's
+# header owns the contract. Sourced here so every suite that reaches this library
+# keeps calling it as before.
+# shellcheck source=tests/tasks-axi-helpers.sh
+[ ! -r "$_FM_TEST_LIB_DIR/tasks-axi-helpers.sh" ] || . "$_FM_TEST_LIB_DIR/tasks-axi-helpers.sh"
 
 trap fm_test_cleanup EXIT
 trap 'fm_test_cleanup; exit 130' INT
@@ -570,6 +530,17 @@ fm_test_reap_orphans() {
 # execution window repeating the same global stale-fixture scan.
 if [ "${FM_TEST_SKIP_ORPHAN_REAP:-0}" != 1 ]; then
   fm_test_reap_orphans
+fi
+
+# A host with no tasks-axi gets the pinned one before any suite code runs, so a
+# suite that reaches tasks-axi (or guards on it) without calling
+# fm_test_provide_tasks_axi runs instead of skipping. bin/fm-test-run.sh does the
+# install once per run and exports FM_TEST_TASKS_AXI_BIN, which the helper reuses;
+# only a direct run on a host with none pays for its own install. A failed
+# install ends the suite loudly. A fixture copy of this library has no helper file
+# beside it and relies on the PATH it inherited.
+if ! command -v tasks-axi >/dev/null 2>&1 && declare -F fm_test_provide_tasks_axi >/dev/null; then
+  fm_test_provide_tasks_axi "$(fm_test_tmproot fm-tasks-axi)" || exit 1
 fi
 
 # --- live-capability gate ---------------------------------------------------

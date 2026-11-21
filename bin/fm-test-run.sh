@@ -2740,6 +2740,18 @@ cleanup_run() {
 
 trap cleanup_run EXIT
 
+# A host with no tasks-axi gets the pinned one installed here, once, so every
+# suite that reaches it (or guards on it) runs instead of gate-skipping; the
+# exported FM_TEST_TASKS_AXI_BIN also lets each suite's own fm_test_provide_tasks_axi
+# call reuse it. A failed install stops the run before any suite starts.
+if ! command -v tasks-axi >/dev/null 2>&1; then
+  # shellcheck source=tests/tasks-axi-helpers.sh
+  . "$ROOT/tests/tasks-axi-helpers.sh" || die "could not load tests/tasks-axi-helpers.sh"
+  log "installing the pinned tasks-axi once for this run"
+  fm_test_provide_tasks_axi "$RUN_TMP" >"$RUN_TMP/tasks-axi.out" 2>&1 \
+    || die "could not provide the pinned tasks-axi for the run: $(cat "$RUN_TMP/tasks-axi.out")"
+fi
+
 RUN_ID="fm-test-run-${RUN_STARTED_MS}-$$"
 TOTAL=0
 FAILED=0

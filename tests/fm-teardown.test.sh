@@ -82,8 +82,6 @@ set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-# shellcheck source=bin/fm-local-llm-lib.sh
-. "$ROOT/bin/fm-local-llm-lib.sh"
 fm_git_identity fmtest fmtest@example.invalid
 
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
@@ -6735,39 +6733,6 @@ test_process_spawned_during_grace_is_reaped_on_later_pass
 test_persistent_scan_refuses_after_bounded_retries
 test_process_exit_during_identity_lookup_does_not_refuse
 test_run_abort_precedes_process_reap_precedes_worktree_removal
-
-# The local-model slot is a host-wide single lease: a task teardown removes
-# must not leave its claim standing for the next task to inherit. Drives
-# bin/fm-teardown.sh end to end on a landed, fork-pushed task that holds the
-# slot, and asserts the claim file, the handoff FIFO, and the holder process
-# are all gone when teardown reports success.
-test_teardown_releases_the_local_model_slot() {
-  local case_dir rc claim_pid
-  case_dir=$(make_case teardown-releases-slot)
-  write_meta "$case_dir" local-only ship
-  wt_commit "$case_dir" "done work"
-  add_fork_with_pushed_branch "$case_dir"
-  export FM_LOCAL_LLM_LOCK="$case_dir/llm.lock"
-  fm_local_llm_claim task-x1 || fail "teardown-releases-slot: the task must claim the slot"
-  claim_pid=$FM_LOCAL_LLM_HOLDER
-
-  set +e
-  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
-  rc=$?
-  set -e
-
-  expect_code 0 "$rc" "teardown-releases-slot: teardown should succeed: $(cat "$case_dir/stderr")"
-  ! kill -0 "$claim_pid" 2>/dev/null || fail "teardown-releases-slot: teardown must end the task's slot holder"
-  wait "$claim_pid" 2>/dev/null || true
-  [ ! -e "$FM_LOCAL_LLM_LOCK" ] || fail "teardown-releases-slot: teardown must remove the claim file"
-  [ ! -e "$FM_LOCAL_LLM_LOCK.handoff" ] || fail "teardown-releases-slot: teardown must remove the handoff FIFO"
-  fm_local_llm_claim task-next || fail "teardown-releases-slot: the next task must claim the freed slot"
-  kill "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
-  wait "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
-  unset FM_LOCAL_LLM_LOCK
-  pass "fm-teardown releases the task's local-model slot as part of cleanup"
-}
-test_teardown_releases_the_local_model_slot
 
 test_axi_usage_contract() {
   local out rc

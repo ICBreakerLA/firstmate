@@ -1,0 +1,677 @@
+FM_TEST_BEGIN 2026-11-20T18:23:18Z tests/fm-captain-hold-lifecycle.test.sh family=pure-contract-unit expected_gate_skip=none
+skip: tasks-axi not found
+fm-test-run: gate skip: tests/fm-captain-hold-lifecycle.test.sh: tasks-axi not found
+FM_TEST_END 2026-11-20T18:23:18Z tests/fm-captain-hold-lifecycle.test.sh exit=0 duration_ms=193 gate_skip=true
+FM_TEST_BEGIN 2026-11-20T18:23:18Z tests/fm-backend-t3code.test.sh family=backend-dispatch expected_gate_skip=none
+fm-afk-launch: away-posture record archived at /tmp/fm-backend-t3code-tests.xL2TAn/restart-unknown-completed/home/state/afk-contracts/1795199000.afk-contract
+fm-afk-launch: away mode stopped; no daemon terminal was running, .afk cleared, and the posture record archived
+fm-afk-launch: away-posture record archived at /tmp/fm-backend-t3code-tests.xL2TAn/restart-unknown-failed/home/state/afk-contracts/1795199005.afk-contract
+fm-afk-launch: away mode stopped; no daemon terminal was running, .afk cleared, and the posture record archived
+ok - native restart clears session episode state and re-derives T3 stale warnings once on a fresh clock
+ok - away housekeeping preserves unknown stale rechecks and reports possible wedges until work resumes
+ok - away daemon on T3: a stall reported while unknown is not reported again once T3 reads idle
+ok - T3 stale watcher: harness=codex status=failed turn=fresh -> dead
+ok - t3code: a failed thread read reports unknown busy state, submits no away-mode injection, and keeps stale rechecks uncertain
+ok - T3 stale lookup honors paused and captain-held declarations
+ok - T3 stale watcher: harness=codex status=running turn=fresh -> absorb
+ok - T3 stale watcher: harness=claude status=running turn=fresh -> absorb
+ok - T3 stale watcher: harness=codex status=waiting turn=fresh -> absorb
+ok - T3 stale watcher: harness=codex status=starting turn=fresh -> surface
+ok - T3 stale watcher: harness=codex status=completed turn=fresh -> surface
+ok - T3 stale watcher: harness=codex status=failed turn=fresh -> dead
+ok - T3 stale watcher: harness=codex status=running turn=hung -> surface
+ok - fm_backend_t3code_runtime_check: a missing credential names the sign-in
+ok - fm_backend_t3code_runtime_check: a 401 names the fresh sign-in
+warning: T3 telemetry at http://127.0.0.1:45157 is on; run the server that hosts Firstmate workers with T3CODE_TELEMETRY_ENABLED=false (docs/t3code-backend.md)
+ok - fm_backend_t3code_runtime_check: the tools/list gate and environment pin refuse control and teardown without a mutation
+ok - fm_backend_t3code_project_ensure: matches by realpath, otherwise creates with the fm- title
+ok - fm_backend_t3code_model_selection: T3's catalog decides driver, model, and effort; overrides keep other options; default handling, instances file
+ok - fm_backend_t3code_thread_create/turn_start: verified t3_thread_launch and t3_thread_send payloads
+ok - fm_backend_t3code_thread_create: a lost reply is uncertain and never retried; a mis-bound thread is archived and refused
+ok - fm_backend_t3code_thread_for_home: zero, one, ambiguous, and unreachable
+ok - T3 requires explicit selection and does not query the server during runtime detection
+ok - fm_backend_t3code_capture: renders the activity tail and the thread's status line
+ok - fm_backend_t3code_send_key: Escape and C-c interrupt, Enter no-ops, others refuse
+ok - fm_backend_t3code_send_text_submit: empty on accept, send-failed on rejection
+ok - t3code send: a reply lost after commit is unconfirmed through the adapter and fm-send, and the resend lands once
+ok - t3code send: a held request id stays unconfirmed when the next attempt fails locally, and the retry lands once
+ok - t3code send: a lost reply to a secondmate names its armed correlation instead of advising a resend
+ok - t3code status table: every V2 thread status, a pending request, archived, archived-but-draining, missing, unreachable, and unreadable rows
+ok - t3code push wait: a pending question wakes the supervisor once with how to answer it, approvals are named apart, and answering clears it
+ok - fm-t3-answer.sh: lists a T3 worker's pending questions and answers one by request id
+ok - secondmate liveness backend=t3code: a failed run is resumed on its own thread, never archived and replaced
+ok - secondmate liveness backend=t3code: a missing thread re-proves its archive before replacement, and an unproved close spawns nothing
+ok - away daemon on T3: an unconfirmed digest is frozen and retried verbatim; a later event goes in the next digest, each event once
+ok - away daemon on T3: a delivered frozen digest leaves the items behind it with the first one's undelivered age
+ok - away daemon on T3: a supervisor thread waiting on a pending request defers digests until it is answered
+ok - t3code helper: runs through a symlinked Firstmate root, and a kill that cannot read the thread fails closed
+ok - secondmate liveness backend=t3code: an archived thread whose run still drains is left in place, not replaced
+ok - fm_backend_t3code_kill: interrupt then archive with a proven close, idempotent on archived and missing, loud on failure
+ok - fm-backend dispatcher: routes every t3code primitive, validates and resolves t3_thread_id records, and joins the push wait
+ok - T3 harness admission refuses every non-T3 adapter and launch-time typing refuses without a thread read
+ok - fm_busy_classify: t3code native busy, idle, and unknown are trusted without a record
+ok - fm-control-lib: t3code key set, state-verified, no-exit, and no-replacement membership
+ok - fm-control.sh backend=t3code: exit refuses before any call (V2 has no session stop); interrupt ends the turn natively
+ok - fm-control.sh relaunch backend=t3code: refused before anything is stopped, by the control plane and by the launch owner
+ok - fm-spawn.sh --backend t3code: leases the slot, launches the thread on it, records metadata, sends the launch brief
+ok - t3code Claude PR-tool clause: dropped only at or past the verified T3 build, kept for older or unreadable servers
+skip: live: disabled by FM_LIVE=0
+ok - fm-spawn.sh backend=t3code: compatible tracked Codex config launches, stays out of commits, and survives cleanup
+ok - tracked Codex overlay: edited files survive refusal, interrupted restoration recovers, quoted and dotted policy keys refuse
+ok - fm-spawn.sh --backend t3code codex: refuses to overwrite a project's tracked .codex/config.toml before any mutation
+ok - fm-spawn.sh --backend t3code claude: refuses to overwrite a project's tracked CLAUDE.local.md before any mutation
+ok - Claude channel refuses a symlink in the leased worktree without following it
+ok - untracked Codex config is preserved unless Firstmate's marker owns it
+ok - fm-t3code-codex-env.sh cleanup: without an installed overlay it needs no Python and never refuses
+ok - fm-spawn.sh --backend t3code codex: an untracked Codex config in the main checkout does not refuse a worker
+ok - fm-spawn.sh --backend t3code codex: writes .codex/config.toml with GOTMPDIR, FM_TASK_ID, and TRACEPARENT
+ok - fm-spawn.sh --backend t3code codex: warns once, and still launches, unless the Codex configuration trusts the launch directory's main checkout
+ok - fm-spawn.sh --backend t3code --secondmate: project on the home, root-strategy thread, charter message, launch prefix as settings env
+ok - fm-spawn.sh --backend t3code --secondmate codex: launch prefix as .codex/config.toml shell_environment_policy
+ok - fm-spawn.sh --backend t3code: refuses before mutation when the credential is rejected
+ok - fm-teardown.sh backend=t3code: interrupts and archives the thread with a proven close, then returns the slot
+ok - fm-teardown.sh backend=t3code secondmate: interrupts and archives, then ends the home's lingering provider process before the home is removed; an unprovable scan keeps the home
+ok - fm-teardown.sh backend=t3code secondmate: interrupts and archives, then ends the home's lingering provider process before the home is removed; an unprovable scan keeps the home
+ok - fm-teardown.sh backend=t3code pooled secondmate: the slot returns only after the provider ended, without the T3 environment the spawn wrote
+ok - fm-teardown.sh backend=t3code: an unreachable or gate-refused server keeps the slot a live thread still points at
+ok - fm-spawn.sh --backend t3code claude: refuses config/claude-permission-mode=auto it cannot honor before any mutation
+ok - fm-spawn.sh --backend t3code codex: refuses config/codex-approval-mode=approve-for-me it cannot honor before any mutation
+ok - fm-spawn.sh --backend t3code codex: refuses config/codex-permission-mode=restricted it cannot honor before any mutation
+ok - fm-spawn.sh --backend t3code codex: config/codex-approval-mode=bypass still launches
+ok - fm-spawn.sh --backend t3code claude: refuses config/launch-env-allowlist=HOME it cannot honor before any mutation
+ok - fm-spawn.sh --backend t3code: refuses a raw launch command before any mutation
+ok - fm-spawn.sh --backend t3code: an abort archives the thread, then returns the lease
+ok - fm-spawn.sh --backend t3code: an abort that cannot archive the thread keeps the lease
+ok - fm-spawn.sh --backend t3code: a launch whose response was lost keeps the lease
+ok - fm-spawn.sh --backend t3code: inherited Git config values never reach the env file, which carries only Firstmate's hook entry
+ok - fm-spawn.sh --backend t3code --secondmate: a symlinked .claude/settings.local.json is refused, never written through
+ok - fm-spawn.sh --backend t3code: a gate failure before the launch request returns the lease
+ok - fm-spawn.sh --backend t3code: a refused launch turn archives the thread, removes its environment files, then returns the lease
+ok - fm-spawn.sh --backend t3code: a thread T3 bound elsewhere is archived and the lease returned
+ok - fm-spawn.sh --backend t3code: a leased slot holding uncommitted work gets no thread and keeps its lease
+ok - fm-spawn.sh --backend t3code: a clean leased slot whose refresh fails gets no thread and is returned
+ok - fm-spawn.sh --backend t3code --secondmate: an aborted spawn archives its thread, then removes the T3 environment it wrote into the home
+ok - fm-teardown.sh backend=t3code: a nested T3 secondmate's home is reaped before it is removed
+ok - fm-spawn.sh --backend t3code: a launch brief whose reply is lost is reported unconfirmed and keeps its task record
+ok - fm-spawn.sh --backend t3code: a lease the isolation guard rejects is neither cleaned nor returned
+ok - fm-teardown.sh backend=t3code: a tracked CLAUDE.local.md stays in the slot
+ok - t3code push wait: a fractional poll interval runs the event wait with its budget in milliseconds
+ok - away housekeeping clears the stale marker it rechecked when two records share an endpoint
+FM_TEST_END 2026-11-20T18:29:07Z tests/fm-backend-t3code.test.sh exit=0 duration_ms=348118 gate_skip=false
+FM_TEST_BEGIN 2026-11-20T18:29:07Z tests/fm-crew-state.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - captured AXI replacement status replays through crew-state
+ok - captured AXI parked status replays through crew-state
+ok - captured AXI failed status replays through crew-state
+ok - captured capped inventory replays selection, ambiguity, and unavailable lookup
+ok - captured status formats reject a synthetic authority transition
+ok - captured completed status yields to synthetic subsequent development
+ok - captured cancelled run leaves fleet inventory unverified without a failure contradiction
+ok - failed-outcome/github/open: terminal delivery uses current disposition
+ok - failed-outcome/github/merged: terminal delivery uses current disposition
+ok - failed-outcome/github/closed: terminal delivery uses current disposition
+ok - failed-outcome/github/unreadable: terminal delivery uses current disposition
+ok - failed-outcome/github/skipped: terminal delivery uses current disposition
+ok - failed-outcome/github/no-identity: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/open: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/merged: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/closed: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/unreadable: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/skipped: terminal delivery uses current disposition
+ok - failed-outcome/gitlab/no-identity: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/open: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/merged: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/closed: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/unreadable: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/skipped: terminal delivery uses current disposition
+ok - failed-outcome/gerrit/no-identity: terminal delivery uses current disposition
+ok - failed-status/github/open: terminal delivery uses current disposition
+ok - failed-status/github/merged: terminal delivery uses current disposition
+ok - failed-status/github/closed: terminal delivery uses current disposition
+ok - failed-status/github/unreadable: terminal delivery uses current disposition
+ok - failed-status/github/skipped: terminal delivery uses current disposition
+ok - failed-status/github/no-identity: terminal delivery uses current disposition
+ok - failed-status/gitlab/open: terminal delivery uses current disposition
+ok - failed-status/gitlab/merged: terminal delivery uses current disposition
+ok - failed-status/gitlab/closed: terminal delivery uses current disposition
+ok - failed-status/gitlab/unreadable: terminal delivery uses current disposition
+ok - failed-status/gitlab/skipped: terminal delivery uses current disposition
+ok - failed-status/gitlab/no-identity: terminal delivery uses current disposition
+ok - failed-status/gerrit/open: terminal delivery uses current disposition
+ok - failed-status/gerrit/merged: terminal delivery uses current disposition
+ok - failed-status/gerrit/closed: terminal delivery uses current disposition
+ok - failed-status/gerrit/unreadable: terminal delivery uses current disposition
+ok - failed-status/gerrit/skipped: terminal delivery uses current disposition
+ok - failed-status/gerrit/no-identity: terminal delivery uses current disposition
+ok - cancelled-outcome/github/open: terminal delivery uses current disposition
+ok - cancelled-outcome/github/merged: terminal delivery uses current disposition
+ok - cancelled-outcome/github/closed: terminal delivery uses current disposition
+ok - cancelled-outcome/github/unreadable: terminal delivery uses current disposition
+ok - cancelled-outcome/github/skipped: terminal delivery uses current disposition
+ok - cancelled-outcome/github/no-identity: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/open: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/merged: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/closed: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/unreadable: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/skipped: terminal delivery uses current disposition
+ok - cancelled-outcome/gitlab/no-identity: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/open: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/merged: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/closed: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/unreadable: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/skipped: terminal delivery uses current disposition
+ok - cancelled-outcome/gerrit/no-identity: terminal delivery uses current disposition
+ok - cancelled-status/github/open: terminal delivery uses current disposition
+ok - cancelled-status/github/merged: terminal delivery uses current disposition
+ok - cancelled-status/github/closed: terminal delivery uses current disposition
+ok - cancelled-status/github/unreadable: terminal delivery uses current disposition
+ok - cancelled-status/github/skipped: terminal delivery uses current disposition
+ok - cancelled-status/github/no-identity: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/open: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/merged: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/closed: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/unreadable: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/skipped: terminal delivery uses current disposition
+ok - cancelled-status/gitlab/no-identity: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/open: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/merged: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/closed: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/unreadable: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/skipped: terminal delivery uses current disposition
+ok - cancelled-status/gerrit/no-identity: terminal delivery uses current disposition
+ok - outcome: cancellation without delivery carries no verdict
+ok - status: cancellation without delivery carries no verdict
+ok - selected: cancellation without delivery carries no verdict
+ok - coarse: cancellation without delivery carries no verdict
+ok - no-ci-log: cancellation without delivery carries no verdict
+ok - red-ci: cancellation without delivery carries no verdict
+ok - cancelled-test: cancellation without delivery carries no verdict
+ok - skipped-test: cancellation without delivery carries no verdict
+ok - synthetic cancelled run leaves fleet inventory unverified without a failure contradiction
+ok - cancelled-outcome: terminal delivery reports only observed evidence
+ok - cancelled-status: terminal delivery reports only observed evidence
+ok - skipped-rebase: terminal delivery reports only observed evidence
+ok - cancelled-skipped-rebase: terminal delivery reports only observed evidence
+ok - passed: terminal delivery reports only observed evidence
+ok - active run-step is authoritative
+ok - stale needs-decision over active run is superseded
+ok - stale blocked over active run is superseded
+ok - daemon/timeout blocked claim over a live fixing run reads as run alive
+ok - socket refusal or missing socket over a stale fixing run reports blocked
+ok - socket refusal over a terminal attributed run reports blocked
+ok - socket refusal outranks a ledger-resolved terminal run
+ok - socket-down evidence outranks a live run only while it is the log's latest event
+ok - broken-pipe blocker over a live run keeps the plain superseded reading
+ok - genuine daemon-down blocked line still reports blocked
+ok - a busy secondmate keeps its open blocker until that exact key closes
+ok - the most recently opened decision supplies the reported state and detail
+ok - ship and scout terminal declarations supersede stale decisions
+ok - latest status retains legacy completion events and shared captain matching
+ok - latest status subprocess work stays bounded and still reads past a long prose tail
+ok - genuine parked run is not flagged superseded
+ok - the parked human-decision component is derived from the findings table's action column
+ok - scalar gate parked run is not flagged superseded
+ok - gate block parked run is not flagged superseded
+ok - ci-ready status log beats monitoring run
+ok - ci-monitoring run with checks already green surfaces done
+ok - top-level ci status uses ci log green marker
+ok - a PR with no CI checks reported is not read as checks green
+ok - status-log override refuses a PR with no CI checks
+ok - base-advance re-arm after green stays checks green
+ok - a green marker before the ci log tail still surfaces done
+ok - a no_ci ci-monitor marker reads as unverified, not validating
+ok - status-log override refuses a no_ci repository
+ok - a red marker after the no_ci sentence reads not ready
+ok - pending no-checks ci-monitor marker stays working
+ok - ci-monitoring run with checks not yet green stays working
+ok - a fresh issue after an earlier green reading is not masked
+ok - stale checks-green status log does not mask CI relapse
+ok - ci fixing is not overridden by an earlier green marker
+ok - top-level fixing is not overridden by a stale ci running row
+ok - top-level fixing is not overridden by a stale done log
+ok - terminal passed run is authoritative
+ok - terminal passed-with-override run reads done like a clean pass
+ok - terminal passed-with-skips run reads done with the skip kept visible
+ok - terminal passed run uses matching retirement receipt without forge
+ok - terminal passed no-forge mode preserves local receipt evidence
+ok - terminal passed run with open PR does not claim merged
+ok - terminal passed run PR overrides stale task metadata
+ok - terminal passed run without readable PR identity reports unknown
+ok - terminal passed run reads open GitLab MR state
+ok - terminal passed run reads Forgejo pull request state through tea api
+ok - terminal passed run reads merged GitLab MR state
+ok - terminal passed run handles failed GitLab read
+ok - terminal passed run reads open Gerrit change state
+ok - terminal passed run reads merged and abandoned Gerrit change state
+ok - terminal passed run handles an unreadable or mismatched Gerrit read
+ok - terminal failed run is authoritative
+ok - orphaned ci monitor after green reads as held-for-merge done
+ok - status-only failed orphaned ci monitor after green reads done
+ok - genuinely failing CI keeps the failed verdict
+ok - a second failed step disqualifies the orphaned-monitor reclassification
+ok - cross-branch run is attributed via the real runs list
+ok - socket refusal over a coarse active run reports blocked
+ok - failed ledger record reads unknown only when the daemon is provably down
+ok - cross-branch attribution picks the branch's most recent row
+ok - a newer failure is not hidden by a live sibling
+ok - runs-list selection keeps the newer failure over an older live row
+ok - an older unfetched live sibling does not hide a newer failure
+ok - two terminal rows keep the existing newest-first precedence
+ok - an unclassifiable status row keeps the ledger's newest-first precedence
+ok - a terminal run with no live sibling is unchanged
+ok - coarse run does not probe another branch's ci log
+ok - another branch's run is ignored, falls back
+ok - unpushed ship done: is current-state blocked
+ok - recorded merged PR reads done under the fleet snapshot's captured meta
+ok - no-mistakes pre-validation done: stays current-state done
+ok - moved remote branch without the named head is current-state blocked
+ok - forge=external: an uploaded review reads done, and a PR report reads blocked with the gate's reason
+ok - no run + a busy semantic record reads working, attributed to its source
+ok - runs_on_current_branch: 0 makes a capped overview fall through to crew-state sources
+ok - a launch parked on a recognized interactive prompt never reads working, closing the absorb path a stale watcher poll depends on
+ok - a converted adapter never reads working from rendered footer text
+ok - grok still reads working through its isolated rendered-tail fallback
+ok - herdr's native busy verdict reads working with no record present
+ok - a herdr CLI that fails to answer reads unknown/unreachable, never gone
+ok - an alive endpoint whose scrollback read failed stays working
+ok - a husk pane (agent gone) still reads gone for reclaim
+ok - a mid-tool-call crew stays working because its record outranks herdr's generation state
+ok - an idle record with idle agent_status stays not-busy (no regression for a human-blocked agent)
+ok - no run + idle pane uses the status-log verb
+ok - no run + idle pane parses keyed status syntax
+ok - no run + idle pane on a paused: status reports state: paused with its reason
+ok - no run + idle pane honors the configured paused verb
+ok - a trailing resolved: event does not corrupt state render (idle stays idle)
+ok - dead window ignores stale status log
+ok - a gone window of a live session ignores the stale status log
+ok - a tmux that fails to answer reads unknown/unreachable, never gone
+ok - closed pane still reports a terminal run-step
+ok - closed pane still reports an active run-step
+ok - no timeout command uses perl bound
+ok - scout skips the run lookup
+ok - torn-down worktree is handled gracefully
+ok - fm-crew-state remote: alive endpoint falls through to the routed status log
+ok - fm-crew-state remote: an idle alive endpoint reads alive, never gone or dead
+ok - fm-crew-state remote: an unreachable host reads unknown-remote, never gone or dead
+ok - fm-crew-state remote: the remote host's own dead verdict is reported truthfully
+ok - missing meta is handled gracefully
+ok - override guard: a foreign-named override is ignored and the task's own state files are read
+ok - override guard: a matching-name override still steers the read at the captured generation
+ok - crew_is_provably_working absorbs a validating crew found only via the runs-list fallback
+ok - crew_is_provably_working still surfaces a genuinely stopped crew (safety property preserved)
+ok - usage error exits 2
+ok - historical same-branch rewritten head is not attributed as current
+ok - active run with valid descendant fix head remains current
+ok - local work advanced past run head invalidates attribution
+ok - pipeline-owned active run binds without head equality and beats the failed row
+ok - a genuinely failed run with no later run is not hidden
+ok - a later active run supersedes a stale failed reading
+ok - a later unbindable completed run leaves the failure unprovable
+ok - an unbindable later run reports unknown rather than a stale failure
+ok - a distinct unbindable terminal row supersedes an older failure
+ok - a same-head terminal rerun publishes the newest pull request
+ok - a terminal reading keeps its pull request when the ledger has no row
+ok - a precedence verdict reads as one sentence with the run id last
+ok - a ledger-sourced verdict never names the attributed run as its own
+ok - a newer cancelled ledger row leaves an earlier failure unprovable
+ok - a coarse terminal reading claims no supersession
+ok - a foreign status answer cannot hide the coarse terminal pull request
+ok - a stale passed run publishes no pull request for an active rerun
+ok - a stale cancelled run publishes no pull request for an active rerun
+ok - a malformed ledger row supplies no newest-row evidence
+ok - a ledger sha longer than the run head still binds the current run
+ok - a stale failed reading behind a declared pause reads unknown
+ok - a stale cancelled reading behind a declared pause reads unknown
+ok - a contradicted done reading is never published as a success
+ok - a stale failed reading behind a declared done reads unknown
+ok - a live replacement run outranks a status-log done
+ok - a mid-run pause does not mask the current run's failure
+ok - a mid-run done line does not mask the current run's failure
+ok - a pre-run done line does not mask a failed run
+ok - a failed run with no ordering evidence still surfaces
+ok - a needs-decision log never supersedes a failed run
+ok - a failed run advertises no pull request it never opened
+ok - a terminal run publishes its own pull request identity
+ok - coarse scan anchors the unresolvable active row instead of falling to an older one
+ok - coarse scan with a mismatched anchor stays unknown and lets the pane answer
+ok - coarse terminal row at a foreign head is not attributed
+ok - an executing run binds regardless of branch_sync state
+ok - a parked run keeps the strict head rule without pipeline_owned
+ok - run_parked_scalar_gate_running keeps the strict head rule despite its live status word
+ok - run_parked_in_gate_block keeps the strict head rule despite its live status word
+ok - the exemption never applies to a terminal run
+ok - missing run head falls back instead of matching by branch
+ok - active fix round with an unfetched pipeline head reads working
+ok - unanchored unverifiable active row is attributed because it is live
+ok - unresolvable terminal row never reads as current
+ok - runs-list continuation attribution works when axi answers another branch
+ok - herdr stale registration over a shell-only pane reads agent gone, not alive
+ok - herdr stale working record never reports a shell-only pane busy
+ok - capped overview retains both competing same-branch run ids
+ok - same-branch identity survives both runs falling outside the overview
+ok - a capped overview with zero same-branch rows reports absent, not unreadable
+ok - no run for this branch beside a live run elsewhere reads absent, not unreadable
+ok - the capped inventory reader is bounded by the crew read budget
+ok - a repo spelling the inventory does not record reads unreadable
+ok - a linked worktree green PR in merge monitoring reads held for merge
+ok - complete inventory preserves the replacement gate without writes
+ok - missing complete-inventory failure reports unknown
+ok - corrupt complete-inventory failure reports unknown
+ok - schema complete-inventory failure reports unknown
+ok - repo complete-inventory failure reports unknown
+ok - count complete-inventory failure reports unknown
+ok - norepo complete-inventory failure reports unknown
+ok - R6 complete selection ignores unrelated branch semantics
+ok - R6 requested branches use exact identity without a whitelist
+ok - R6 capped inventory ignores unrelated semantics and names both ids
+ok - R6 complete identity lookup precedes partial-row semantic rejection
+ok - R6 capped inventory preserves quoted requested-branch identity
+ok - R6 structural completeness and requested-run validation remain enforced
+ok - R5 complete inventory without Python keeps the replacement gate
+ok - R5 complete ambiguity without Python names both ids
+ok - R5 capped lookup without Python preserves available ids
+ok - R5 capped lookup without SQLite support preserves available ids
+ok - R1 both directions of inventory liveness disagreement read unknown
+ok - R2 uninitialized busy workers retain pane reporting
+ok - R2 uninitialized idle workers retain status reporting
+ok - R3 historical inventory yields to the current busy pane
+ok - R3 historical inventory yields to current worker status
+ok - superseded cancelled run preserves the replacement review gate
+ok - a live rebased run beats an older failed run at the local head
+ok - pending run with a rebased head reads working
+ok - running run with a rebased head reads working
+ok - legacy live rebased run is authoritative over an older failed row
+ok - legacy surface binds a fixing run at a rebased head
+ok - legacy surface binds a ci run at a rebased head
+ok - an unproven record at a diverged head does not answer for the crew
+ok - an unproven record with a dead daemon never overrides a busy pane
+ok - an ordinary blocked tip over a coarse live row keeps the superseded reading
+ok - a socket-refused blocker survives the dead-daemon verdict
+ok - an ordinary blocked tip survives the dead-daemon verdict
+ok - a parked gate survives a dead daemon with its findings intact
+ok - an unproven record at a diverged head does not answer on the selected route
+ok - a live record at a diverged head binds while the daemon answers
+ok - the anchored continuation binds while the daemon answers
+ok - a head-tied coarse record keeps its working reading and its original note
+ok - a coarse failed record with a dead daemon reads unknown
+ok - the selected-run anchored continuation reports the dead daemon, not an identity failure
+ok - the selected-run anchored continuation binds while the daemon answers
+ok - the selected route keeps an anchored parked run's gate with a dead daemon
+ok - an open decision survives the dead-daemon verdict on the selected route
+ok - a coarse pending ledger word reads unknown
+ok - an unanswered probe never turns a failed coarse record into a gate
+ok - the selected-route dead-daemon verdict names the run once
+ok - a head-tied row reads working when axi names the self run
+ok - a head-tied row reads working when axi names the other run
+ok - a head-tied coarse row is exempt even when the record head diverged
+ok - an unrecognised ledger word keeps the ordinary supersede note
+ok - daemon probe classifies running
+ok - daemon probe classifies stopped
+ok - daemon probe classifies empty
+ok - daemon probe classifies unexpected
+ok - daemon probe classifies absent
+ok - daemon probe classifies refused
+ok - daemon probe classifies timeout
+ok - an unanswered daemon probe leaves a live rebased run bound
+ok - a head-tied coarse live row is exempt from the dead-daemon verdict
+ok - a coarse live row over an open decision keeps the original supersede note
+ok - a coarse live row at a rebased head is not attributed
+ok - a terminal run at a diverged head keeps the strict head rule
+ok - competing live runs report unknown with both run ids
+ok - active current run beats a stale overview row
+ok - active current run beats a stale failed overview row
+ok - same-head active run beats a stale failed overview row
+ok - same-head run with an unverified ULID timestamp reports unknown
+ok - older live status does not hide a newer completed run
+ok - failed selected-run detail read is not attributed
+ok - live run newer than the selection does not hide a newer failed run
+ok - newer failed run remains failed beside an older live run
+ok - a live ledger row appearing after selection reports unknown
+ok - missing run selection reports unknown with candidate ids
+ok - wrong-id run selection reports unknown with candidate ids
+ok - wrong-branch run selection reports unknown with candidate ids
+ok - wrong-head run selection reports unknown with candidate ids
+ok - missing-status run selection reports unknown with candidate ids
+ok - malformed-table run selection reports unknown with candidate ids
+ok - inventory-error run selection reports unknown with candidate ids
+ok - selected-error run selection reports unknown with candidate ids
+ok - legacy conflicting run records report unknown
+ok - a sandboxed verdict is worker-attested and never falls back to the host
+ok - fm-crew-state is axi-conformant: --help exits 0 with an example, an unknown flag exits 2 with the error and a next step on stdout
+all fm-crew-state tests passed
+FM_TEST_END 2026-11-20T18:33:20Z tests/fm-crew-state.test.sh exit=0 duration_ms=253337 gate_skip=false
+FM_TEST_BEGIN 2026-11-20T18:33:20Z tests/fm-park.test.sh family=pr-forge expected_gate_skip=none
+1..34
+ok - github gate: clean PR parks, and draft, closed, conflict, behind, unknown mergeability, CI pending/failing/absent, changes requested, unresolved and unread threads each refuse
+ok - github gate refuses while a required check of the base branch has not reported on the head, or the requirement cannot be read
+ok - github gate waits for every reviewer bot to submit a review of the current head, or the quiet window since it was pushed
+ok - gitlab gate: clean MR parks, and draft, conflict, rebase, CI running/failed/absent, changes requested, other merge blockers, unresolved threads, a pipeline on an older commit, and a review bot that has not finished each refuse, across every page of discussions; a failed page is unreadable for gate and tick
+ok - park evaluates the gate twice, leases the slot, writes a private record, stops the agent once, and declares the wait
+ok - park refuses an unsupported backend before leasing, recording, or stopping
+ok - a head change between the verdict and the stop refuses the park and leaves the agent running
+ok - an instruction or a new turn arriving after the preflight refuses the park before the agent is stopped
+ok - park holds the inbox delivery lock across its final check and stop, refusing a newly delivered instruction without stopping the agent
+ok - park leaves the task metadata lock available to fm-control exit
+ok - a pending park stays watched during stop, promotes a later stop, and expires only after the stop bound
+ok - a hung agent check on a pending park ends within the tick, and the next tick resumes and settles it
+ok - a park whose record cannot be written refuses before the agent is stopped
+ok - park refuses a busy or unfinished worker, a waiting instruction, a dirty or lagging copy, an unarmed merge poll, an unleasable slot, and a failed stop
+ok - a lane re-parked after a relaunch keeps its own durable lease, and a slot leased to another holder refuses the park
+ok - head change, failing checks, changes requested, an unresolved thread, a conflict, and new or edited GitHub or GitLab comments, including an inline reply in a resolved thread, each relaunch a fresh worker with the trigger in its instructions
+ok - an edited comment older than the latest 100 is detected and relaunches the parked lane
+ok - a parked branch that merely fell behind its base stays parked
+ok - a relaunch slower than the whole tick budget completes once, is never killed, and is reported by the next tick
+ok - a tick that runs out of time resumes at the next unvisited lane, so a slow early lane cannot starve later ones
+ok - an unchanged parked PR and a bare approval stay parked silently
+ok - a failed relaunch keeps the park record, reports once, and waits for a manual resume
+ok - closed-without-merge reporting for unparked lanes requires a feature flag and does not require an idle worker
+ok - tick parks nothing without opt-in, reads nothing when opted out of cleanup too, never parks an unclean lane, and parks a clean idle one under config/park-on-review
+ok - merge-time cleanup requires opt-in for unparked lanes and always cleans parked lanes
+ok - land queue fails when the cleanup request cannot be written
+ok - a lost pool slot and its leftover paths survive in the detached land report
+ok - a detached merge-time cleanup returns at once, runs its slow teardown to completion, and the next tick reports it once
+ok - a pending merged-lane cleanup survives watcher restart and reports its outcome once
+ok - a temporary control-lock refusal stays pending and retries to one reported cleanup outcome
+ok - a cleanup killed during its teardown keeps its request, and the next tick retries it and reports once
+ok - a cleanup request for a PR the lane no longer names is dropped without a teardown or a report
+ok - an action report survives until the tick has recorded its wake, then is reported once
+ok - a merge-time cleanup waits for a relaunch of the same lane that is under way
+FM_TEST_COMPLETE
+FM_TEST_END 2026-11-20T18:35:25Z tests/fm-park.test.sh exit=0 duration_ms=125408 gate_skip=false
+FM_TEST_BEGIN 2026-11-20T18:35:25Z tests/fm-t3-mcp.test.sh family=backend-dispatch expected_gate_skip=none
+ok - fm-t3-mcp login: PKCE sign-in writes a 0600 credential with the environment id and prints no secret
+ok - fm-t3-mcp login: the origin defaults to FM_T3CODE_ORIGIN, then T3's runtime file, else refuses naming both
+ok - fm-t3-mcp login: refuses every ceiling but full-access before any request
+ok - fm-t3-mcp status: gate passes over JSON and SSE replies with the 2025-06-18 protocol header
+ok - fm-t3-mcp gate: refuses a server missing a required tool or its identity tool
+ok - fm-t3-mcp: refuses a server whose environment id differs from the credential's
+ok - fm-t3-mcp credential: refuses expired, missing, and over-readable credentials, and warns before expiry
+ok - fm-t3-mcp: a 401 from a revoked credential is a local refusal naming a fresh sign-in
+ok - fm-t3-mcp projects: matched by real path, deleted ones skipped, a failed create resolves to a registered project, project-read returns the default model
+ok - fm-t3-mcp launch: idle full-access thread on the existing worktree or the project root, with the given model selection
+ok - fm-t3-mcp launch: refuses a binding T3 did not honor, reports a lost, unproven, or unarchived launch as uncertain, and a gate failure as no launch
+ok - fm-t3-mcp thread verbs: idempotent send, state and turn time, bounded capture, interrupt claims, and proven archive
+ok - fm-t3-mcp thread-for-root: only an unarchived, running, worktree-less thread on the root resolves
+ok - fm-t3-mcp: tool errors exit 3 with T3's code, an unreachable server exits 1
+ok - fm-t3-mcp status: reports telemetry off only when the server process proves it, and warns otherwise
+ok - fm-t3-mcp read: --limit is capped at T3's own 100
+ok - fm-t3-mcp interrupt: confirmation waits on exactly the run T3 interrupted, never a later run
+ok - fm-t3-mcp send: a reply lost after commit exits 7, and the same-id retry lands as one delivery
+ok - fm-t3-mcp thread-for-root: every page is read, forks count, subagents do not
+ok - fm-t3-mcp resolve-selection: driver, model, and options come from T3's catalog; an effort override keeps other options
+ok - fm-t3-mcp launch: t3_thread_configuration must read back the instance, model, and every requested option
+ok - fm-t3-mcp requests/respond: questions are read and answered by id; approvals are counted, never answered
+ok - fm-t3-mcp watch: exact-run waits end on a terminal run, idle threads never wait, and pending requests block once per signature
+ok - fm-t3-mcp watch: waits that all fail are an error, not a timeout
+ok - fm-t3-mcp: a helper reached through a symlinked path runs its verb instead of exiting silently
+ok - fm-t3-mcp: an empty reply is never success: a send stays unconfirmed and a read fails
+ok - fm-t3-mcp watch: each pending approval is identified, so one answered and replaced between watches escalates again
+ok - fm-t3-mcp: a JSON-RPC server error after a send or launch is unconfirmed, never a proven refusal
+ok - fm-t3-mcp: T3's orchestration_error, or a tool error without a code, after a send or launch is unconfirmed; a specific typed refusal stays proven
+ok - fm-t3-mcp wait: a long wait re-arms in slices under Node's 300 s reply limit
+ok - fm-t3-mcp capture: --lines above 500 reads the last 500, and the verb ends its MCP session
+FM_TEST_END 2026-11-20T18:36:24Z tests/fm-t3-mcp.test.sh exit=0 duration_ms=58766 gate_skip=false
+FM_TEST_BEGIN 2026-11-20T18:36:24Z tests/fm-herdr-lab.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - fm-herdr-lab: names fail closed and require the lab prefix
+ok - fm-herdr-lab: names whose client socket path exceeds sun_path are refused
+ok - fm-herdr-lab: a server that fails at startup reports its error without the full wait
+ok - fm-herdr-lab: a noisy server leaves a bounded log
+ok - fm-herdr-lab: provision does not hold a captured output pipe open
+ok - fm-herdr-lab: provisioning, scoped calls, guarded teardown, and fleet tripwire are deterministic
+ok - fm-herdr-lab: run keeps the lab session a Herdr option before any -- delimiter
+ok - fm-herdr-lab: missing tripwire refuses teardown before any Herdr call
+ok - fm-herdr-lab: changed default fleet state is a hard failure
+ok - fm-herdr-lab: the default fleet session stays the recorded tripwire
+ok - fm-herdr-lab: a custom fleet session is recorded and compared like the default session
+ok - fm-herdr-lab: the fleet session can never be a lab or malformed session
+ok - fm-herdr-lab: Herdr calls never inherit the live pane's socket or pane identity
+ok - fm-herdr-lab: an owned stopped lab can re-provision safely
+ok - fm-herdr-lab: failed deletion retains ownership until absence is confirmed
+ok - fm-herdr-lab: timed-out provisioning cancels the launch before teardown
+ok - fm-herdr-lab: the viewer attaches only to a session this lab owns
+ok - fm-herdr-lab: timed-out viewer startup cancels its exact launcher
+ok - fm-herdr-lab: startup timeout allows launcher child escalation
+ok - fm-herdr-lab: viewer start requires an identity-matched owned process
+ok - fm-herdr-lab: viewer stop signals only recorded processes and confirms the detach
+ok - fm-herdr-lab: viewer ownership requires the recorded parent
+ok - fm-herdr-lab: interrupted viewer start cancels its launcher
+ok - fm-herdr-lab: teardown refuses to destroy a session an attached viewer still holds
+ok - fm-herdr-lab: unreadable detach results fail closed on running sessions
+ok - fm-herdr-lab: the viewer launcher refuses unsafe sessions and pidfiles
+FM_TEST_END 2026-11-20T18:37:04Z tests/fm-herdr-lab.test.sh exit=0 duration_ms=39864 gate_skip=false
+FM_TEST_BEGIN 2026-11-20T18:37:04Z tests/fm-cd-pretool-check.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - cd-guard acceptance matrix: 79 cases x 5 harness entry forms, block/allow all correct
+ok - cd-guard: fires in a secondmate home (its own primary session is a primary)
+ok - cd-guard: inert in a crewmate/scout task worktree (linked git worktree)
+ok - cd-guard: inert in a non-firstmate repo (no AGENTS.md)
+ok - cd-guard: inert when not inside a git repo
+ok - cd-guard: reproduces the cwd leak and denies the exact command that causes it
+ok - cd-guard: fails open on empty stdin
+ok - cd-guard: fails open on unparseable stdin JSON
+ok - cd-guard: fails open (never blocks) when node is missing
+ok - cd-guard: fails open on the stdin path when jq is missing
+ok - cd-guard: prefilter fast-allows (skips node) when no cd/pushd/popd substring is present
+ok - cd-guard: fm-cd-command-policy.mjs CLI honors the deny/allow output contract
+ok - bin/fm-cd-pretool-check.sh is clean under bin/fm-lint.sh
+FM_TEST_END 2026-11-20T18:37:59Z tests/fm-cd-pretool-check.test.sh exit=0 duration_ms=54905 gate_skip=false
+FM_TEST_BEGIN 2026-11-20T18:37:59Z tests/fm-grok-harness.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - grok global hook requires a firstmate registry token
+ok - grok teardown removes pointer and token state
+ok - fm-lock recognizes grok harness processes
+FM_TEST_END 2026-11-20T18:38:07Z tests/fm-grok-harness.test.sh exit=0 duration_ms=8264 gate_skip=false
+FM_TEST_BEGIN 2026-11-20T18:38:07Z tests/fm-pi-primary-types.test.sh family=pure-contract-unit expected_gate_skip=none
+Pi production-consumer typechecks: npm 9.2.0
+npm WARN deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+added 124 packages in 6s
+{"node":"v22.22.1","platform":"linux","arch":"x64","packages":{"@earendil-works/pi-ai":{"version":"1.1.0","resolved":"https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-1.1.0.tgz","integrity":"sha512-1T7LAkc/5Bvc0v6w4vAGVdCrli0o/E0pEmYKTnixu95vSFArBjvbhS/G4ZwI0RUePgf0Imcu0VyqlM4EcXxqfw=="},"@earendil-works/pi-coding-agent":{"version":"1.1.0","resolved":"https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.1.0.tgz","integrity":"sha512-SeEi/4hdcHNgA9UWlefZl7ZZpm3dzi2OoxNjDHsBJ9o298LNOtbL4DGKgitlEj6uCTccvtw6f2hlCkTPVJ2RXg=="},"@earendil-works/pi-tui":{"version":"1.1.0","resolved":"https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-1.1.0.tgz","integrity":"sha512-v7wkS0y2ErZvZkSfemqd9RrBZJ5x6p8Ujsv7NdJj01IXJyFM0kNL6rMdcKcvTe7EVTd6ugvDB9VPZSoaBF9QxQ=="},"@types/node":{"version":"22.19.19","resolved":"https://registry.npmjs.org/@types/node/-/node-22.19.19.tgz","integrity":"sha512-dyh/xO2Fh5bYrfWaaqGrRQQGkNdmYw6AmaAUvYeUMNTWQtvb796ikLdmTchRmOlOiIJ1TDXfWgVx1QkUlQ6Hew=="},"typebox":{"version":"1.3.27","resolved":"https://registry.npmjs.org/typebox/-/typebox-1.3.27.tgz","integrity":"sha512-zu+jc1pcy4UiNThxikUr36f0Rybk9PEeCg/NE6adeWr/SKsdNO4EzZHYRDlv2YCVAfj3Odq3dESSo/jNyoBXzA=="},"typescript":{"version":"5.9.3","resolved":"https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz","integrity":"sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="}},"lifecycleScriptsDisabled":true,"packagesWithInstallScripts":["node_modules/@google/genai","node_modules/esbuild","node_modules/protobufjs"]}
+Version 5.9.3
+ok - tracked Pi extensions pass strict no-emit typecheck against Pi 1.1.0
+{"sdk":"1.1.0","casesPassed":16,"results":[{"mode":"alternating-85","requests":4,"executions":6,"notices":1},{"mode":"alternating-65","requests":4,"executions":6,"notices":1},{"mode":"ssh","requests":4,"executions":3,"notices":1,"operationalAndResumeLatch":true,"realUserReset":true},{"mode":"cut","requests":4,"executions":3,"notices":1},{"mode":"grouped","requests":4,"executions":3,"notices":1},{"mode":"multiline","requests":4,"executions":3,"notices":1},{"mode":"continued-group","requests":4,"executions":3,"notices":1},{"mode":"unknown-group","requests":7,"executions":6,"notices":0},{"mode":"mutating-group","requests":7,"executions":6,"notices":0},{"mode":"same-batch","requests":4,"executions":3,"notices":1},{"mode":"truncated","requests":4,"executions":3,"notices":1},{"mode":"truncated-compact","requests":6,"executions":3,"notices":1},{"mode":"changing","requests":7,"executions":6,"notices":0},{"mode":"failed","requests":7,"executions":6,"notices":0},{"mode":"foreign-owner","requests":7,"executions":6,"notices":0},{"mode":"default-off","requests":7,"executions":6,"notices":0}]}
+ok - read guard real SDK events/abort against Pi 1.1.0
+npm WARN deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+added 121 packages in 5s
+{"node":"v22.22.1","platform":"linux","arch":"x64","packages":{"@earendil-works/pi-ai":{"version":"1.2.0","resolved":"https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-1.2.0.tgz","integrity":"sha512-U5/1zXqfV1on7/9sbez03tT4Ru49Lvfb4+zXSDK3DBKF5cRk6KxvAOTOY3HJ4jimlZth+rs7vbJqN6iBQAoNuQ=="},"@earendil-works/pi-coding-agent":{"version":"1.2.0","resolved":"https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.2.0.tgz","integrity":"sha512-h/4WaVWv1VlCaY8x8qEN5U+7jbF/e7+Ck6moPeEOFn5juMTWwNAXjwgYM7gRgbBYh8Zppwt6qWvJDzNTf4GNEQ=="},"@earendil-works/pi-tui":{"version":"1.2.0","resolved":"https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-1.2.0.tgz","integrity":"sha512-OdJCiYklkL3TqmdmGKUflHoLy9zw18GBYO0DPASZvGlP4RkDXAZzLLDt7cidJ6wUR7DBrKb13rrekDsXgMF60g=="},"@types/node":{"version":"22.19.19","resolved":"https://registry.npmjs.org/@types/node/-/node-22.19.19.tgz","integrity":"sha512-dyh/xO2Fh5bYrfWaaqGrRQQGkNdmYw6AmaAUvYeUMNTWQtvb796ikLdmTchRmOlOiIJ1TDXfWgVx1QkUlQ6Hew=="},"typebox":{"version":"1.3.27","resolved":"https://registry.npmjs.org/typebox/-/typebox-1.3.27.tgz","integrity":"sha512-zu+jc1pcy4UiNThxikUr36f0Rybk9PEeCg/NE6adeWr/SKsdNO4EzZHYRDlv2YCVAfj3Odq3dESSo/jNyoBXzA=="},"typescript":{"version":"5.9.3","resolved":"https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz","integrity":"sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="}},"lifecycleScriptsDisabled":true,"packagesWithInstallScripts":["node_modules/@google/genai","node_modules/protobufjs"]}
+Version 5.9.3
+ok - tracked Pi extensions pass strict no-emit typecheck against Pi 1.2.0
+{"sdk":"1.2.0","casesPassed":16,"results":[{"mode":"alternating-85","requests":4,"executions":6,"notices":1},{"mode":"alternating-65","requests":4,"executions":6,"notices":1},{"mode":"ssh","requests":4,"executions":3,"notices":1,"operationalAndResumeLatch":true,"realUserReset":true},{"mode":"cut","requests":4,"executions":3,"notices":1},{"mode":"grouped","requests":4,"executions":3,"notices":1},{"mode":"multiline","requests":4,"executions":3,"notices":1},{"mode":"continued-group","requests":4,"executions":3,"notices":1},{"mode":"unknown-group","requests":7,"executions":6,"notices":0},{"mode":"mutating-group","requests":7,"executions":6,"notices":0},{"mode":"same-batch","requests":4,"executions":3,"notices":1},{"mode":"truncated","requests":4,"executions":3,"notices":1},{"mode":"truncated-compact","requests":6,"executions":3,"notices":1},{"mode":"changing","requests":7,"executions":6,"notices":0},{"mode":"failed","requests":7,"executions":6,"notices":0},{"mode":"foreign-owner","requests":7,"executions":6,"notices":0},{"mode":"default-off","requests":7,"executions":6,"notices":0}]}
+ok - read guard real SDK events/abort against Pi 1.2.0
+FM_TEST_END 2026-11-20T18:38:52Z tests/fm-pi-primary-types.test.sh exit=0 duration_ms=44403 gate_skip=false
+FM_TEST_BEGIN 2026-11-20T18:38:52Z tests/fm-review-diff.test.sh family=pr-forge expected_gate_skip=none
+ok - fm-review-diff falls back to recorded pr_head when pull head cannot be fetched
+ok - fm-review-diff fetches refs/pull/<n>/head when pr_head= is absent
+ok - fm-review-diff prefers freshly fetched PR head over a stale recorded pr_head=
+ok - fm-review-diff without pr= keeps the worktree-branch diff
+ok - fm-review-diff falls back to local branch with a warning when PR head is unreachable
+ok - fm-review-diff reviews the meta-recorded ship branch even when the worktree HEAD moved off it
+ok - fm-review-diff refuses a corrupt recorded ship branch instead of reviewing the wrong content
+ok - fm-review-diff compares a task against its recorded base branch
+ok - fm-review-diff fetches refs/pull/<n>/head for a Forgejo /pulls/<n> pr= URL
+ok - fm-review-diff resolves a Forgejo repo literally named pulls by the last /pulls/ segment
+ok - fm-review-diff falls back to a recorded Forgejo pr_head when the pull ref cannot be fetched
+ok - fm-review-diff keeps anchoring a remote-backed project on origin without the opt-in
+ok - fm-review-diff anchors an opted-in local landing on the local default, not a frozen origin
+ok - fm-review-diff keeps an opted-in publishing mode on origin, showing everything its pull request would carry
+ok - fm-review-diff follows an opted-in local-only branch through its rebase and later landings
+ok - fm-review-diff keeps an opted-in review on origin when the local default trails it
+ok - fm-review-diff anchors opted-in diverged default branches on the one the task was planted on
+ok - fm-review-diff says why an opted-in review of a landed branch is empty
+ok - fm-review-diff reports opted-in unrelated merge bases instead of choosing one silently
+ok - fm-review-diff keeps an opted-in named base branch on origin's copy
+FM_TEST_END 2026-11-20T18:39:04Z tests/fm-review-diff.test.sh exit=0 duration_ms=11957 gate_skip=false
+FM_TEST_BEGIN 2026-11-20T18:39:04Z tests/fm-tmux-submit-busy.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - fm_tmux_submit_enter_core: busy pane + pending composer returns empty (message queued)
+ok - fm_tmux_submit_enter_core: idle pane + pending composer stays pending (genuine swallow preserved)
+ok - fm_tmux_submit_enter_core: the Claude background-task exit picker gets no confirming Enter
+ok - fm_backend_send_text_submit: a typed message to the exit picker types nothing and sends no Enter
+ok - fm_tmux_submit_enter_core: wrapped input retains swallowed-Enter retries
+ok - fm_tmux_submit_enter_core: placeholder-like bare input retains swallowed-Enter retries
+ok - fm_tmux_submit_enter_core: busy pane clears composer on first Enter - returns empty
+ok - fm_tmux_submit_enter_core: idle pane clears composer on first Enter - returns empty as before
+ok - fm_tmux_submit_enter_core: busy conversion is limited to proven pending input
+ok - fm_tmux_submit_core: failed baseline capture disables busy unknown conversion
+ok - fm_tmux_submit_enter_core: pending-unproven retries without busy conversion
+ok - fm_tmux_submit_enter_core: unrecognized states skip busy conversion
+ok - fm_pane_is_busy: Claude spinner is scoped, multi-frame, and backward-compatible
+FM_TEST_END 2026-11-20T18:39:06Z tests/fm-tmux-submit-busy.test.sh exit=0 duration_ms=2732 gate_skip=false
+FM_TEST_BEGIN 2026-11-20T18:39:06Z tests/fm-composer-ghost.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - fm_tmux_strip_ghost drops dim/faint runs, keeps normal and bold text
+ok - fm_tmux_strip_ghost handles combined SGR, ESC[22m, and reset-then-dim
+ok - fm_tmux_strip_ghost keeps bright colored text with 2 payloads
+ok - fm_tmux_strip_ghost drops a dark/muted truecolor foreground (grok placeholder)
+ok - fm_tmux_strip_ghost keeps muse's near-threshold glyph and its typed text
+ok - fm_pane_input_pending: a dim ghost-only composer is NOT pending
+ok - fm_pane_input_pending: dim ghost inside a bordered composer is NOT pending
+ok - fm_pane_input_pending: normal-intensity typed text is still pending
+ok - fm_pane_input_pending: bright colored text with 2 payloads is still pending
+ok - fm_pane_input_pending: a dark truecolor ghost-only composer (grok placeholder) is NOT pending
+ok - fm_tmux_composer_state: dark truecolor shell prompts read unknown
+ok - fm_pane_input_pending: real text plus a trailing ghost run is still pending
+ok - fm_tmux_composer_state: text above an empty cursor row is pending
+ok - fm_tmux_composer_state: a message wrapped across three rows is pending
+ok - fm_tmux_composer_state: a proven titled box tolerates a bottom-border cursor
+ok - fm_tmux_composer_identity: unknown busy state cannot become idle identity
+ok - fm_tmux_composer_state: typed Pi and Grok busy signatures inside a box are pending
+ok - fm_tmux_composer_state: a bare busy-footer row reads unknown (strict container-proof rule)
+ok - fm_tmux_composer_state: an unbounded bordered box fails closed as unknown
+ok - fm_tmux_composer_state: clipped and asymmetric composer edges fail closed
+ok - fm_tmux_composer_state: inconsistent box geometry fails closed
+ok - fm_tmux_composer_state: misaligned box bounds fail closed
+ok - fm_tmux_composer_state: unproved ghost and malformed geometry stay unknown while styled placeholder-like text stays pending-unproven
+ok - fm_tmux_composer_state: differing widths prefer pending or unknown, never empty
+ok - fm_tmux_composer_state: emoji and CJK text remain pending under the C locale
+ok - fm_tmux_composer_state: all tmux harnesses share empty and pending classification
+ok - fm_pane_input_pending: unrecognized states defer by default
+ok - fm_tmux_composer_state: one capture feeds the classifier; no band-capture race remains
+ok - fm_tmux_composer_state: absent Pi identity preserves Claude's enclosed bare verdict
+ok - fm_tmux_composer_state: only proven structural and non-bordered empty routes stay empty
+ok - fm_tmux_composer_state: panes without bordered structure retain compatibility fallback
+ok - fm_tmux_composer_state: interior edge glyphs retain non-bordered fallback
+ok - fm-peek output is escape-free (no raw -e bytes reach firstmate context)
+FM_TEST_END 2026-11-20T18:39:09Z tests/fm-composer-ghost.test.sh exit=0 duration_ms=2369 gate_skip=false
+FM_TEST_BEGIN 2026-11-20T18:39:09Z tests/fm-transition-lib.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - fm_transition_record builds a 6-field record and every accessor reads its field
+ok - fm_transition_record uses a single TAB between each of the six fields
+ok - fm_transition_record scrubs TAB/newline out of fields so the record stays exactly six columns
+ok - fm_transition_record tolerates empty workspace/from/agent/detail fields
+ok - fm_transition_policy is the single-owner status->action table (blocked=actionable, working=absorb, idle/done=defer, gone=rescan, else=fallback)
+ok - fm_transition_apply/_commit/_clear: one hit per blocked edge, cleared by working or cleanup, prefix-scoped, gone rescans
+# fm-transition-lib.test.sh: all assertions passed
+FM_TEST_END 2026-11-20T18:39:09Z tests/fm-transition-lib.test.sh exit=0 duration_ms=378 gate_skip=false
+FM_TEST_SUMMARY total=13 failed=0 skipped_gate=1 duration_ms=951084
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=2 duration_ms=406884 failed=0
+FM_TEST_SUMMARY_FAMILY family=pr-forge count=2 duration_ms=137365 failed=0
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=9 duration_ms=406445 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-backend-t3code.test.sh duration_ms=348118
+FM_TEST_SLOWEST rank=2 script=tests/fm-crew-state.test.sh duration_ms=253337
+FM_TEST_SLOWEST rank=3 script=tests/fm-park.test.sh duration_ms=125408
+FM_TEST_SLOWEST rank=4 script=tests/fm-t3-mcp.test.sh duration_ms=58766
+FM_TEST_SLOWEST rank=5 script=tests/fm-cd-pretool-check.test.sh duration_ms=54905
+FM_TEST_SLOWEST rank=6 script=tests/fm-pi-primary-types.test.sh duration_ms=44403
+FM_TEST_SLOWEST rank=7 script=tests/fm-herdr-lab.test.sh duration_ms=39864
+FM_TEST_SLOWEST rank=8 script=tests/fm-review-diff.test.sh duration_ms=11957
+FM_TEST_SLOWEST rank=9 script=tests/fm-grok-harness.test.sh duration_ms=8264
+FM_TEST_SLOWEST rank=10 script=tests/fm-tmux-submit-busy.test.sh duration_ms=2732
+FM_TEST_SLOWEST rank=11 script=tests/fm-composer-ghost.test.sh duration_ms=2369
+FM_TEST_SLOWEST rank=12 script=tests/fm-transition-lib.test.sh duration_ms=378
+FM_TEST_SLOWEST rank=13 script=tests/fm-captain-hold-lifecycle.test.sh duration_ms=193

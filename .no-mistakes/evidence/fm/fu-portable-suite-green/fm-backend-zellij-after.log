@@ -1,0 +1,64 @@
+ok - fm_backend_zellij_version_check: accepts the verified minimum (0.44.0)
+ok - fm_backend_zellij_version_check: accepts a newer version (0.45.2)
+ok - fm_backend_zellij_version_check: refuses an old version loudly
+ok - fm_backend_zellij_version_check: refuses loudly when zellij is not installed
+ok - fm_backend_zellij_session: defaults to 'firstmate' when FM_ZELLIJ_SESSION is unset
+ok - fm_backend_zellij_session: honors the FM_ZELLIJ_SESSION test-isolation override
+ok - fm_backend_zellij_parse_target: splits '<session>:<pane_id>' on the first colon
+ok - fm_backend_zellij_normalize_key: Enter/Escape/C-c map to zellij's verified Enter/Esc/'Ctrl c'
+ok - fm_backend_zellij_scoped_title: scopes a primary task title with firstmate plus root hash
+ok - fm_backend_zellij_scoped_title: scopes a secondmate task title with the home marker plus root hash
+ok - fm_backend_zellij_scoped_title: includes the resolved FM_ROOT hash in the home label
+ok - fm_backend_zellij_tab_matches_label: accepts an untagged legacy fm-<id> title when it is the only live tab carrying it
+ok - fm_backend_zellij_tab_matches_label: refuses an untagged legacy label match when 2+ live tabs share it (migration ambiguity guard)
+ok - fm_backend_zellij_list_live: scopes to this home's own tag - excludes a different installation's tagged tab and unrelated tabs
+ok - fm_backend_zellij_resolve_bare_selector: matches the home-scoped tagged title first
+ok - fm_backend_zellij_resolve_bare_selector: refuses an ambiguous untagged legacy label shared by 2+ live tabs
+ok - fm_backend_zellij_resolve_bare_selector: checks every session for the scoped title before legacy fallback
+ok - fm_backend_zellij_resolve_bare_selector: requires untagged legacy labels to be globally unique across sessions
+ok - fm_backend_zellij_session_exists: true when the session name is listed
+ok - fm_backend_zellij_session_exists: false when the session name is not listed
+ok - fm_backend_zellij_server_ensure: reuses an existing session without calling attach
+ok - fm_backend_validate: zellij is a known backend (P3)
+ok - fm_backend_busy_state: zellij (no native primitive) always reports unknown, same as tmux
+ok - fm_backend_zellij_create_task: refuses a duplicate home-scoped tab title (zellij's own new-tab has no uniqueness check)
+ok - fm_backend_zellij_create_task: creates a home-scoped tab and parses tab_id/pane_id from the response
+ok - fm_backend_zellij_create_task: restores focus to the previously-active tab after the steal-focus new-tab call
+ok - fm_backend_zellij_create_task: skips the restore call when there was no previously-active tab
+ok - fm_backend_zellij_capture: small reads use viewport-only dump-screen and trim to N lines locally
+ok - fm_backend_zellij_capture: reads above the watcher-size threshold request --full scrollback
+ok - fm_backend_zellij_capture: fails when the specific pane is absent
+ok - fm_backend_zellij_capture: fails when the target session is not listed as active (session_exists pre-check)
+ok - fm_backend_zellij_send_key: normalizes the key (Escape -> Esc) and targets the explicit pane id
+ok - fm_backend_zellij_send_literal: calls paste with an explicit pane id and a -- separator
+ok - fm_backend_zellij_send_text_line: clears partial input when Enter fails
+ok - fm_backend_zellij_send_text_line: reports unsafe input when cleanup also fails
+ok - fm_backend_zellij_target_ready: expected labels allow matching fm-<id> tabs
+ok - fm_backend_zellij_target_ready: expected labels reject stale pane ids reused by another tab
+ok - fm_backend_zellij_current_path: actively probes with marked begin/end lines and reconstructs wrapped cwd output
+ok - fm_backend_zellij_current_path: never picks up a ~-prefixed banner line as the answer
+ok - fm_backend_zellij_kill: resolves the owning tab id fresh and calls close-tab-by-id (never a bare close-pane)
+ok - fm_backend_zellij_kill: falls back to close-pane when the owning tab cannot be resolved
+ok - fm_backend_zellij_kill: closes the recorded tab id only after label verification
+ok - fm_backend_zellij_kill: skips a stale recorded tab id whose label does not match
+ok - fm_backend_zellij_kill: never fails when the target session no longer exists
+ok - fm-teardown.sh: passes recorded zellij_tab_id with the expected task label
+ok - fm-teardown.sh: force cleanup kills zellij children using the child home tag
+ok - fm_backend_zellij_send_text_submit: reports 'empty' once the composer classifies empty (submitted)
+ok - fm_backend_zellij_send_text_submit: reports 'pending' when the composer still holds the text after retried Enters (swallowed)
+ok - fm_backend_zellij_send_text_submit: an unrelated pane change is not a delivery confirmation (false-positive regression)
+ok - fm_backend_zellij_send_text_submit: refuses confirmation when paste exits successfully without typing
+ok - fm_backend_zellij_send_text_submit: transcript echoes outside the selected composer cannot prove typing
+ok - fm_backend_zellij_send_text_submit: pre-existing text cannot prove a no-op paste landed
+ok - fm_backend_zellij_send_text_submit: unrelated drafts and furniture cannot prove typing
+ok - fm_backend_zellij_send_text_submit: observes wrapped text replacing a shell-prompt placeholder
+ok - fm_backend_zellij_send_text_submit: observes wrapped text in a bare composer
+ok - fm_backend_zellij_send_text_submit: preserves agent glyphs within wrapped content
+ok - fm_backend_zellij_send_text_submit: refuses a live shell below a stale composer
+ok - fm_backend_zellij_composer_state: classifies the real claude-in-zellij --ansi dump as empty
+ok - fm_backend_zellij_composer_state: a dead pane (empty dumps) reads unknown, never a confirmation
+ok - fm_backend_zellij_send_text_submit: reports 'send-failed' when the target session is not active
+ok - fm_backend_zellij_send_text_submit: reports 'send-failed' when the target pane is absent
+ok - fm-peek/fm-send: explicit metadata-matched targets use the recorded zellij backend
+ok - fm-peek: fm-id zellij targets verify the owning tab label before capture
+ok - fm-send: fm-id zellij targets reject pane ids whose tab label no longer matches

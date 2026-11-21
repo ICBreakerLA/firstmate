@@ -1,0 +1,8 @@
+1..2
+ok - host: a host stopped while holding its own queue steal mutex drops it and exits
+ok - host: an attended close whose task turns main-only before its turn still reaches main unchanged
+FM_TEST_COMPLETE
+
+real	0m12.995s
+user	0m10.981s
+sys	0m4.976s

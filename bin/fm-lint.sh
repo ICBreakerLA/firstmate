@@ -14,18 +14,18 @@
 # and SC2329, the codes that need library context. CI checks those codes
 # on source-following attempts (see the memory fallback below). Explicit
 # paths attempt --external-sources with the selected dataflow mode.
-# Tests stop source analysis at imported production modules because the full
-# lint analyzes every production shell separately as a canonical, source-aware root.
+# Tests stop source analysis at imported production modules because CI analyzes
+# every production shell separately as a canonical, source-aware root.
 # The default (no explicit-path) path also runs bin/fm-lint-workflows.sh so a
-# malformed GitHub workflow, including a self-broken workflow YAML, fails
-# locally before merge instead of only failing when its job cannot start.
+# malformed GitHub workflow, including a self-broken ci.yml, fails locally
+# before merge instead of only failing to run as CI.
 #
 # With no explicit paths, the file set and source-following posture depend
 # on context:
 #   - In CI (GITHUB_ACTIONS=true or CI=true), on the main branch, or when no
 #     merge-base against origin/main (or local main) can be found, it lints
 #     the full canonical set: bin/*.sh bin/backends/*.sh tests/*.sh, with
-#     --external-sources and full dataflow first. The full lint never depends
+#     --external-sources and full dataflow first. CI coverage never depends
 #     on a local diff; memory failures may take the narrower retry below.
 #   - Otherwise (an ordinary local branch with a real merge-base) it lints
 #     only the canonical-set files changed since that merge-base, including
@@ -62,7 +62,7 @@
 # (FM_LINT_ROOT_MEMORY_KIB, default 16777216 = 16 GiB of virtual address
 # space per analysis process). The sizing rationale and RSS reduction threshold
 # live beside ROOT_MEMORY_KIB below. This is not a resident-memory ceiling;
-# check aggregate worker RSS on the host running it. The watchdog uses the shared
+# check aggregate runner RSS in CI. The watchdog uses the shared
 # bin/fm-timeout-lib.sh group-kill pattern, so a deadline or an interrupt
 # removes the owned process group. Bounds mode proves the watchdog can
 # actually bound a probe command and that the host accepts the memory limit
@@ -982,9 +982,9 @@ ROOT_GRACE=${FM_LINT_ROOT_GRACE:-5}
 # resident: the 12 GiB cap's ~8 GiB wall caught it with rc=251 (the 8 GiB
 # cap's ~5.33 GiB wall had already caught bin/fm-spawn.sh,
 # tests/fm-pending-reply.test.sh, and
-# tests/fm-launch-prompt-signals-live-e2e.test.sh). Each root runs in its own
-# process, so worst-case resident demand is ~10.7 GiB plus process overhead.
-# Local lint defaults to two workers; two such
+# tests/fm-launch-prompt-signals-live-e2e.test.sh). CI runs one root per
+# lint job, so worst-case resident demand is ~10.7 GiB plus runner overhead,
+# inside the 16 GiB runner. Local lint defaults to two workers; two such
 # caps allow ~21 GiB resident plus host overhead, so use FM_LINT_JOBS=1 on
 # smaller local machines. The host-wide slot guard below keeps concurrent runs
 # from stacking those caps. A root that exceeds its cap fails by name.

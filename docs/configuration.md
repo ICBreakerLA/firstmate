@@ -557,15 +557,15 @@ For spawn-capable adapters, the runtime session-provider backend controls where 
 | Runtime backend | Verification status | Reference |
 | --- | --- | --- |
 | `tmux` | Verified reference backend | [`docs/tmux-backend.md`](tmux-backend.md) |
-| `herdr` | Has its own manual real-Herdr lane, not automated on every PR | [`docs/herdr-backend.md`](herdr-backend.md) |
-| `zellij` | Experimental; no dedicated real-backend lane | [`docs/zellij-backend.md`](zellij-backend.md) |
-| `orca` | Experimental; no dedicated real-backend lane | [`docs/orca-backend.md`](orca-backend.md) |
-| `cmux` | Experimental; no dedicated real-backend lane | [`docs/cmux-backend.md`](cmux-backend.md) |
-| `paseo` | Experimental; no dedicated real-backend lane | [`docs/paseo-backend.md`](paseo-backend.md) |
-| `rex` | Experimental; no dedicated real-backend lane | [`docs/rex-backend.md`](rex-backend.md) |
-| `t3code` | Experimental; no dedicated real-backend lane | [`docs/t3code-backend.md`](t3code-backend.md) |
-| `tern` | Experimental; no dedicated real-backend lane | [`docs/tern-backend.md`](tern-backend.md) |
-| `hc` | Experimental; the hermetic suite runs in the gate, and a manual `--family hc-pinned` lane runs against the pinned build, not automated on every PR | [`docs/hc-backend.md`](hc-backend.md) |
+| `herdr` | Has its own required CI lane | [`docs/herdr-backend.md`](herdr-backend.md) |
+| `zellij` | Experimental; no dedicated real-backend CI lane | [`docs/zellij-backend.md`](zellij-backend.md) |
+| `orca` | Experimental; no dedicated real-backend CI lane | [`docs/orca-backend.md`](orca-backend.md) |
+| `cmux` | Experimental; no dedicated real-backend CI lane | [`docs/cmux-backend.md`](cmux-backend.md) |
+| `paseo` | Experimental; no dedicated real-backend CI lane | [`docs/paseo-backend.md`](paseo-backend.md) |
+| `rex` | Experimental; no dedicated real-backend CI lane | [`docs/rex-backend.md`](rex-backend.md) |
+| `t3code` | Experimental; no dedicated real-backend CI lane | [`docs/t3code-backend.md`](t3code-backend.md) |
+| `tern` | Experimental; no dedicated real-backend CI lane | [`docs/tern-backend.md`](tern-backend.md) |
+| `hc` | Experimental; the `tests-hc` lane runs the hc family against the pinned build | [`docs/hc-backend.md`](hc-backend.md) |
 
 Treehouse remains the worktree provider for tmux, herdr, zellij, cmux, paseo, rex, t3code, tern, and hc, since herdr, zellij, cmux, paseo, rex, t3code, tern, and hc are session providers only; Orca provides both the task worktree and terminal endpoint.
 
@@ -1271,11 +1271,11 @@ The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns the exact base rule, and the
 
 ## Gate defaults (.no-mistakes.yaml)
 
-The tracked [`.no-mistakes.yaml`](../.no-mistakes.yaml) sets `test.evidence.store_in_repo: true`, pins `commands.lint` to the [output scan](#output-scan-configoutput-scan-denytxt) of the branch diff, then the canonical [shell/workflow lint](../bin/fm-lint.sh), then the [Pi production-consumer typecheck](../tests/fm-pi-primary-types.test.sh) in the compiler-owning lint phase, and pins `commands.test` to the coverage guard plus the three portable lanes through [`bin/fm-test-run.sh`](../bin/fm-test-run.sh), with the live-harness-optin and hc-pinned families excluded and `FM_LIVE=0` set, while the hermetic `tests/fm-backend-hc.test.sh` stays gated. The full walk takes roughly 3.5-4 hours; the operator raised the gate host's global no-mistakes `test_agent_timeout` to 5h on 2026-11-16, and [`fm-test-portable-shards.md`](fm-test-portable-shards.md#gate-execution-bounds) owns that bound.
+The tracked [`.no-mistakes.yaml`](../.no-mistakes.yaml) sets `test.evidence.store_in_repo: true` and pins `commands.lint` to the [output scan](#output-scan-configoutput-scan-denytxt) of the branch diff, then the canonical [shell/workflow lint](../bin/fm-lint.sh), then the [Pi production-consumer typecheck](../tests/fm-pi-primary-types.test.sh) in the compiler-owning lint phase.
 Storing evidence in the repo publishes each run's test artifacts to the orphan `no-mistakes/evidence` branch and links them from the PR body, instead of keeping them on local disk under the no-mistakes home.
 
-That branch shares no history with code branches, so evidence never enters a pushed feature branch or the default branch; the worktree's `.no-mistakes/` stays local and the local gate's repo invariants test rejects tracked entries under that path.
-The [`firstmate-coding-guidelines` skill](../.agents/skills/firstmate-coding-guidelines/SKILL.md#no-mistakes-test-configuration) owns the `commands.test` portable-lane policy and when targeted validation belongs to the evidence path.
+That branch shares no history with code branches, so evidence never enters a pushed feature branch or the default branch; the worktree's `.no-mistakes/` stays local and CI rejects tracked entries under that path.
+The [`firstmate-coding-guidelines` skill](../.agents/skills/firstmate-coding-guidelines/SKILL.md#no-mistakes-test-configuration) owns why `commands.test` stays absent and targeted validation belongs to the evidence path.
 
 `commands.test` executes code, so no-mistakes honors it only from the default-branch copy of `.no-mistakes.yaml`; a pushed branch cannot change what the gate runs.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the firstmate-specific local test policy and entry points.

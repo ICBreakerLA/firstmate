@@ -8,7 +8,7 @@
 # fm-peek.sh, fm-watch.sh, fm-spawn.sh, and fm-teardown.sh already ran inline
 # into bin/backends/tmux.sh, with those SAME command sequences, so the default
 # (tmux) path stays byte-identical. P2 adds bin/backends/herdr.sh, a verified
-# spawn-capable backend with its own real-Herdr lane, behind `--backend
+# spawn-capable backend with its own required CI lane, behind `--backend
 # herdr`/`FM_BACKEND=herdr`/`config/backend`, and behind runtime auto-detection
 # when firstmate itself is running inside herdr with no explicit backend setting;
 # see herdr-addendum.md and data/fm-backend-design-d7/herdr-verification-p2.md for
@@ -78,7 +78,7 @@ FM_BACKEND_CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 # Verified backend adapters. Extend only after a backend gets its own
 # bin/backends/<name>.sh and empirical verification, mirroring AGENTS.md
 # section 4's harness-verification discipline. herdr is verified (P2;
-# data/fm-backend-design-d7/herdr-addendum.md) and has its own real-Herdr lane,
+# data/fm-backend-design-d7/herdr-addendum.md) and has its own required CI lane,
 # with current coverage in docs/herdr-backend.md and
 # docs/verification/runtime-backends.md. zellij is EXPERIMENTAL (P3;
 # data/fm-backend-design-d7/report.md "Zellij Backend") - verified against the

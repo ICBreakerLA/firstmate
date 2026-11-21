@@ -219,4 +219,4 @@ muse's launcher can replace the running binary underneath the fleet, so an upgra
 Repeat that smoke after a protocol-affecting upgrade: run one real multi-step tool-loop turn with credentials in place, confirm the run-scoped `started`/`terminal` counts are still exactly one each, and confirm an Escape still yields `terminal` with `cancelled`.
 A build that ever split one turn across several runs would make a settled log ambiguous, which is a classifier change rather than a note in this file.
 
-The portable counterparts that run in the local gate's portable suite are `tests/fm-muse-harness.test.sh`, `tests/fm-tmux-agent-liveness.test.sh`, `tests/fm-composer-lib.test.sh`, and `tests/fm-composer-ghost.test.sh`.
+The portable counterparts that run in ordinary CI are `tests/fm-muse-harness.test.sh`, `tests/fm-tmux-agent-liveness.test.sh`, `tests/fm-composer-lib.test.sh`, and `tests/fm-composer-ghost.test.sh`.

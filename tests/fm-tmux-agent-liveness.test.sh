@@ -3,7 +3,7 @@
 # agent-liveness classifier (bin/backends/tmux.sh).
 #
 # It runs REAL processes in a REAL tmux server on a private socket (`-L`), and
-# needs no harness and no credentials, so it runs everywhere tmux is available. The
+# needs no harness and no credentials, so it runs everywhere CI runs tmux. The
 # live per-harness counterpart is tests/fm-harness-liveness-drift-live-e2e.test.sh.
 #
 # The defect it exists for: a harness that rewrites its own process title made

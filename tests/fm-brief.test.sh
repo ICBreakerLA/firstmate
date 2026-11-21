@@ -12,8 +12,7 @@
 # wrapper and eliminates the whole defect class regardless of future prose.
 # test_no_heredoc_in_command_substitution guards that structure directly.
 # Ambient `bash -n` here is Bash 5 and cannot see the bug, so the real
-# cross-version enforcement lives in the stock macOS Bash job in
-# .github/workflows/macos-bash.yml.
+# cross-version enforcement lives in the macos-stock-bash CI job.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -23,11 +22,10 @@ TMP_ROOT=$(fm_test_tmproot fm-brief)
 BRIEF_HOME="$TMP_ROOT/home"
 mkdir -p "$BRIEF_HOME/data"
 
-# The script itself must always parse under the ambient bash. That is Bash 5
-# locally, where the issue #958/#1069 parser bug does not fire, so this is a
-# weak guard on its own; test_no_heredoc_in_command_substitution and the stock
-# macOS Bash job in .github/workflows/macos-bash.yml carry the real cross-version
-# enforcement.
+# The script itself must always parse under the ambient bash. That is Bash 5 in
+# CI and locally, where the issue #958/#1069 parser bug does not fire, so this
+# is a weak guard on its own; test_no_heredoc_in_command_substitution and the
+# macos-stock-bash CI job carry the real cross-version enforcement.
 test_script_parses() {
   local out rc
   out=$(bash -n "$ROOT/bin/fm-brief.sh" 2>&1); rc=$?

@@ -11,8 +11,7 @@
 # on real model turns, so the runtime is unbounded by construction and a
 # step-capped agent invocation cannot contain it - one attempt spent 64 minutes
 # across two invocations and died on a 30-minute cap without reporting. The
-# portable regression tests/fm-kiro-harness.test.sh is what the portable suite
-# enforces; it does
+# portable regression tests/fm-kiro-harness.test.sh is what CI enforces; it does
 # not cover the vendor-rendered surface above, so a green suite is not evidence
 # these signals still work.
 #

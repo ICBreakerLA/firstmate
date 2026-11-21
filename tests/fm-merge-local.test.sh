@@ -5,8 +5,6 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$ROOT/bin/fm-dod-lib.sh"
-# shellcheck source=bin/fm-local-llm-lib.sh
-. "$ROOT/bin/fm-local-llm-lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-merge-local)
 fm_git_identity fmtest fmtest@example.invalid
@@ -310,44 +308,7 @@ SH
   pass 'two approved tasks with the same tree cannot roll back a successful landing'
 }
 
-test_landing_releases_the_local_model_slot() {
-  make_case landing-releases-slot
-  record_done || fail 'landing fixture done head was not accepted'
-  export FM_LOCAL_LLM_LOCK="$CASE/llm.lock"
-  fm_local_llm_claim local-task || fail 'the task must claim the local-model slot'
-  local claim_pid=$FM_LOCAL_LLM_HOLDER
-  land >/dev/null || fail 'the approved landing should succeed'
-  wait "$claim_pid" 2>/dev/null || true
-  kill -0 "$claim_pid" 2>/dev/null && fail 'the landing must end the task slot holder'
-  [ ! -e "$FM_LOCAL_LLM_LOCK" ] || fail 'the landing must remove the claim file'
-  [ ! -e "$FM_LOCAL_LLM_LOCK.handoff" ] || fail 'the landing must remove the handoff FIFO'
-  fm_local_llm_claim other-task || fail 'the next task must claim the freed slot'
-  kill "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
-  wait "$FM_LOCAL_LLM_HOLDER" 2>/dev/null || true
-  unset FM_LOCAL_LLM_LOCK
-  pass 'a landed local-only task releases its local-model slot claim'
-}
-
-test_refused_landing_keeps_the_claim() {
-  make_case refused-keeps-slot
-  record_done || fail 'refused fixture done head was not accepted'
-  # Advance the branch past the approved head, so the landing refuses.
-  git -C "$WT" commit -q --allow-empty -m Y
-  export FM_LOCAL_LLM_LOCK="$CASE/llm.lock"
-  fm_local_llm_claim local-task || fail 'the task must claim the local-model slot'
-  local claim_pid=$FM_LOCAL_LLM_HOLDER
-  land >/dev/null 2>&1 && fail 'an unapproved head must refuse landing'
-  assert_equals 'local-task' "$(head -n 1 "$FM_LOCAL_LLM_LOCK")" \
-    'a refused landing must leave the claim file naming the task'
-  kill -0 "$claim_pid" 2>/dev/null || fail 'a refused landing must leave the holder running'
-  kill "$claim_pid" 2>/dev/null || true
-  wait "$claim_pid" 2>/dev/null || true
-  unset FM_LOCAL_LLM_LOCK
-  pass 'a refused landing leaves the local-model slot claim standing'
-}
-
 fm_test_run test_two_tasks_cannot_undo_a_same_tree_landing test_branch_advance_does_not_change_approval \
   test_missing_and_malformed_head_refuse test_change_after_hold_check_refuses \
   test_diverged_default_refuses test_change_during_approval_check_refuses \
-  test_snapshot_cannot_pin_a_replacement_task test_done_recording_preserves_caller_locks \
-  test_landing_releases_the_local_model_slot test_refused_landing_keeps_the_claim
+  test_snapshot_cannot_pin_a_replacement_task test_done_recording_preserves_caller_locks

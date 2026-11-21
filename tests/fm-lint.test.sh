@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Parity guard for firstmate's shell-lint definition.
 #
-# bin/fm-lint.sh is the single owner invoked by the pre-push gate
-# (.no-mistakes.yaml commands.lint).
-# bin/fm-lint.sh owns the analysis modes, memory fallback, configuration, and
-# tool versions.
+# bin/fm-lint.sh is the single owner invoked by CI
+# (.github/workflows/ci.yml) and by the pre-push gate (.no-mistakes.yaml
+# commands.lint). CI and the local gate deliberately select different roots;
+# bin/fm-lint.sh owns their analysis modes, memory fallback, configuration,
+# and tool versions.
 # Regression origin: with no commands.lint configured, the local no-mistakes
 # lint step never ran the deterministic shell lint, so PRs passed local
 # validation yet failed CI on info/warning findings such as SC2015, SC1007, and
@@ -148,7 +149,7 @@ SH
 }
 
 # True only when the resolved shellcheck is exactly the pinned version, so the
-# lint-running tests below match what the gate enforces instead of a host default.
+# lint-running tests below match what CI enforces instead of a runner default.
 pinned_ready() {
   command -v shellcheck >/dev/null 2>&1 || return 1
   [ "$(shellcheck --version | awk '/^version:/ {print $2; exit}')" = "$REQUIRED" ]
@@ -354,14 +355,6 @@ fm_lint_bounds_supported() {
     || command -v timeout >/dev/null 2>&1 \
     || command -v gtimeout >/dev/null 2>&1 || return 1
   return 0
-}
-
-# fm_lint_rss_supported: per-root peak-RSS reporting needs GNU time, which
-# bin/fm-lint.sh reads at /usr/bin/time. Bounds and RSS reporting are separate
-# capabilities: a host can enforce the memory envelope and still have no GNU
-# time, in which case the root records rss_kib=unavailable.
-fm_lint_rss_supported() {
-  [ -x /usr/bin/time ]
 }
 
 # fm_lint_stub_reactive_shellcheck <fakebin-dir>: a ShellCheck stub whose
@@ -1756,13 +1749,7 @@ SH
     if [ "$mode" -eq 1 ]; then
       assert_grep $'meta\tbounds_enforced\t1' "$tmp/pass.$mode.roots.tsv" \
         "the bounded fallback did not enforce bounds"
-      if fm_lint_rss_supported; then
-        case "$rss_kib" in ''|*[!0-9]*) fail "the fallback attempts lost per-root RSS reporting: $rss_kib" ;; esac
-      else
-        [ "$rss_kib" = unavailable ] \
-          || fail "the bounded fallback should report unavailable RSS without GNU time, got: $rss_kib"
-        printf '# the bounded fallback reports rss_kib=unavailable: GNU time is not installed at /usr/bin/time\n'
-      fi
+      case "$rss_kib" in ''|*[!0-9]*) fail "the fallback attempts lost per-root RSS reporting: $rss_kib" ;; esac
     else
       assert_grep $'meta\tbounds_enforced\t0' "$tmp/pass.$mode.roots.tsv" \
         "the unbounded fallback unexpectedly enforced bounds"

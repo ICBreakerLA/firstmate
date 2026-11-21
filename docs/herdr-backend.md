@@ -61,14 +61,14 @@ Herdr is also auto-detected when the primary runs natively under `HERDR_ENV=1` a
 A tmux pane nested inside Herdr resolves to tmux because the innermost multiplexer wins.
 An auto-detected Herdr spawn stays silent, matching the verified tmux default path.
 
-### Spawn preflight and lane coverage
+### Spawn preflight and CI
 
 Spawn stops before creating a Herdr container or acquiring a task worktree when `herdr`, `jq`, or the protocol floor is unavailable.
 No separate first-run provisioning is required.
 
-The real-Herdr lane is a manual/pre-merge lane, not automated on every pull request, and uses the pinned installers in `bin/fm-install-herdr.sh` and `bin/fm-install-treehouse.sh`; [`fm-test-portable-shards.md`](fm-test-portable-shards.md#manual-backend-and-live-lanes) owns the manual lane set.
+The required CI lane uses the pinned installers in `bin/fm-install-herdr.sh` and `bin/fm-install-treehouse.sh`.
 Those script headers own release assets, checksums, download bounds, and post-install gates.
-Real harness credential tests remain opt-in rather than part of the local gate.
+Real harness credential tests remain opt-in rather than part of default CI.
 
 ## Client selection
 

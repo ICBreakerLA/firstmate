@@ -173,7 +173,7 @@ Naming `rex` in `config/wedge-alarm` adds an opt-in wedge alarm on Firstmate's o
 - The viewport is derived, not read directly, as described above.
 - Only harnesses that report OSC 7501 contribute native busy evidence; the others are classified from their own lifecycle and rendered footer.
 - Command Code is refused on Rex until it is live-verified there, and Cursor Agent is not yet live-verified on Rex.
-- There is no Rex lane; see "Regression entry points" below for real-Rex validation.
+- There is no Rex CI lane; see "Regression entry points" below for real-Rex validation.
 
 ## Deferred upstream asks
 

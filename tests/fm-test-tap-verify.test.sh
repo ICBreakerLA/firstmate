@@ -3,7 +3,7 @@
 # finishes cleanly passes; an early exit 0, a not-ok line, a nonzero status,
 # or an ok-count that disagrees with the plan must fail. This is the
 # completeness check that replaced hard-coded ok-counts in the stock macOS
-# Bash workflow job.
+# Bash CI job.
 set -u
 
 # shellcheck source=tests/lib.sh

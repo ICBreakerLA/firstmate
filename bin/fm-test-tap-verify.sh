@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # fm-test-tap-verify.sh - prove a TAP-planned suite actually finished.
 #
-# The stock macOS Bash job used to hard-code expected `ok` counts in its
-# workflow YAML, so every added test in those suites had to edit the workflow.
-# This helper is the replacement: the suite declares its own plan,
+# The stock macOS Bash job used to hard-code expected `ok` counts in
+# .github/workflows/ci.yml, so every added test in those suites had to edit the
+# workflow. This helper is the replacement: the suite declares its own plan,
 # and the helper checks that the run matched it.
 #
 # A suite declares its plan by calling fm_test_run (tests/lib.sh) with the

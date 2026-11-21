@@ -437,8 +437,6 @@ unset _teardown_source
 . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
 # shellcheck source=bin/fm-secondmate-parent-lib.sh
 . "$SCRIPT_DIR/fm-secondmate-parent-lib.sh"
-# shellcheck source=bin/fm-local-llm-lib.sh
-. "$SCRIPT_DIR/fm-local-llm-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 # shellcheck source=bin/fm-sbx-lib.sh
@@ -4399,11 +4397,6 @@ fi
 if [ -d "$STATE" ]; then
   "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort || true
 fi
-# The task's cleanup reached its end, so its local-model slot claim, if it
-# held one, is released with it: the next local-model dispatch finds the slot
-# free with no manual cleanup. A release never touches another task's claim,
-# and its failure is a warning, never a cleanup failure.
-fm_local_llm_release "$ID" || echo "warning: teardown $ID: the task did not release the local-model slot (see the error above)" >&2
 if [ "$TEARDOWN_POOL_SLOT_LOST" = 1 ]; then
   echo "teardown $ID finished its cleanup and removed its task record, but a returned pool slot did not come back clean (see the warning above); clear those paths so the pool can reuse the slot" >&2
 elif [ "$TEARDOWN_LEGACY_ACCEPTED" = 1 ]; then

@@ -557,15 +557,15 @@ For spawn-capable adapters, the runtime session-provider backend controls where 
 | Runtime backend | Verification status | Reference |
 | --- | --- | --- |
 | `tmux` | Verified reference backend | [`docs/tmux-backend.md`](tmux-backend.md) |
-| `herdr` | Has its own manual real-Herdr lane, not automated on every PR | [`docs/herdr-backend.md`](herdr-backend.md) |
-| `zellij` | Experimental; no dedicated real-backend lane | [`docs/zellij-backend.md`](zellij-backend.md) |
-| `orca` | Experimental; no dedicated real-backend lane | [`docs/orca-backend.md`](orca-backend.md) |
-| `cmux` | Experimental; no dedicated real-backend lane | [`docs/cmux-backend.md`](cmux-backend.md) |
-| `paseo` | Experimental; no dedicated real-backend lane | [`docs/paseo-backend.md`](paseo-backend.md) |
-| `rex` | Experimental; no dedicated real-backend lane | [`docs/rex-backend.md`](rex-backend.md) |
-| `t3code` | Experimental; no dedicated real-backend lane | [`docs/t3code-backend.md`](t3code-backend.md) |
-| `tern` | Experimental; no dedicated real-backend lane | [`docs/tern-backend.md`](tern-backend.md) |
-| `hc` | Experimental; the hermetic suite runs in the gate, and a manual `--family hc-pinned` lane runs against the pinned build, not automated on every PR | [`docs/hc-backend.md`](hc-backend.md) |
+| `herdr` | Has its own required CI lane | [`docs/herdr-backend.md`](herdr-backend.md) |
+| `zellij` | Experimental; no dedicated real-backend CI lane | [`docs/zellij-backend.md`](zellij-backend.md) |
+| `orca` | Experimental; no dedicated real-backend CI lane | [`docs/orca-backend.md`](orca-backend.md) |
+| `cmux` | Experimental; no dedicated real-backend CI lane | [`docs/cmux-backend.md`](cmux-backend.md) |
+| `paseo` | Experimental; no dedicated real-backend CI lane | [`docs/paseo-backend.md`](paseo-backend.md) |
+| `rex` | Experimental; no dedicated real-backend CI lane | [`docs/rex-backend.md`](rex-backend.md) |
+| `t3code` | Experimental; no dedicated real-backend CI lane | [`docs/t3code-backend.md`](t3code-backend.md) |
+| `tern` | Experimental; no dedicated real-backend CI lane | [`docs/tern-backend.md`](tern-backend.md) |
+| `hc` | Experimental; the `tests-hc` lane runs the hc family against the pinned build | [`docs/hc-backend.md`](hc-backend.md) |
 
 Treehouse remains the worktree provider for tmux, herdr, zellij, cmux, paseo, rex, t3code, tern, and hc, since herdr, zellij, cmux, paseo, rex, t3code, tern, and hc are session providers only; Orca provides both the task worktree and terminal endpoint.
 
@@ -1271,11 +1271,11 @@ The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns the exact base rule, and the
 
 ## Gate defaults (.no-mistakes.yaml)
 
-The tracked [`.no-mistakes.yaml`](../.no-mistakes.yaml) sets `test.evidence.store_in_repo: true`, pins `commands.lint` to the [output scan](#output-scan-configoutput-scan-denytxt) of the branch diff, then the canonical [shell/workflow lint](../bin/fm-lint.sh), then the [Pi production-consumer typecheck](../tests/fm-pi-primary-types.test.sh) in the compiler-owning lint phase, and pins `commands.test` to the coverage guard plus the three portable lanes through [`bin/fm-test-run.sh`](../bin/fm-test-run.sh), with the live-harness-optin and hc-pinned families excluded and `FM_LIVE=0` set, while the hermetic `tests/fm-backend-hc.test.sh` stays gated. The full walk takes roughly 3.5-4 hours; the operator raised the gate host's global no-mistakes `test_agent_timeout` to 5h on 2026-11-16, and [`fm-test-portable-shards.md`](fm-test-portable-shards.md#gate-execution-bounds) owns that bound.
+The tracked [`.no-mistakes.yaml`](../.no-mistakes.yaml) sets `test.evidence.store_in_repo: true` and pins `commands.lint` to the [output scan](#output-scan-configoutput-scan-denytxt) of the branch diff, then the canonical [shell/workflow lint](../bin/fm-lint.sh), then the [Pi production-consumer typecheck](../tests/fm-pi-primary-types.test.sh) in the compiler-owning lint phase.
 Storing evidence in the repo publishes each run's test artifacts to the orphan `no-mistakes/evidence` branch and links them from the PR body, instead of keeping them on local disk under the no-mistakes home.
 
-That branch shares no history with code branches, so evidence never enters a pushed feature branch or the default branch; the worktree's `.no-mistakes/` stays local and the local gate's repo invariants test rejects tracked entries under that path.
-The [`firstmate-coding-guidelines` skill](../.agents/skills/firstmate-coding-guidelines/SKILL.md#no-mistakes-test-configuration) owns the `commands.test` portable-lane policy and when targeted validation belongs to the evidence path.
+That branch shares no history with code branches, so evidence never enters a pushed feature branch or the default branch; the worktree's `.no-mistakes/` stays local and CI rejects tracked entries under that path.
+The [`firstmate-coding-guidelines` skill](../.agents/skills/firstmate-coding-guidelines/SKILL.md#no-mistakes-test-configuration) owns why `commands.test` stays absent and targeted validation belongs to the evidence path.
 
 `commands.test` executes code, so no-mistakes honors it only from the default-branch copy of `.no-mistakes.yaml`; a pushed branch cannot change what the gate runs.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the firstmate-specific local test policy and entry points.
@@ -1798,14 +1798,10 @@ An invalid value refuses an explicit launch with a message naming the variable; 
 
 The server has one slot, so one local-model worker runs at a time across the whole host.
 The spawn claims that slot itself, with an exclusive non-blocking `flock` on `$XDG_STATE_HOME/firstmate/local-llm.lock` (`FM_LOCAL_LLM_LOCK`), before it creates anything, so of two spawns close together the second is refused and leaves no worktree, clone, or record.
-The claim names the task on the lock file's first line and records the detached holder's pid beside that process's start time on its second, and the holder, a `cat` of the lock's `.handoff` FIFO, keeps the lock until the task's `bin/fm-sbx-run.sh` has taken the FIFO over and then ended, however it ends, including a crash.
+The claim names the task in the lock file and passes to a small detached holder, which keeps the lock until the task's `bin/fm-sbx-run.sh` has taken it over through the lock's `.handoff` FIFO and then ended, however it ends, including a crash.
 The wrapper never takes or waits for the lock itself: it refuses to start unless the held claim names its own task.
 A spawn that fails before its launch is live releases the claim at once.
-A launched pane that never starts its wrapper leaves the claim with the holder until that process is ended.
-A finished task's claim is released with it: `bin/fm-pr-merge.sh` and `bin/fm-merge-local.sh` release it as part of a merge that landed, and `bin/fm-teardown.sh` releases it during cleanup, so the next local-model dispatch finds the slot free with no manual cleanup.
-A release never touches another task's claim, and it signals a recorded pid only after proving that pid is that claim's recorded holder: its command line is this claim's holder `cat`, and its current start time is the one the claim recorded. A process that merely holds the lock file open is not the holder and is never matched or signaled.
-It ends a claim's live lease first - killing the matched holder, or ending a claim made before holder pids were persisted through the handoff's EOF - because that same lease refuses the flock of every fresh claim racing for the slot, so no new claim can start while the lease is being ended. The release targets one claim instance - the task name and the holder pid with its recorded start time the lock file records when the release begins - and re-verifies that instance before its kill, its drain, and its unlink, so a same-task relaunch that installed a new holder while the release ran is never killed, never drained, and never unlinked; it ends the recorded holder only when that live pid currently carries the recorded start time, and a live pid recorded with a different, unreadable, or absent start time is signaled by nothing, its claim left in place with a warning naming the pid so the slot is reported as held for the next dispatch to inspect; under the flock the release has taken it also re-probes the handoff, so a wrapper that took the handoff over while the release ran keeps its claim, and a claim that races in is never unlinked.
-A release refuses, leaving the claim in place with a message naming why, when the task's worker is on the handoff at the probe or at the re-probe under the flock, when the claim was taken with a new holder while the release ran, when a live lease outlives the kill or drain, when the lock file cannot be opened for the release, when the handoff cannot be probed or drained because the `timeout` binary is missing, and when a live recorded pid does not carry the start time the claim recorded for it, so cleanup never frees the slot under a live worker and never signals a process the claim did not record; a claim whose recorded pid is dead, zombied, or stale is removed without any kill.
+A launched pane that never starts its wrapper leaves the claim with the holder, a `cat` of the `.handoff` FIFO, until that process is ended.
 
 #### Fallback to Claude Haiku and the optional server start
 

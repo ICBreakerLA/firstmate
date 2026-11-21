@@ -42,11 +42,11 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-hc-lab.sh`           | Provision and guardedly operate an isolated, never-default herdr-core (`hc`) lab session with a fleet-state tripwire and a serve/hold daemon sweep |
 | `fm-lab-home.sh`         | Mint disposable lab homes and manage their isolated tmux socket directories       |
 | `fm-live-lab.sh`         | Build and operate a disposable live supervision lab; see its header for usage and readiness contract |
-| `fm-install-herdr.sh`    | Install the exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |
-| `fm-install-hc.sh`       | Install the pinned, checksum-verified herdr-core (`hc`) build used by the manual `--family hc-pinned` lane and operators |
-| `fm-install-treehouse.sh`| Install the exact-version Treehouse pin for real-Herdr E2E that needs spawn worktrees |
-| `fm-herdr-ci-cleanup.sh` | Snapshot and tear down only job-owned `fm-lab-*` sessions in the real-Herdr lane     |
-| `fm-hc-ci-cleanup.sh`    | Snapshot and tear down only job-owned `fm-hclab-*` sessions in the manual herdr-core lane |
+| `fm-install-herdr.sh`    | Install CI's exact-version Herdr pin with official asset URL, SHA-256, and protocol checks |
+| `fm-install-hc.sh`       | Install the pinned, checksum-verified herdr-core (`hc`) build used by the tests-hc lane and operators |
+| `fm-install-treehouse.sh`| Install CI's exact-version Treehouse pin for real-Herdr E2E that needs spawn worktrees |
+| `fm-herdr-ci-cleanup.sh` | Snapshot and tear down only job-owned `fm-lab-*` sessions in the Herdr CI lane       |
+| `fm-hc-ci-cleanup.sh`    | Snapshot and tear down only job-owned `fm-hclab-*` sessions in the herdr-core CI lane |
 | `fm-rex-marks.sh`        | Opt-in: turn each Rex task's latest status into one badge and notification on its pane, plus validation progress and an optional tint (`plan`, `sync`, `clear`); the watcher runs `sync` each poll while the option or a cached record exists, and cleanup runs `clear` |
 | `fm-osc7501.sh`          | Launch-driven [OSC 7501 worker status bridge](configuration.md#osc-7501-worker-status-reporting); its header owns commands and reporting rules |
 | `fm-test-run.sh`         | Behavior-test runner: selection, portable lanes, bounded concurrency, budgets, coverage guard, timing/JSON; refuses to execute in the repository primary checkout when `FM_TASK_ID` marks a task worker |
@@ -79,7 +79,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-composer-lib.sh`     | Single fleet-wide owner of composer shapes, capability-aware screen classification, and verdicts |
 | `fm-agent-process-lib.sh` | Backend-neutral harness-process name classifier shared by recovery-grade adapters |
 | `backends/tmux.sh`       | Verified tmux session-provider adapter                                               |
-| `backends/herdr.sh`      | Herdr session-provider adapter with its own real-Herdr lane                           |
+| `backends/herdr.sh`      | Herdr session-provider adapter with its own required CI lane                         |
 | `backends/zellij.sh`     | Experimental zellij session-provider adapter                                         |
 | `backends/orca.sh`       | Experimental Orca backend adapter owning both worktree and terminal                  |
 | `backends/cmux.sh`       | Experimental cmux session-provider adapter                                           |
@@ -129,7 +129,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-host-lint.sh`        | Lint a sandboxed worker's clone on the host in parallel partitions and print the evidence plus the answer text for a parked lint gate, never answering it; also the worker's pipeline-fix patch export |
 | `fm-nm-run-lib.sh`       | Single owner of shared no-mistakes run-attribution primitives and rules             |
 | `fm-sbx-lib.sh`          | Single owner of the `config/worker-sandbox` grammar and its allow-list validator, sandbox names, the sbx preflight, idempotent sandbox removal, and the host-side policy-log capture |
-| `fm-local-llm-lib.sh`    | Single owner of the local-model worker profile: model selection, the server health check, the fail-closed server-mid-request probe the watcher's local-model deferral reads, the one-local-worker claim, its handoff, and its release, the dispatch-chosen availability fallback and optional server start, and the sandbox environment and its port-pinned allow host |
+| `fm-local-llm-lib.sh`    | Single owner of the local-model worker profile: model selection, the server health check, the fail-closed server-mid-request probe the watcher's local-model deferral reads, the one-local-worker claim and its handoff, the dispatch-chosen availability fallback and optional server start, and the sandbox environment and its port-pinned allow host |
 | `fm-openrouter-lib.sh`   | Single owner of the OpenRouter worker profile: the `or:` model selector, the key file, the alias chain and zero-retention probe, the sandbox environment and its port-pinned allow host, and the key's usage reading |
 | `fm-sbx-run.sh`          | Run a Claude worker in its own sbx microVM (also reached as `claude-sbx`), with traps that remove the sandbox, capture its host-side network policy log as a fresh timestamped file per launch, and bring its commits back |
 | `fm-sbx-bridge.sh`       | Create a sandboxed task's standalone clone and bring its branches back with a fast-forward-only fetch, treating the clone as untrusted |

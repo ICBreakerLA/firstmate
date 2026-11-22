@@ -1,0 +1,14 @@
+/home/agent/nm/evidence/01M81QJSGA5X0ET5DAFGC57CPC/base-root/bin/fm-wake-lib.sh: line 14: /home/agent/nm/evidence/01M81QJSGA5X0ET5DAFGC57CPC/base-root/bin/fm-path-lib.sh: No such file or directory
+
+all extension-binding tests passed
+== lane bound = 34
+== chain: 3 lanes x 12s, 34s bound, concurrency 1 (serialized, each lane needs 12s < 34s)
+chain rc=0 elapsed=12s  (target expects 0; base shared-deadline expects 124)
+== bound cap: request a 120s timeout (the PR 64 tolerance value) against the suite's lane bound
+timeout120 rc=64  (target expects 64 rejection at the 34s cap; base expects 0 acceptance under 120)
+== bound cap boundary: 35s timeout
+timeout35 rc=64  (target expects 64)
+== concurrency knob validation
+concurrency=0 rc=0  (target expects 64)
+concurrency=abc rc=0  (target expects 64)
+concurrency=1 valid rc=0 elapsed=2s  (target expects 0)

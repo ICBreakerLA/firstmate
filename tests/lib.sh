@@ -532,17 +532,6 @@ if [ "${FM_TEST_SKIP_ORPHAN_REAP:-0}" != 1 ]; then
   fm_test_reap_orphans
 fi
 
-# A host with no tasks-axi gets the pinned one before any suite code runs, so a
-# suite that reaches tasks-axi (or guards on it) without calling
-# fm_test_provide_tasks_axi runs instead of skipping. bin/fm-test-run.sh does the
-# install once per run and exports FM_TEST_TASKS_AXI_BIN, which the helper reuses;
-# only a direct run on a host with none pays for its own install. A failed
-# install ends the suite loudly. A fixture copy of this library has no helper file
-# beside it and relies on the PATH it inherited.
-if ! command -v tasks-axi >/dev/null 2>&1 && declare -F fm_test_provide_tasks_axi >/dev/null; then
-  fm_test_provide_tasks_axi "$(fm_test_tmproot fm-tasks-axi)" || exit 1
-fi
-
 # --- live-capability gate ---------------------------------------------------
 #
 # fm_live_gate <policy> <vars> [tool ...]

@@ -441,27 +441,30 @@ run_extension_section_lane() {
 
 # The coordinator stops any section lane, including the aggregate run's, that
 # outlives this bound, so no wait inside a section can usefully run longer.
-# A loaded host stretches each section lane's chain of short fixture processes:
-# under four-way parallel load the orphan-recovery section reached its runner
-# wait with only ~5s left of the old 34s bound, and the recovery was then
-# failed by a 2s shrink. On this four-core host's ambient load the same class
-# of lane needs ~90-100s, and a 60s bound killed a lane that needed 64-67s;
-# 120s leaves the runner wait a window that matches its work.
-EXTENSION_SECTION_LANE_MAX_SECONDS=120
+# Each lane owns this bound from its own launch, and the aggregate schedules
+# its heavy sections one at a time so a lane never shares the host with
+# another lane's fixture chain.
+EXTENSION_SECTION_LANE_MAX_SECONDS=34
 
 run_extension_section_lanes() {
-  local section result_file section_rc timeout_seconds deadline deadline_epoch index remaining launched total maximum_sections
-  local active maximum_concurrent
+  local section result_file section_rc timeout_seconds index remaining launched total maximum_sections
+  local active maximum_concurrent lane_epoch now_epoch
   local -a sections=("$@")
   local -a section_pids=()
   local -a section_results=()
   local -a section_complete=()
+  local -a section_deadline_epochs=()
   local section_result_root
   timeout_seconds=${FM_EXTENSION_BINDING_COORDINATOR_TIMEOUT_SECONDS:-$EXTENSION_SECTION_LANE_MAX_SECONDS}
   case "$timeout_seconds" in
     ''|*[!0-9]*) return 64 ;;
   esac
   [ "$timeout_seconds" -gt 0 ] && [ "$timeout_seconds" -le "$EXTENSION_SECTION_LANE_MAX_SECONDS" ] || return 64
+  maximum_concurrent=${FM_EXTENSION_BINDING_LANE_CONCURRENCY:-12}
+  case "$maximum_concurrent" in
+    ''|*[!0-9]*) return 64 ;;
+  esac
+  [ "$maximum_concurrent" -gt 0 ] || return 64
   section_result_root=$(mktemp -d "$TMP_ROOT/section-lanes.XXXXXX") || return 1
   total=${#sections[@]}
   # Sixteen selectors are validated here. The bounded aggregate keeps its
@@ -469,16 +472,15 @@ run_extension_section_lanes() {
   # remote, and shipped example lanes; the other conformance cuts remain
   # independently selectable.
   maximum_sections=16
-  maximum_concurrent=12
   [ "$total" -le "$maximum_sections" ] || return 64
   launched=0
   active=0
-  deadline=$((SECONDS + timeout_seconds))
-  deadline_epoch=$(($(date +%s) + timeout_seconds))
   while [ "$launched" -lt "$total" ] && [ "$active" -lt "$maximum_concurrent" ]; do
     section=${sections[$launched]}
     result_file="$section_result_root/$launched.result"
-    FM_EXTENSION_BINDING_LANE_DEADLINE_EPOCH="$deadline_epoch" run_extension_section_lane "$result_file" "$section" &
+    lane_epoch=$(($(date +%s) + timeout_seconds))
+    section_deadline_epochs+=("$lane_epoch")
+    FM_EXTENSION_BINDING_LANE_DEADLINE_EPOCH="$lane_epoch" run_extension_section_lane "$result_file" "$section" &
     section_pids+=("$!")
     section_results+=("$result_file")
     section_complete+=("")
@@ -516,7 +518,9 @@ run_extension_section_lanes() {
     while [ "$launched" -lt "$total" ] && [ "$active" -lt "$maximum_concurrent" ]; do
       section=${sections[$launched]}
       result_file="$section_result_root/$launched.result"
-      FM_EXTENSION_BINDING_LANE_DEADLINE_EPOCH="$deadline_epoch" run_extension_section_lane "$result_file" "$section" &
+      lane_epoch=$(($(date +%s) + timeout_seconds))
+      section_deadline_epochs+=("$lane_epoch")
+      FM_EXTENSION_BINDING_LANE_DEADLINE_EPOCH="$lane_epoch" run_extension_section_lane "$result_file" "$section" &
       section_pids+=("$!")
       section_results+=("$result_file")
       section_complete+=("")
@@ -524,10 +528,14 @@ run_extension_section_lanes() {
       active=$((active + 1))
     done
     [ "$remaining" -eq 0 ] && break
-    if [ "$SECONDS" -ge "$deadline" ]; then
-      terminate_section_lanes
-      return 124
-    fi
+    now_epoch=$(date +%s)
+    for index in "${!section_pids[@]}"; do
+      [ -n "${section_complete[$index]:-}" ] && continue
+      if [ "$now_epoch" -ge "${section_deadline_epochs[$index]}" ]; then
+        terminate_section_lanes
+        return 124
+      fi
+    done
     sleep 0.05
   done
 }
@@ -580,7 +588,11 @@ if [ "$extension_segment" = all ] || [ "$extension_segment" = coordinator ]; the
     (
       trap - EXIT HUP INT
       trap 'terminate_section_lanes; exit 143' TERM
-      run_extension_section_lanes lifecycle-flow lifecycle-order remote-lifecycle example deadlines
+      # Serialize the heavy aggregate sections: one lane runs at a time, each
+      # owning the full section bound from its own launch, so a section never
+      # shares the host with another lane's chain of fixture processes.
+      FM_EXTENSION_BINDING_LANE_CONCURRENCY=1 \
+        run_extension_section_lanes lifecycle-flow lifecycle-order remote-lifecycle example deadlines
     ) &
     section_coordinator_pid=$!
   fi
@@ -636,9 +648,7 @@ if [ "$extension_segment" = all ] || [ "$extension_segment" = coordinator ]; the
     coordinator-pass; then
     fail "the section coordinator accepted more than its bounded allowlist"
   fi
-  # A 2s deadline is shorter than a loaded host needs to even start the stalled
-  # child; 15s still proves the coordinator stops it at its deadline.
-  if FM_EXTENSION_BINDING_COORDINATOR_TIMEOUT_SECONDS=15 \
+  if FM_EXTENSION_BINDING_COORDINATOR_TIMEOUT_SECONDS=2 \
     FM_EXTENSION_BINDING_COORDINATOR_READY="$coordinator_ready" \
     FM_EXTENSION_BINDING_COORDINATOR_PID="$coordinator_pid" \
     run_extension_section_lanes "coordinator-stubborn"; then
@@ -661,7 +671,7 @@ if [ "$extension_segment" = all ] || [ "$extension_segment" = coordinator ]; the
 fi
 
 # Freeze the real host and invocation group across each deadline. All cases
-# have private homes and run concurrently within the existing aggregate bound.
+# have private homes and run concurrently within their section's deadline.
 if section_enabled deadlines; then
 P_SLEEP="$PACKAGES/sleep"
 make_package "$P_SLEEP" org.example.sleep ext-sleep
@@ -1489,10 +1499,7 @@ done
 [ -L "$FM_PROCEVENT_CLAIM_ROOT/order-source.lock" ] || fail "neither lock-order contender took the source lock"
 sleep 0.2
 touch "$order_release"
-# Both contenders are short host and fixture processes; a loaded host (the
-# gate lane shares four cores) stretches them well past a 12s window without
-# any deadlock. 30s still bounds a real deadlock while matching the work.
-order_deadline=$((SECONDS + 30))
+order_deadline=$((SECONDS + 12))
 while kill -0 "$order_register_pid" 2>/dev/null || kill -0 "$order_reconcile_pid" 2>/dev/null; do
   if [ "$SECONDS" -ge "$order_deadline" ]; then
     # Killing registration lets lock recovery free reconcile for cleanup.

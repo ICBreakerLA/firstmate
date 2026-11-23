@@ -50,9 +50,12 @@ document:
 # The full portable walk takes roughly 3.5-4 hours. The operator raised the host's
 # global no-mistakes `test_agent_timeout` to 5h on 2026-11-16; no-mistakes reads
 # that key only from its global config, so a copy in this file is ignored.
+#
+# `--fail-on-gate-skip tasks-axi` turns any surviving `skip: tasks-axi ...` line
+# into a lane failure: a suite that needs the pin must run, never pass silently.
 commands:
   lint: 'bin/fm-output-scan.sh --diff && bin/fm-lint.sh && bash tests/fm-pi-primary-types.test.sh'
-  test: 'FM_LIVE=0 bin/fm-test-run.sh --check-coverage && FM_LIVE=0 bin/fm-test-run.sh --lane portable-parallel-1 --exclude-family live-harness-optin --exclude-family hc-pinned && FM_LIVE=0 bin/fm-test-run.sh --lane portable-parallel-2 --exclude-family live-harness-optin --exclude-family hc-pinned && FM_LIVE=0 bin/fm-test-run.sh --lane portable-serial --exclude-family live-harness-optin --exclude-family hc-pinned'
+  test: 'FM_LIVE=0 bin/fm-test-run.sh --check-coverage && FM_LIVE=0 bin/fm-test-run.sh --lane portable-parallel-1 --exclude-family live-harness-optin --exclude-family hc-pinned --fail-on-gate-skip tasks-axi && FM_LIVE=0 bin/fm-test-run.sh --lane portable-parallel-2 --exclude-family live-harness-optin --exclude-family hc-pinned --fail-on-gate-skip tasks-axi && FM_LIVE=0 bin/fm-test-run.sh --lane portable-serial --exclude-family live-harness-optin --exclude-family hc-pinned --fail-on-gate-skip tasks-axi'
 
 # Publish each run's test evidence to the orphan no-mistakes/evidence branch linked from the PR.
 # The evidence is not committed to the feature or default branch.

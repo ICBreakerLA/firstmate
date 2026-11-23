@@ -1005,6 +1005,33 @@ SH
   pass "fail-on-gate-skip converts herdr-not-found into a hard failure"
 }
 
+test_fail_on_gate_skip_tasks_axi_token() {
+  local tmp skip_f out rc
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-fail-skip-tasks.XXXXXX")
+  skip_f="$tmp/skip.test.sh"
+  out="$tmp/out.txt"
+  # Assemble the token from a variable so this suite carries no literal
+  # production-style skip line for the source-tree acceptance grep to find.
+  cat >"$skip_f" <<'SH'
+#!/usr/bin/env bash
+tool=tasks-axi
+printf 'skip: %s not found\n' "$tool"
+exit 0
+SH
+  chmod +x "$skip_f"
+  set +e
+  "$RUNNER" --fail-on-gate-skip 'tasks-axi' "$skip_f" >"$out" 2>"$tmp/err.txt"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "fail-on-gate-skip must make a tasks-axi skip a hard failure"
+  grep -q 'FM_TEST_SUMMARY total=1 failed=1' "$out" \
+    || fail "summary must report failed=1 under the tasks-axi token: $(grep FM_TEST_SUMMARY "$out")"
+  grep -q 'required gate skip token' "$tmp/err.txt" \
+    || fail "runner must log the required tasks-axi gate skip token"
+  rm -rf "$tmp"
+  pass "fail-on-gate-skip converts a tasks-axi skip into a hard failure"
+}
+
 test_exclude_family() {
   local listed
   listed=$("$RUNNER" --list --all --exclude-family real-herdr-gated)
@@ -1993,6 +2020,7 @@ test_gate_skip_reason_is_recorded
 test_a_run_that_ran_records_no_skip_reason
 test_live_guards_expect_a_capability_skip_class
 test_fail_on_gate_skip_token
+test_fail_on_gate_skip_tasks_axi_token
 test_exclude_family
 test_tern_family_selection
 test_list_scheduled_proven_isolated_uses_serial_weights

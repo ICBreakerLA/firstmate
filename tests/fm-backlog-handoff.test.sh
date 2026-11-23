@@ -10,8 +10,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/secondmate-helpers.sh"
 
 # The move is delegated to `tasks-axi mv`, so this suite exercises the real
-# binary. Skip cleanly when it is absent (matching the backend smoke suites).
-command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found (required by the delegated handoff path)"; exit 0; }
+# binary. bin/fm-test-run.sh provisions the pinned tasks-axi once per run, so a
+# missing binary fails the suite instead of gate-skipping it.
 
 TMP_ROOT=$(fm_test_tmproot fm-backlog-handoff)
 HANDOFF_FAKEBIN=$(make_fake_tmux "$TMP_ROOT/default-fake")

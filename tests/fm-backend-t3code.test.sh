@@ -1292,7 +1292,6 @@ test_spawn_codex_refuses_tracked_codex_config() {
 test_spawn_codex_preserves_tracked_codex_config() {
   local proj wt data state id out rc fb neutral original
   t3_require_tomllib test_spawn_codex_preserves_tracked_codex_config || return 0
-  fm_test_provide_tasks_axi "$TMP_ROOT" || exit 1
   id=$(t3_uid t3codextrk2)
   t3_task_id "$id"
   t3_case spawn-codex-tracked-compatible
@@ -2130,7 +2129,6 @@ test_uncertain_launch_message_keeps_task_record() {
 
 test_scout_teardown_stops_and_archives_before_slot_return() {
   local proj wt data state id out rc neutral fb thread=mcp:2c8f0d4e-7b1a-4f3c-9e2d-abcdef012345
-  fm_test_provide_tasks_axi "$TMP_ROOT" || exit 1
   id=$(t3_uid t3teardownz1)
   t3_case teardown running
   t3_world "$(t3_thread_json "$thread" running false)"
@@ -2656,7 +2654,6 @@ test_spawn_rejected_lease_is_neither_cleaned_nor_returned() {
 # project instructions that teardown leaves in the slot.
 test_teardown_keeps_tracked_claude_local_md() {
   local proj wt data state id out rc neutral fb thread=mcp:5a9b1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d
-  fm_test_provide_tasks_axi "$TMP_ROOT" || exit 1
   id=$(t3_uid t3teardownz2)
   t3_case teardown-tracked-claude-local running
   t3_world "$(t3_thread_json "$thread" running false)"

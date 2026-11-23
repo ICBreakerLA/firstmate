@@ -26,9 +26,6 @@ BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 unset TASKS_AXI_FILE TASKS_AXI_BACKEND FM_HOME FM_ROOT_OVERRIDE \
   FM_DATA_OVERRIDE FM_STATE_OVERRIDE FM_CONFIG_OVERRIDE FM_PROJECTS_OVERRIDE
 
-HAVE_TASKS_AXI=0
-command -v tasks-axi >/dev/null 2>&1 && HAVE_TASKS_AXI=1
-
 empty_backlog() {  # <path>
   printf '## In flight\n\n## Queued\n\n## Done\n' > "$1"
 }
@@ -242,13 +239,9 @@ test_wrapper_single_home() {
 test_guard_reports_regular_code_root_backlog
 test_guard_reports_foreign_link_and_archive
 test_guard_silent_for_single_home
-if [ "$HAVE_TASKS_AXI" = 1 ]; then
-  test_bare_tasks_axi_fork_is_detected
-  test_wrapper_writes_through_to_home
-  test_wrapper_overrides_ambient_file
-  test_wrapper_refusals
-  test_wrapper_refuses_add_start
-  test_wrapper_single_home
-else
-  echo "skip: tasks-axi not found; home-addressing cases not run"
-fi
+test_bare_tasks_axi_fork_is_detected
+test_wrapper_writes_through_to_home
+test_wrapper_overrides_ambient_file
+test_wrapper_refusals
+test_wrapper_refuses_add_start
+test_wrapper_single_home

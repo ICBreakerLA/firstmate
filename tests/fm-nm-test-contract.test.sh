@@ -274,7 +274,7 @@ if command is None or command is False or not str(command).strip():
 parsed = [split_clause(clause) for clause in split_clauses(str(command))]
 lanes = ["portable-parallel-1", "portable-parallel-2", "portable-serial"]
 expected = [["bin/fm-test-run.sh", "--check-coverage"]] + [
-    ["bin/fm-test-run.sh", "--lane", lane, "--exclude-family", "live-harness-optin", "--exclude-family", "hc-pinned"]
+    ["bin/fm-test-run.sh", "--lane", lane, "--exclude-family", "live-harness-optin", "--exclude-family", "hc-pinned", "--fail-on-gate-skip", "tasks-axi"]
     for lane in lanes
 ]
 actual = [argv for _env, argv in parsed]

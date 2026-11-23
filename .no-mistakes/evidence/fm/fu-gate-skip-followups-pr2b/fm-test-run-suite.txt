@@ -1,0 +1,9 @@
+# fm-test-run.test.sh (changed suite) - target commit 57b03ec4
+# host has no tasks-axi; pinned 0.2.6 provisioned via FM_TEST_TASKS_AXI_BIN for speed
+
+ok - fail-on-gate-skip converts herdr-not-found into a hard failure
+ok - fail-on-gate-skip converts a tasks-axi skip into a hard failure
+summary: ok - aggregate-json merges lane timing artifacts
+summary: RC=0
+
+oks=46 not_oks=0

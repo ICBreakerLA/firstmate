@@ -1,0 +1,13 @@
+# .no-mistakes.yaml commands.test contract (all three portable lanes carry --fail-on-gate-skip tasks-axi)
+
+## target tree, changed contract test: PASS
+commands.test runs the exact portable lane sequence, excludes the live-harness and pinned-hc families while keeping the hermetic hc suite, and disables default-on guards
+ok - no-mistakes commands.test runs the portable lanes while the selected tests/fm-backend-t3code.test.sh default-on guard skips under FM_LIVE=0
+exit=0
+
+## regression: same changed test run against pre-change base tree (6fadd4dd^): FAIL
+not ok - no-mistakes commands.test contract
+exit=1 (base config lacks the flag)
+
+## effective gate command on target:
+58:  test: 'FM_LIVE=0 bin/fm-test-run.sh --check-coverage && FM_LIVE=0 bin/fm-test-run.sh --lane portable-parallel-1 --exclude-family live-harness-optin --exclude-family hc-pinned --fail-on-gate-skip tasks-axi && FM_LIVE=0 bin/fm-test-run.sh --lane portable-parallel-2 --exclude-family live-harness-optin --exclude-family hc-pinned --fail-on-gate-skip tasks-axi && FM_LIVE=0 bin/fm-test-run.sh --lane portable-serial --exclude-family live-harness-optin --exclude-family hc-pinned --fail-on-gate-skip tasks-axi'

@@ -1,0 +1,24 @@
+# Guard retirement: tasks-axi suites run instead of gate-skipping
+
+## runner-provisioned run of tests/fm-tasks-axi.test.sh (no ambient tasks-axi)
+/tmp/fm-tasks-axi-run.out:ok - bootstrap reports a regular code-root backlog and stays silent for a link into the home or no copy
+/tmp/fm-tasks-axi-run.out:ok - bootstrap reports a code-root backlog linked elsewhere and a forked archive
+/tmp/fm-tasks-axi-run.out:ok - bootstrap stays silent when the code root is the home
+/tmp/fm-tasks-axi-run.out:ok - bare tasks-axi replaced the code-root link and bootstrap reported the fork
+/tmp/fm-tasks-axi-run.out:ok - fm-tasks-axi.sh writes, holds, archives, and reads relative body files through to the home from the code root
+/tmp/fm-tasks-axi-run.out:ok - fm-tasks-axi.sh pins the home's backlog over an ambient TASKS_AXI_FILE and serves the dashboard
+/tmp/fm-tasks-axi-run.out:ok - fm-tasks-axi.sh refuses caller --file, a symlinked home backlog, and an unresolvable home
+/tmp/fm-tasks-axi-run.out:ok - fm-tasks-axi.sh refuses add --start while plain add and start <id> pass through
+/tmp/fm-tasks-axi-run.out:ok - fm-tasks-axi.sh keeps the single-home layout addressing its own code-root backlog
+/tmp/fm-tasks-axi-run.err:fm-test-run: installing the pinned tasks-axi once for this run
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=11283
+exit=0, skipped_gate=0, no 'skip: tasks-axi' line
+
+## adversarial: bare direct run with no tasks-axi no longer passes silently
+not ok - bare tasks-axi add failed in the code root
+exit=1 (previously: printed skip and exited 0)
+
+## former fm_test_provide_tasks_axi caller tests/fm-backlog-handoff.test.sh via runner
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=85705
+exit=0
+ok cases: 25

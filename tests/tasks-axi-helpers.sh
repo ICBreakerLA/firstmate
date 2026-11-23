@@ -11,12 +11,12 @@
 # returns 1 with a "not ok" line, and the caller exits. The install is exported
 # as FM_TEST_TASKS_AXI_BIN so child test runs reuse it instead of reinstalling.
 #
-# Who calls it: bin/fm-test-run.sh once per run when the host has no tasks-axi,
-# and any suite that wants the pin regardless of the host. tests/lib.sh sources
-# this file but never calls it, so sourcing the library has no side effect and a
-# bare direct run uses the host's own tasks-axi (or skips). Sourcing this file
-# defines the function and nothing else, so the runner can use it without
-# tests/lib.sh's traps and fixture roots. It reads $ROOT, the repository root.
+# Who calls it: bin/fm-test-run.sh once per run when the host has no tasks-axi;
+# no suite calls it directly anymore. tests/lib.sh sources this file but never
+# calls it, so sourcing the library has no side effect and a bare direct run
+# uses the host's own tasks-axi. Sourcing this file defines the function and
+# nothing else, so the runner can use it without tests/lib.sh's traps and
+# fixture roots. It reads $ROOT, the repository root.
 
 fm_test_provide_tasks_axi() {
   local parent=${1:?parent dir} pin seed dst bindir log

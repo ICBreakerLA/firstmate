@@ -65,7 +65,6 @@ trap 'pf_test_cleanup; exit 130' INT
 trap 'pf_test_cleanup; exit 143' TERM
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
-command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
 
 # The over-long outcome is bounded by codepoint, so its assertion counts
 # characters. Under the POSIX locale bash counts bytes instead and 600

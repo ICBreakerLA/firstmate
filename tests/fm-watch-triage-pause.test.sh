@@ -15,7 +15,6 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/watch-triage-helpers.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-watch-triage-pause-tests)
-fm_test_provide_tasks_axi "$TMP_ROOT" || exit 1
 mkdir -p "$TMP_ROOT/crew-state-bin"
 FM_CREW_STATE_BIN=$(make_fake_crew_state "$TMP_ROOT/crew-state-bin")
 export FM_CREW_STATE_BIN
@@ -1233,8 +1232,6 @@ test_live_captain_held_first_sight_silenced_by_away_record() {
 
 test_backlog_hold_never_rechecked_while_away_record_exists() {
   local dir out capture wakes
-  command -v tasks-axi >/dev/null 2>&1 \
-    || { echo "skip: tasks-axi not found (away-record backlog hold)"; return 0; }
   dir=$(make_hold_home away-record-backlog-hold 'done: PR https://example.test/pr/9 checks green' hold) \
     || fail "could not build the backlog-hold fixture"
   out="$dir/watch.out"; capture="$dir/pane.txt"

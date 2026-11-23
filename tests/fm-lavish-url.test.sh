@@ -14,7 +14,6 @@ TMP_ROOT=$(fm_test_tmproot fm-lavish-url)
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 command -v python3 >/dev/null 2>&1 || { echo "skip: python3 not found"; exit 0; }
-command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit 0; }
 
 # A home with a registry, a backlog, a fake capture browser, and a fake Lavish.
 #

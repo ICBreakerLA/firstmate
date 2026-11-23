@@ -245,8 +245,6 @@ backlog_hold_wedge_fixture() {  # <name> <status-age-secs> [<wedge-timer-age-sec
 test_wedge_threshold_defers_to_a_backlog_captain_hold() {
   local dir state fakebin out capture window key n queued armed_timer past
   local working='state: working · source: run-step · ci running'
-  command -v tasks-axi >/dev/null 2>&1 \
-    || { echo "skip: tasks-axi not found (backlog captain hold wedge bound)"; return 0; }
   window="test:fm-wedge"; key=$(watch_window_key "$window")
 
   # A fresh status line is no record of when the hold began, so the first

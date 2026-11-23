@@ -478,8 +478,8 @@ fm_test_tmproot() {
 }
 
 # fm_test_provide_tasks_axi <parent-dir>: the pinned tasks-axi; the helper file's
-# header owns the contract. Sourced here so every suite that reaches this library
-# keeps calling it as before.
+# header owns the contract. Sourced here so library consumers see the same
+# definition the runner installs from.
 # shellcheck source=tests/tasks-axi-helpers.sh
 [ ! -r "$_FM_TEST_LIB_DIR/tasks-axi-helpers.sh" ] || . "$_FM_TEST_LIB_DIR/tasks-axi-helpers.sh"
 

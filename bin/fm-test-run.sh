@@ -2740,10 +2740,10 @@ cleanup_run() {
 
 trap cleanup_run EXIT
 
-# A host with no tasks-axi gets the pinned one installed here, once, so every
-# suite that reaches it (or guards on it) runs instead of gate-skipping; the
-# exported FM_TEST_TASKS_AXI_BIN also lets each suite's own fm_test_provide_tasks_axi
-# call reuse it. A failed install stops the run before any suite starts.
+# A host with no tasks-axi gets the pinned one installed here, once, for the
+# whole run, so every suite that needs it runs instead of gate-skipping; the
+# exported FM_TEST_TASKS_AXI_BIN lets child test runs reuse it. A failed install
+# stops the run before any suite starts.
 if ! command -v tasks-axi >/dev/null 2>&1; then
   # shellcheck source=tests/tasks-axi-helpers.sh
   . "$ROOT/tests/tasks-axi-helpers.sh" || die "could not load tests/tasks-axi-helpers.sh"

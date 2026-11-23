@@ -766,6 +766,45 @@ SH
   chmod +x "$fakebin/ps"
 }
 
+# fm_test_parent_adopted <pid> [original-parent-pid]
+# Answers "has <pid> been adopted away from the tree it was spawned in", the
+# question every orphan and session-ancestry suite asserts. The hard-coded
+# `ppid = 1` answer is true only on a plain host: a WSL2 session adopts its own
+# orphans with a per-session relay process whose command name is Relay(<pid>)
+# under /init (measured on the host: an orphan's parent 603294 comm Relay(603296),
+# the relay's parent /init 603293), and a systemd user session adopts them with
+# its --user manager, a PR_SET_CHILD_SUBREAPER process one hop below init. Those
+# adopters kept the host's reparent assertions red while the same suites passed
+# in a plain sandbox where pid 1 adopts.
+# True when the parent is pid 1, when its command name is init (covers WSL2's
+# /init; ps reports a comm basename on Linux and a full path on macOS, so
+# normalize), when its command name starts with Relay( (a WSL2 relay; a prefix
+# match because Linux truncates comm at 15 characters), or - Linux only, the
+# one platform with the flag - when /proc/<pid>/status shows Child_subreaper: 1.
+# With [original-parent-pid], a process whose parent is exactly that pid is never
+# adopted, so a suite asserting "away from the launcher, daemon, or session I
+# named" stays red when the process never moved.
+fm_test_parent_adopted() { # <pid> [original-parent-pid]
+  local pid=$1 orig_parent=${2:-} parent comm
+  parent=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+  case "$parent" in ''|*[!0-9]*) return 1 ;; esac
+  if [ -n "$orig_parent" ] && [ "$parent" = "$orig_parent" ]; then
+    return 1
+  fi
+  [ "$parent" -eq 1 ] && return 0
+  comm=$(ps -o comm= -p "$parent" 2>/dev/null | tr -d '[:space:]')
+  comm=${comm##*/}
+  case "$comm" in
+    init) return 0 ;;
+    'Relay('*) return 0 ;;
+  esac
+  if [ "$(uname -s)" = Linux ] && [ -r "/proc/$parent/status" ] &&
+    grep -q '^Child_subreaper:[[:space:]]*1$' "/proc/$parent/status" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 # fm_fake_version_tool <fakebin> <tool> <override-env-var> <default-version>
 # The stub answers `--version` with <override-env-var> when that variable is set
 # and non-empty, and with <default-version> otherwise; every other invocation

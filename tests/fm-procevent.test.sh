@@ -4144,10 +4144,11 @@ KEEP_PID=$(cat "$HKEEP/state/procevent/keep-src.runner")
 ORPHAN_DESCENDANT=$(cat "$TMP_ROOT/orphan-dead.descendant")
 
 # The reproduction condition itself: the listener is already an orphan in the
-# kernel's sense before anything is asserted about reaping it.
-orphan_ppid=$(ps -o ppid= -p "$ORPHAN_PID" 2>/dev/null | tr -d '[:space:]')
-[ "$orphan_ppid" = 1 ] \
-  || fail "the listener under test was not reparented away from its session (ppid $orphan_ppid)"
+# kernel's sense before anything is asserted about reaping it. Which parent
+# counts as an adopter (pid 1, init, a WSL2 relay, a subreaper) is owned by
+# fm_test_parent_adopted in tests/lib.sh.
+fm_test_parent_adopted "$ORPHAN_PID" \
+  || fail "the listener under test was not reparented away from its session (ppid $(ps -o ppid= -p "$ORPHAN_PID" 2>/dev/null | tr -d '[:space:]'))"
 kill -0 -"$ORPHAN_PID" 2>/dev/null \
   || fail "the listener's process group was not running"
 kill -0 "$ORPHAN_DESCENDANT" 2>/dev/null \

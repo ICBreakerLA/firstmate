@@ -2,15 +2,18 @@
 # Behavior tests for the fm_test_parent_adopted helper in tests/lib.sh.
 #
 # The helper answers "has this process been adopted away from the tree it was
-# spawned in", the assertion the reparenting suites share. The host's WSL2
-# relay (a process named Relay(<pid>) under /init) and a systemd user manager
-# (a PR_SET_CHILD_SUBREAPER process) adopt orphans the way a plain host's
-# pid 1 does, and assertions hard-coded to ppid = 1 stayed red on the host
-# while the same suites passed in a plain sandbox. These cases drive real
-# processes through every adopter shape the helper accepts and every
-# attached-parent shape it must reject, so the shared assertion can never go
-# vacuous: the launcher-parented and daemon-parented cases are the regression
-# that keeps a process which never moved red.
+# spawned in", the assertion the reparenting suites share. The answer is
+# ancestry-based: the parent chain must reach pid 1 before it touches the
+# launching session's own ancestry. The host's adopter is the launching
+# session's subreaper, here a WSL relay (comm Relay(<pid>)) under /init, on a
+# systemd user session a PR_SET_CHILD_SUBREAPER manager, in a plain sandbox
+# pid 1 itself, and each sits above the session's ancestry edge, so a
+# released orphan's chain walks to pid 1 while a process that never moved
+# walks straight back into its launcher, daemon, or session. These cases
+# drive real processes through every adopter shape the helper accepts and
+# every attached-parent shape it must reject, so the shared assertion can
+# never go vacuous: the launcher-parented and daemon-parented cases are the
+# regression that keeps a process which never moved red.
 #
 # Real processes and no vendor harness. The subreaper case needs Linux (the
 # Child_subreaper flag is Linux-only) and python3 (prctl through ctypes,
@@ -59,38 +62,36 @@ ppid_of() { ps -o ppid= -p "$1" 2>/dev/null | tr -d '[:space:]'; }
 
 comm_of() { ps -o comm= -p "$1" 2>/dev/null | tr -d '[:space:]'; }
 
-# start_live_parent <program> <tag>: run <program> as a live looping parent of
-# a `sleep 300` child that reports its pid into "$TMP_ROOT/<tag>.child", and
-# echo the parent pid. In the -c script, $1 is the child file ($0 is the
-# launcher name). The parent's own descriptors go to /dev/null so it never
-# holds the caller's command-substitution pipe open.
-start_live_parent() { # <program> <tag>
-  # shellcheck disable=SC2016 # intentional: the inner shell expands $! and $1
-  "$1" -c 'sleep 300 >/dev/null 2>&1 & echo "$!" > "$1"; while :; do sleep 0.2; done' \
-    launcher "$TMP_ROOT/$2.child" >/dev/null 2>&1 &
-  printf '%s\n' "$!"
-}
-
-# live_parent_child <program> <tag>: start a live parent and echo
-# "<parent-pid> <child-pid>". It cannot track from here: command
-# substitution runs it in a subshell, so the caller tracks the echoed pids.
+# live_parent_child <program> <tag>: run <program> as a live looping parent of
+# a `sleep 300` child, launched as a direct child of this script, and write
+# "<parent-pid> <child-pid>" to "$TMP_ROOT/<tag>.pair" for the caller to
+# read. Callers must not wrap this in command substitution: the substitution
+# subshell is the launch parent, and a parent started in it is orphaned away
+# from this script the moment the subshell exits, so its child's chain would
+# leave the session tree through the parent's own adoption, not through the
+# child moving. In the -c script, $1 is the parent's report file ($0 is the
+# launcher name). The fixture's descriptors go to /dev/null so it never
+# holds a caller's pipe open.
 live_parent_child() { # <program> <tag>
   local parent child i
-  parent=$(start_live_parent "$1" "$2")
-  pid_is_numeric "$parent" || fail "the $2 fixture parent did not report a pid"
+  # shellcheck disable=SC2016 # intentional: the inner shell expands $$, $!, $1, $2
+  "$1" -c 'echo "$$" > "$1"; sleep 300 >/dev/null 2>&1 & echo "$!" > "$2"; while :; do sleep 0.2; done' \
+    launcher "$TMP_ROOT/$2.parent" "$TMP_ROOT/$2.child" >/dev/null 2>&1 &
+  parent=""
   child=""
   i=0
   while [ "$i" -lt 100 ]; do
-    if [ -s "$TMP_ROOT/$2.child" ]; then
-      child=$(cat "$TMP_ROOT/$2.child")
-      pid_is_numeric "$child" && break
+    if [ -s "$TMP_ROOT/$2.parent" ] && [ -s "$TMP_ROOT/$2.child" ]; then
+      parent=$(tr -d '[:space:]' < "$TMP_ROOT/$2.parent")
+      child=$(tr -d '[:space:]' < "$TMP_ROOT/$2.child")
+      pid_is_numeric "$parent" && pid_is_numeric "$child" && break
     fi
-    kill -0 "$parent" 2>/dev/null || break
     sleep 0.05
     i=$((i + 1))
   done
+  pid_is_numeric "$parent" || fail "the $2 fixture parent did not report a pid"
   pid_is_numeric "$child" || fail "the $2 fixture parent never reported its child pid"
-  printf '%s %s\n' "$parent" "$child"
+  printf '%s %s\n' "$parent" "$child" > "$TMP_ROOT/$2.pair"
 }
 
 test_a_a_process_still_parented_to_its_launcher_is_not_adopted() {
@@ -107,13 +108,16 @@ test_a_a_process_still_parented_to_its_launcher_is_not_adopted() {
 
 test_b_a_process_parented_by_a_plain_live_daemon_is_not_adopted() {
   local pair parent child
-  pair=$(live_parent_child "$(command -v bash)" daemon)
+  live_parent_child "$(command -v bash)" daemon
+  pair=$(cat "$TMP_ROOT/daemon.pair")
   parent=${pair% *}
   child=${pair#* }
   track "$parent"
   track "$child"
   # The no-hint form is also the control for every adopter branch: the
-  # parent's comm is bash, it is not pid 1, and it carries no subreaper flag.
+  # child's chain walks from its daemon parent into this script's ancestry
+  # (an anchor), and the daemon's comm is bash, it is not pid 1, and it
+  # carries no subreaper flag.
   fm_test_parent_adopted "$child" "$parent" &&
     fail "the hint form called a daemon-parented process adopted"
   fm_test_parent_adopted "$child" &&
@@ -142,10 +146,11 @@ test_c_an_orphan_released_by_its_launcher_exit_is_adopted() {
 test_d_a_process_parented_by_an_init_named_adopter_is_adopted() {
   local pair parent child
   # The host's WSL2 /init is not pid 1, so this copy pins the command-name
-  # branch alone: ps reports a comm basename on Linux and a full path on
-  # macOS, and the helper normalizes both to the name.
+  # secondary fallback alone: ps reports a comm basename on Linux and a full
+  # path on macOS, and the helper normalizes both to the name.
   cp "$(command -v bash)" "$TMP_ROOT/init"
-  pair=$(live_parent_child "$TMP_ROOT/init" init)
+  live_parent_child "$TMP_ROOT/init" init
+  pair=$(cat "$TMP_ROOT/init.pair")
   parent=${pair% *}
   child=${pair#* }
   track "$parent"
@@ -160,10 +165,13 @@ test_d_a_process_parented_by_an_init_named_adopter_is_adopted() {
 test_e_a_process_parented_by_a_relay_named_adopter_is_adopted() {
   local pair child
   # The measured host relay: an orphan's parent 603294 reported comm
-  # Relay(603296), and the relay itself sat under /init. The helper matches
-  # the Relay( prefix, tolerant of Linux's 15-character comm truncation.
+  # Relay(603296), and the relay itself sat under /init. The relay sits
+  # above the launching session's ancestry edge, so the chain walk adopts
+  # it; this copy pins the Relay( prefix fallback too, tolerant of Linux's
+  # 15-character comm truncation.
   cp "$(command -v bash)" "$TMP_ROOT/Relay(603296)"
-  pair=$(live_parent_child "$TMP_ROOT/Relay(603296)" relay)
+  live_parent_child "$TMP_ROOT/Relay(603296)" relay
+  pair=$(cat "$TMP_ROOT/relay.pair")
   child=${pair#* }
   track "$child"
   track "${pair% *}"
@@ -258,10 +266,50 @@ PY
   pass "a subreaper parent adopts and a plain parent does not"
 }
 
+test_g_a_child_attached_to_a_live_daemon_is_adopted_when_that_daemon_exits() {
+  local daemon child i
+  # The session-lock shape in miniature, and the exact reason the answer is a
+  # chain walk and not a one-hop parent test: the child hangs under a live
+  # daemon two hops below the launcher, so its parent alone names no anchor,
+  # and only the walk from daemon up into the launcher's ancestry reports it
+  # attached. When the suite releases the daemon, the kernel reparents the
+  # child to the session's adopter and the same walk reports it adopted.
+  # shellcheck disable=SC2016 # intentional: the inner shell expands $! and $1
+  bash -c 'sleep 300 >/dev/null 2>&1 & echo "$!" > "$1"; while [ ! -e "$2" ]; do sleep 0.05; done' \
+    daemon "$TMP_ROOT/g.child" "$TMP_ROOT/g.halt" >/dev/null 2>&1 &
+  daemon=$!
+  track "$daemon"
+  child=''
+  i=0
+  while [ "$i" -lt 100 ]; do
+    if [ -s "$TMP_ROOT/g.child" ]; then
+      child=$(cat "$TMP_ROOT/g.child")
+      pid_is_numeric "$child" && break
+    fi
+    kill -0 "$daemon" 2>/dev/null || break
+    sleep 0.05
+    i=$((i + 1))
+  done
+  pid_is_numeric "$child" || fail "the intermediate daemon never reported its child pid"
+  track "$child"
+  fm_test_parent_adopted "$child" &&
+    fail "a child parented by its live intermediate daemon (ppid $(ppid_of "$child"), daemon $(ppid_of "$daemon") away from the launcher) was reported adopted"
+  : > "$TMP_ROOT/g.halt"
+  i=0
+  while [ "$i" -lt 100 ] && ! fm_test_parent_adopted "$child"; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  fm_test_parent_adopted "$child" ||
+    fail "the child was not reported adopted after the intermediate daemon exited (ppid $(ppid_of "$child"))"
+  pass "a child attached to its live daemon is adopted only when that daemon exits"
+}
+
 fm_test_run \
   test_a_a_process_still_parented_to_its_launcher_is_not_adopted \
   test_b_a_process_parented_by_a_plain_live_daemon_is_not_adopted \
   test_c_an_orphan_released_by_its_launcher_exit_is_adopted \
   test_d_a_process_parented_by_an_init_named_adopter_is_adopted \
   test_e_a_process_parented_by_a_relay_named_adopter_is_adopted \
-  test_f_a_subreaper_parent_adopts_and_a_plain_parent_does_not
+  test_f_a_subreaper_parent_adopts_and_a_plain_parent_does_not \
+  test_g_a_child_attached_to_a_live_daemon_is_adopted_when_that_daemon_exits

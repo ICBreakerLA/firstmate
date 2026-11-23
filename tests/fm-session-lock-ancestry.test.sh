@@ -950,10 +950,12 @@ SH
 }
 
 # Start the fixture tree detached from this suite's own process tree: the
-# launcher exits immediately, so the tree is adopted away from it - pid 1 on a
-# plain host, an init-named process, a session relay, or a subreaper on the
-# shapes fm_test_parent_adopted accepts - and the ancestry walk terminates
-# inside the fixture. Returns once the hook has recorded its exit code.
+# launcher exits immediately, so the tree is adopted away from it by the
+# launching session's subreaper (here a WSL relay under /init on the host,
+# plain pid 1 in a sandbox) - fm_test_parent_adopted's parent-chain walk
+# reports it adopted once the chain reaches pid 1 without touching this
+# suite's ancestry - and the walk terminates inside the fixture. Returns
+# once the hook has recorded its exit code.
 run_fixture_tree() {  # <dir> <session-bin> [<daemon-bin>]
   local dir=$1 session_bin=$2 daemon_bin=${3:-} i
   if [ -n "$daemon_bin" ]; then

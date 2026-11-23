@@ -766,42 +766,86 @@ SH
   chmod +x "$fakebin/ps"
 }
 
-# fm_test_parent_adopted <pid> [original-parent-pid]
+# fm_test_parent_adopted <pid> [original-ancestor-pid...]
 # Answers "has <pid> been adopted away from the tree it was spawned in", the
-# question every orphan and session-ancestry suite asserts. The hard-coded
-# `ppid = 1` answer is true only on a plain host: a WSL2 session adopts its own
-# orphans with a per-session relay process whose command name is Relay(<pid>)
-# under /init (measured on the host: an orphan's parent 603294 comm Relay(603296),
-# the relay's parent /init 603293), and a systemd user session adopts them with
-# its --user manager, a PR_SET_CHILD_SUBREAPER process one hop below init. Those
-# adopters kept the host's reparent assertions red while the same suites passed
-# in a plain sandbox where pid 1 adopts.
-# True when the parent is pid 1, when its command name is init (covers WSL2's
-# /init; ps reports a comm basename on Linux and a full path on macOS, so
-# normalize), when its command name starts with Relay( (a WSL2 relay; a prefix
-# match because Linux truncates comm at 15 characters), or - Linux only, the
-# one platform with the flag - when /proc/<pid>/status shows Child_subreaper: 1.
-# With [original-parent-pid], a process whose parent is exactly that pid is never
-# adopted, so a suite asserting "away from the launcher, daemon, or session I
-# named" stays red when the process never moved.
-fm_test_parent_adopted() { # <pid> [original-parent-pid]
-  local pid=$1 orig_parent=${2:-} parent comm
-  parent=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')
-  case "$parent" in ''|*[!0-9]*) return 1 ;; esac
-  if [ -n "$orig_parent" ] && [ "$parent" = "$orig_parent" ]; then
-    return 1
-  fi
-  [ "$parent" -eq 1 ] && return 0
-  comm=$(ps -o comm= -p "$parent" 2>/dev/null | tr -d '[:space:]')
-  comm=${comm##*/}
-  case "$comm" in
-    init) return 0 ;;
-    'Relay('*) return 0 ;;
-  esac
-  if [ "$(uname -s)" = Linux ] && [ -r "/proc/$parent/status" ] &&
-    grep -q '^Child_subreaper:[[:space:]]*1$' "/proc/$parent/status" 2>/dev/null; then
-    return 0
-  fi
+# question every orphan and session-ancestry suite asserts. The answer is
+# ancestry-based, not name-matching: walk <pid>'s parent chain upward; adopted
+# means the chain reaches pid 1 before it touches any process of the tree the
+# test started in. That tree is the anchor set: the launching session's own
+# starting ancestry (this script's process and every live ancestor sharing its
+# session id, the walk stopping at the session edge) plus any launcher, daemon,
+# or session pids the caller names. A released orphan lands on the launching
+# session's subreaper - here a WSL relay (measured on the host: an orphan's
+# parent 603294 comm Relay(603296), its parent /init 603293), a systemd --user
+# manager running PR_SET_CHILD_SUBREAPER, or plain pid 1 in a sandbox - which
+# sits above the session edge, so the chain walks to pid 1 without ever
+# touching an anchor. A process still parented by its launcher, its daemon, or
+# the session above them walks straight into an anchor and is not adopted, so
+# an assertion stays red when the process never moved.
+# The primary answer is that walk; the parent-name shortcuts (command name
+# init, covering WSL2's /init; the Relay( prefix, tolerant of Linux's 15-char
+# comm truncation; a live Child_subreaper flag, Linux-only) are secondary
+# acceptances for an adopter sitting directly on the parent. ps reports a comm
+# basename on Linux and a full path on macOS, so names normalize by basename.
+# A parent the walk cannot read (it died mid-walk) reads as not adopted: the
+# process has not moved, and polling callers converge.
+fm_test_parent_adopted() { # <pid> [original-ancestor-pid...]
+  local pid=${1:-} anchor anchors='' parent cur comm sess_self i
+  for anchor in "${@:2}"; do
+    case "$anchor" in ''|*[!0-9]*) continue ;; esac
+    anchors="$anchors $anchor"
+  done
+  # The launching session's own starting ancestry: this script's process and
+  # every live ancestor sharing its session id. The session id bounds the set
+  # so the adopters above the session (the relay, /init, a subreaper manager)
+  # are never anchors; on a platform whose ps names cannot supply the session
+  # id, stop at the first ancestor carrying an adopter's name instead.
+  sess_self=$(ps -o sess= -p $$ 2>/dev/null | tr -d '[:space:]')
+  case "$sess_self" in ''|*[!0-9]*) sess_self='' ;; esac
+  cur=$$
+  i=0
+  while [ "$i" -lt 512 ]; do
+    anchors="$anchors $cur"
+    parent=$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d '[:space:]')
+    case "$parent" in ''|*[!0-9]*) break ;; esac
+    [ "$parent" -le 1 ] && break
+    [ "$parent" = "$cur" ] && break
+    if [ -n "$sess_self" ]; then
+      comm=$(ps -o sess= -p "$parent" 2>/dev/null | tr -d '[:space:]')
+      [ "$comm" = "$sess_self" ] || break
+    else
+      comm=$(ps -o comm= -p "$parent" 2>/dev/null | tr -d '[:space:]')
+      case "${comm##*/}" in
+        init|/init|'Relay('*) break ;;
+      esac
+    fi
+    cur=$parent
+    i=$((i + 1))
+  done
+  # The verdict walk, from the queried process upward: reaching pid 1 means
+  # every intermediate parent (the launcher, the daemon) is gone, so the
+  # process was adopted; touching an anchor means it still hangs in the tree
+  # it was spawned in.
+  cur=$pid
+  case "$cur" in ''|*[!0-9]*) return 1 ;; esac
+  i=0
+  while [ "$i" -lt 512 ]; do
+    parent=$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d '[:space:]')
+    case "$parent" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$parent" -eq 1 ] && return 0
+    case " $anchors " in *" $parent "*) return 1 ;; esac
+    comm=$(ps -o comm= -p "$parent" 2>/dev/null | tr -d '[:space:]')
+    comm=${comm##*/}
+    case "$comm" in
+      init|/init|'Relay('*) return 0 ;;
+    esac
+    if [ "$(uname -s)" = Linux ] &&
+      grep -q '^Child_subreaper:[[:space:]]*1$' "/proc/$parent/status" 2>/dev/null; then
+      return 0
+    fi
+    cur=$parent
+    i=$((i + 1))
+  done
   return 1
 }
 

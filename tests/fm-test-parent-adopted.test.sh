@@ -7,9 +7,12 @@
 # launching session's own ancestry. The host's adopter is the launching
 # session's subreaper, here a WSL relay (comm Relay(<pid>)) under /init, on a
 # systemd user session a PR_SET_CHILD_SUBREAPER manager, in a plain sandbox
-# pid 1 itself, and each sits above the session's ancestry edge, so a
-# released orphan's chain walks to pid 1 while a process that never moved
-# walks straight back into its launcher, daemon, or session. These cases
+# pid 1 itself, and under OpenSSH >= 7.6 the session leader itself, which
+# carries the flag and sits inside the ancestry, where being a flagged
+# adopter outranks being an anchor; the adopters that sit above the
+# session's ancestry edge let a released orphan's chain walk to pid 1, while
+# a process that never moved walks straight back into its launcher, daemon,
+# or session. These cases
 # drive real processes through every adopter shape the helper accepts and
 # every attached-parent shape it must reject, so the shared assertion can
 # never go vacuous: the launcher-parented and daemon-parented cases are the
@@ -266,6 +269,92 @@ PY
   pass "a subreaper parent adopts and a plain parent does not"
 }
 
+test_h_an_anchor_parent_flagged_as_a_subreaper_is_adopted() {
+  local sub ctrl sub_child ctrl_child i
+  if [ "$(uname -s)" != Linux ]; then
+    pass "skipped: the Child_subreaper check is Linux-only (uname $(uname -s))"
+    return
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    pass "skipped: the subreaper fixture needs python3 to call prctl through ctypes"
+    return
+  fi
+  # The measured ssh-launched shape: OpenSSH >= 7.6 runs PR_SET_CHILD_SUBREAPER
+  # on the session leader, so the host's adopter sits inside the launching
+  # ancestry and is an anchor by the helper's own definition. A test process
+  # is never spawned directly by the session's leader, so a child hanging on
+  # that parent has been released by definition: the flag must outrank anchor
+  # membership, exactly as it does for the ssh session leader and as pinned
+  # here by naming the fixture parent as an anchor hint. The control is the
+  # same launched anchor parent with no flag, which must stay attached.
+  python3 - "$TMP_ROOT/h.subchild" >/dev/null 2>&1 <<'PY' &
+import ctypes, subprocess, sys, time
+libc = ctypes.CDLL("libc.so.6")
+if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+    sys.exit(1)
+child = subprocess.Popen(["sleep", "300"])
+with open(sys.argv[1], "w") as fh:
+    fh.write(str(child.pid))
+time.sleep(600)
+PY
+  sub=$!
+  track "$sub"
+  python3 - "$TMP_ROOT/h.ctrlchild" >/dev/null 2>&1 <<'PY' &
+import subprocess, sys, time
+child = subprocess.Popen(["sleep", "300"])
+with open(sys.argv[1], "w") as fh:
+    fh.write(str(child.pid))
+time.sleep(600)
+PY
+  ctrl=$!
+  track "$ctrl"
+  sub_child=""
+  ctrl_child=""
+  i=0
+  while [ "$i" -lt 100 ]; do
+    [ -s "$TMP_ROOT/h.subchild" ] && [ -s "$TMP_ROOT/h.ctrlchild" ] && break
+    sleep 0.05
+    i=$((i + 1))
+  done
+  # Track whatever started, before any skip return, so teardown owns it.
+  if [ -s "$TMP_ROOT/h.subchild" ]; then
+    sub_child=$(cat "$TMP_ROOT/h.subchild")
+    pid_is_numeric "$sub_child" && track "$sub_child"
+  fi
+  if [ -s "$TMP_ROOT/h.ctrlchild" ]; then
+    ctrl_child=$(cat "$TMP_ROOT/h.ctrlchild")
+    pid_is_numeric "$ctrl_child" && track "$ctrl_child"
+  fi
+  # Capability skips, read from the live control parent the same way test_f
+  # reads them: a stripped kernel that exposes no field, and a kernel that
+  # refuses the prctl, are skips, not verdicts on the helper.
+  if ! grep -q '^Child_subreaper:' "/proc/$ctrl/status" 2>/dev/null; then
+    pass "skipped: this kernel exposes no Child_subreaper field in /proc/<pid>/status, so the flag check cannot run"
+    return
+  fi
+  if [ ! -s "$TMP_ROOT/h.subchild" ] && [ -s "$TMP_ROOT/h.ctrlchild" ]; then
+    pass "skipped: this kernel refused PR_SET_CHILD_SUBREAPER, so the adopter case cannot run"
+    return
+  fi
+  pid_is_numeric "$sub_child" ||
+    fail "the subreaper fixture reported no child pid, so the anchor case cannot be asserted"
+  pid_is_numeric "$ctrl_child" ||
+    fail "the plain-anchor control fixture reported no child pid"
+  # The shape is only meaningful if each child really hangs under its fixture
+  # parent, and that parent is the one carrying (or not carrying) the flag.
+  [ "$(ppid_of "$sub_child")" = "$sub" ] ||
+    fail "the subreaper child is not parented by its subreaper fixture (ppid $(ppid_of "$sub_child"), fixture $sub)"
+  [ "$(ppid_of "$ctrl_child")" = "$ctrl" ] ||
+    fail "the control child is not parented by its plain fixture (ppid $(ppid_of "$ctrl_child"), fixture $ctrl)"
+  grep -q '^Child_subreaper:[[:space:]]*1$' "/proc/$sub/status" 2>/dev/null ||
+    fail "the subreaper fixture parent does not report Child_subreaper: 1"
+  fm_test_parent_adopted "$sub_child" "$sub" &&
+    fail "an anchor parent flagged Child_subreaper was reported attached (ppid $(ppid_of "$sub_child"))"
+  fm_test_parent_adopted "$ctrl_child" "$ctrl" &&
+    fail "a plain anchor parent was reported adopted"
+  pass "an anchor parent flagged as a subreaper adopts; a plain anchor parent stays attached"
+}
+
 test_g_a_child_attached_to_a_live_daemon_is_adopted_when_that_daemon_exits() {
   local daemon child i
   # The session-lock shape in miniature, and the exact reason the answer is a
@@ -312,4 +401,5 @@ fm_test_run \
   test_d_a_process_parented_by_an_init_named_adopter_is_adopted \
   test_e_a_process_parented_by_a_relay_named_adopter_is_adopted \
   test_f_a_subreaper_parent_adopts_and_a_plain_parent_does_not \
-  test_g_a_child_attached_to_a_live_daemon_is_adopted_when_that_daemon_exits
+  test_g_a_child_attached_to_a_live_daemon_is_adopted_when_that_daemon_exits \
+  test_h_an_anchor_parent_flagged_as_a_subreaper_is_adopted

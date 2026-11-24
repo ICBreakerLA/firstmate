@@ -780,13 +780,18 @@ SH
 # manager running PR_SET_CHILD_SUBREAPER, or plain pid 1 in a sandbox - which
 # sits above the session edge, so the chain walks to pid 1 without ever
 # touching an anchor. A process still parented by its launcher, its daemon, or
-# the session above them walks straight into an anchor and is not adopted, so
-# an assertion stays red when the process never moved.
-# The primary answer is that walk; the parent-name shortcuts (command name
-# init, covering WSL2's /init; the Relay( prefix, tolerant of Linux's 15-char
-# comm truncation; a live Child_subreaper flag, Linux-only) are secondary
-# acceptances for an adopter sitting directly on the parent. ps reports a comm
-# basename on Linux and a full path on macOS, so names normalize by basename.
+# the session above them walks straight into an unflagged anchor and is not
+# adopted, so an assertion stays red when the process never moved.
+# The verdict reads every parent as an adopter before it reads it as an
+# anchor: the adopters are pid 1, the command names (init, covering WSL2's
+# /init; the Relay( prefix, tolerant of Linux's 15-char comm truncation),
+# and a live Child_subreaper flag (Linux-only). A test process is never
+# spawned directly by the session's leader, so a child of a flagged parent
+# has been released by definition, even when that parent sits inside the
+# launching ancestry - OpenSSH >= 7.6 runs PR_SET_CHILD_SUBREAPER on the
+# session leader, and an ssh-launched lane adopts exactly there. ps reports
+# a comm basename on Linux and a full path on macOS, so names normalize by
+# basename.
 # A parent the walk cannot read (it died mid-walk) reads as not adopted: the
 # process has not moved, and polling callers converge.
 fm_test_parent_adopted() { # <pid> [original-ancestor-pid...]
@@ -824,8 +829,9 @@ fm_test_parent_adopted() { # <pid> [original-ancestor-pid...]
   done
   # The verdict walk, from the queried process upward: reaching pid 1 means
   # every intermediate parent (the launcher, the daemon) is gone, so the
-  # process was adopted; touching an anchor means it still hangs in the tree
-  # it was spawned in.
+  # process was adopted; each parent is read as an adopter before it is read
+  # as an anchor, and touching an unflagged anchor means it still hangs in
+  # the tree it was spawned in.
   cur=$pid
   case "$cur" in ''|*[!0-9]*) return 1 ;; esac
   i=0
@@ -833,7 +839,6 @@ fm_test_parent_adopted() { # <pid> [original-ancestor-pid...]
     parent=$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d '[:space:]')
     case "$parent" in ''|*[!0-9]*) return 1 ;; esac
     [ "$parent" -eq 1 ] && return 0
-    case " $anchors " in *" $parent "*) return 1 ;; esac
     comm=$(ps -o comm= -p "$parent" 2>/dev/null | tr -d '[:space:]')
     comm=${comm##*/}
     case "$comm" in
@@ -843,6 +848,7 @@ fm_test_parent_adopted() { # <pid> [original-ancestor-pid...]
       grep -q '^Child_subreaper:[[:space:]]*1$' "/proc/$parent/status" 2>/dev/null; then
       return 0
     fi
+    case " $anchors " in *" $parent "*) return 1 ;; esac
     cur=$parent
     i=$((i + 1))
   done

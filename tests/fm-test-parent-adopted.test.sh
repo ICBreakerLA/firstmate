@@ -348,7 +348,7 @@ PY
     fail "the control child is not parented by its plain fixture (ppid $(ppid_of "$ctrl_child"), fixture $ctrl)"
   grep -q '^Child_subreaper:[[:space:]]*1$' "/proc/$sub/status" 2>/dev/null ||
     fail "the subreaper fixture parent does not report Child_subreaper: 1"
-  fm_test_parent_adopted "$sub_child" "$sub" &&
+  fm_test_parent_adopted "$sub_child" "$sub" ||
     fail "an anchor parent flagged Child_subreaper was reported attached (ppid $(ppid_of "$sub_child"))"
   fm_test_parent_adopted "$ctrl_child" "$ctrl" &&
     fail "a plain anchor parent was reported adopted"

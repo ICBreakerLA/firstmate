@@ -1,0 +1,20 @@
+=== gate-skip flag fixture v2 (runner + git-config-helpers, NO tasks-axi helper/pin) ===
+--- run 1: with --fail-on-gate-skip tasks-axi on a suite printing 'skip: tasks-axi' (expect FAIL) ---
+FM_TEST_BEGIN 2026-11-24T10:41:24Z tests/skipprobe.test.sh family=unclassified expected_gate_skip=none
+ok - probe ran
+skip: tasks-axi not found; home-addressing cases not run
+fm-test-run: required gate skip token seen in tests/skipprobe.test.sh: skip: tasks-axi
+FM_TEST_END 2026-11-24T10:41:24Z tests/skipprobe.test.sh exit=1 duration_ms=17 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=78
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=17 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/skipprobe.test.sh duration_ms=17
+exit=1
+--- run 2: same suite, no flag (expect exit 0) ---
+FM_TEST_BEGIN 2026-11-24T10:41:24Z tests/skipprobe.test.sh family=unclassified expected_gate_skip=none
+ok - probe ran
+skip: tasks-axi not found; home-addressing cases not run
+FM_TEST_END 2026-11-24T10:41:24Z tests/skipprobe.test.sh exit=0 duration_ms=13 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=71
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=13 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/skipprobe.test.sh duration_ms=13
+exit=0

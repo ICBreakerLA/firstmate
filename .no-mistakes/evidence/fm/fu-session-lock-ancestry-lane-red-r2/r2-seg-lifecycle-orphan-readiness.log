@@ -1,0 +1,5 @@
+ok - ownerless readiness recovers only dead exact-token groups and refuses unsafe or unproved ownership
+ok - reconcile durably announces cleanup uncertainty once and recovers both extension sources
+ok - attached start and live-owner recovery renew cleanup failure wakes with delivered failure headlines
+
+all extension-binding tests passed

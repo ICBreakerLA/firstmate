@@ -1,0 +1,31 @@
+=== fm-procevent solo ===
+guard bound: lease=7s check=6s reaped 12.4s after the last owner activity, documented bound 15s
+ok - an orphaned runner is reaped within the lease plus ONE check interval
+decimal interval: 08 halves to 4s and its listener started
+decimal interval: 010 halves to 5s and its listener started
+ok - a zero-prefixed decimal interval starts its listener and halves as decimal
+ok - one unreadable read does not end a live runner
+ordinary stop: start status=143 retirement=373ms sampled windows=2110/2170ms
+ok - a runner exits on the ordinary stop signal instead of outliving it
+ok - a group whose leader died to something else is still refused, not signalled
+ok - arm reports ready only after the listener is running
+ok - arm waits out a delayed listener start before reporting ready
+ok - arm fails when the listener cannot claim, and leaves the registration retire refused
+ok - arm waits out the confirm window before reporting that the listener is not running
+ok - re-arm over a live earlier listener reports it still serving the board
+ok - older compatible Lavish versions retain the poll-with-reply behavior
+ok - a refused synchronous reply fails arm before source registration
+ok - a refused synchronous reply leaves the same arm retryable
+ok - an arm refused for ownership, round, or endpoint never posts its reply
+ok - direct poll confirms a new-version reply before polling
+ok - an unknown Lavish version fails arm and poll closed, keeping the staged reply
+ok - arm posts and confirms the staged reply before reporting listener readiness
+ok - re-arm launches the new generation once a draining earlier claim is released
+ok - arm does not launch beside a stale claim whose process group is alive
+
+all procevent tests passed
+pipe-exit=0
+
+=== fm-test-run.test.sh solo ===
+Terminated                 timeout 330 bash tests/fm-test-run.test.sh 2>&1 | tail -25
+pipe-exit=124

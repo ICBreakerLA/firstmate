@@ -1,0 +1,7 @@
+=== all-mode solo under synthetic gate-lane contention (8 spinners on 4 CPUs, ~ chainG load 8.86) ===
+loadavg: 1.23
+all rc=1 duration=30.9s
+not-autohandled: flow-source (left for the handler; still unacknowledged)
+ok - one external adapter registers, invokes, captures unhandled evidence, classifies, and terminally retires end to end
+not ok - inner host crash during result.silent wedged its runner before result.terminal
+not ok - an isolated extension conformance section failed

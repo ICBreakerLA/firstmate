@@ -1,0 +1,7 @@
+=== all-mode with split, idle host (load 0.32) ===
+run1 rc=0 duration=80.8s
+all extension-binding tests passed
+run2 rc=0 duration=87.9s
+all extension-binding tests passed
+run3 rc=0 duration=78.1s
+all extension-binding tests passed

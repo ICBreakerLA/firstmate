@@ -1,0 +1,2 @@
+=== probe-only group timing (coordinator segment) on idle host ===
+probes rc=0 duration=4.7s

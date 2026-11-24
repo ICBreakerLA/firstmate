@@ -1,0 +1,32 @@
+=== fm-pi-primary-types (ts-loader) ===
+npm WARN deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+added 121 packages in 6s
+{"node":"v22.22.1","platform":"linux","arch":"x64","packages":{"@earendil-works/pi-ai":{"version":"1.2.0","resolved":"https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-1.2.0.tgz","integrity":"sha512-U5/1zXqfV1on7/9sbez03tT4Ru49Lvfb4+zXSDK3DBKF5cRk6KxvAOTOY3HJ4jimlZth+rs7vbJqN6iBQAoNuQ=="},"@earendil-works/pi-coding-agent":{"version":"1.2.0","resolved":"https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.2.0.tgz","integrity":"sha512-h/4WaVWv1VlCaY8x8qEN5U+7jbF/e7+Ck6moPeEOFn5juMTWwNAXjwgYM7gRgbBYh8Zppwt6qWvJDzNTf4GNEQ=="},"@earendil-works/pi-tui":{"version":"1.2.0","resolved":"https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-1.2.0.tgz","integrity":"sha512-OdJCiYklkL3TqmdmGKUflHoLy9zw18GBYO0DPASZvGlP4RkDXAZzLLDt7cidJ6wUR7DBrKb13rrekDsXgMF60g=="},"@types/node":{"version":"22.19.19","resolved":"https://registry.npmjs.org/@types/node/-/node-22.19.19.tgz","integrity":"sha512-dyh/xO2Fh5bYrfWaaqGrRQQGkNdmYw6AmaAUvYeUMNTWQtvb796ikLdmTchRmOlOiIJ1TDXfWgVx1QkUlQ6Hew=="},"typebox":{"version":"1.3.27","resolved":"https://registry.npmjs.org/typebox/-/typebox-1.3.27.tgz","integrity":"sha512-zu+jc1pcy4UiNThxikUr36f0Rybk9PEeCg/NE6adeWr/SKsdNO4EzZHYRDlv2YCVAfj3Odq3dESSo/jNyoBXzA=="},"typescript":{"version":"5.9.3","resolved":"https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz","integrity":"sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="}},"lifecycleScriptsDisabled":true,"packagesWithInstallScripts":["node_modules/@google/genai","node_modules/protobufjs"]}
+Version 5.9.3
+ok - tracked Pi extensions pass strict no-emit typecheck against Pi 1.2.0
+{"sdk":"1.2.0","casesPassed":16,"results":[{"mode":"alternating-85","requests":4,"executions":6,"notices":1},{"mode":"alternating-65","requests":4,"executions":6,"notices":1},{"mode":"ssh","requests":4,"executions":3,"notices":1,"operationalAndResumeLatch":true,"realUserReset":true},{"mode":"cut","requests":4,"executions":3,"notices":1},{"mode":"grouped","requests":4,"executions":3,"notices":1},{"mode":"multiline","requests":4,"executions":3,"notices":1},{"mode":"continued-group","requests":4,"executions":3,"notices":1},{"mode":"unknown-group","requests":7,"executions":6,"notices":0},{"mode":"mutating-group","requests":7,"executions":6,"notices":0},{"mode":"same-batch","requests":4,"executions":3,"notices":1},{"mode":"truncated","requests":4,"executions":3,"notices":1},{"mode":"truncated-compact","requests":6,"executions":3,"notices":1},{"mode":"changing","requests":7,"executions":6,"notices":0},{"mode":"failed","requests":7,"executions":6,"notices":0},{"mode":"foreign-owner","requests":7,"executions":6,"notices":0},{"mode":"default-off","requests":7,"executions":6,"notices":0}]}
+ok - read guard real SDK events/abort against Pi 1.2.0
+pipe-exit=0
+
+=== fm-sbx-run ===
+ok - a proxy that does not substitute the key stops the launch and removes the sandbox
+ok - a key file path containing a space still yields the exact key
+ok - the task's OpenRouter cost is logged without the key, and an unreadable usage writes nothing
+ok - the sandbox's host-side network policy log is captured on exit as the whole JSON document sbx prints for it, at a fresh state/<id>.sbx-policy-log.<UTC-stamp>.json, outside every sandbox mount
+ok - an unavailable policy log writes nothing and never fails the run
+ok - a capture target that refuses the write never fails the run and still removes the sandbox
+ok - two launches of the same task leave two distinct parseable JSON files, each its launch's whole policy log
+# all fm-sbx-run tests passed
+pipe-exit=0
+
+=== fm-extension-binding ===
+not-autohandled: flow-source (left for the handler; still unacknowledged)
+ok - the section coordinator propagates ordered failures and bounded cleanup
+ok - one external adapter registers, invokes, captures unhandled evidence, classifies, and terminally retires end to end
+ok - inner result.silent host crash releases the parent lifecycle lock before terminal retry
+ok - local binding retirement requires its exact identity and disables invocation
+ok - ownerless readiness recovers only dead exact-token groups and refuses unsafe or unproved ownership
+ok - reconcile durably announces cleanup uncertainty once and recovers both extension sources
+not ok - an isolated extension conformance section failed
+pipe-exit=1

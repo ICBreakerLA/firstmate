@@ -1,0 +1,14 @@
+=== binding suite in BASE tree standalone (pre-serialization shape) ===
+ok - serialized remote binding crosses fm-on through addressed-home capture and retirement
+
+all extension-binding tests passed
+not-autohandled: example-symlinked (left for the handler; still unacknowledged)
+ok - a home reached through a symlinked ancestor captures external evidence normally
+ok - inner result.silent host crash releases the parent lifecycle lock before terminal retry
+ok - handshake execution rejects and reaps foreground descendants
+
+all extension-binding tests passed
+ok - local binding retirement requires its exact identity and disables invocation
+ok - ownerless readiness recovers only dead exact-token groups and refuses unsafe or unproved ownership
+not ok - an isolated extension conformance section failed
+base-exit=1

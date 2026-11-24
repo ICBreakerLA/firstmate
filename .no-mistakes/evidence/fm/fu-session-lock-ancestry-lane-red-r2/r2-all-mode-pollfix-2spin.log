@@ -1,0 +1,39 @@
+ok - unknown extension conformance section selectors fail before setup
+ok - the section coordinator propagates ordered failures and bounded cleanup
+not-autohandled: flow-source (left for the handler; still unacknowledged)
+ok - one external adapter registers, invokes, captures unhandled evidence, classifies, and terminally retires end to end
+ok - inner result.silent host crash releases the parent lifecycle lock before terminal retry
+ok - local binding retirement requires its exact identity and disables invocation
+
+all extension-binding tests passed
+ok - ownerless readiness recovers only dead exact-token groups and refuses unsafe or unproved ownership
+ok - reconcile durably announces cleanup uncertainty once and recovers both extension sources
+ok - attached start and live-owner recovery renew cleanup failure wakes with delivered failure headlines
+
+all extension-binding tests passed
+ok - register-extension and reconcile of an unhandled extension result take their locks in one order
+
+all extension-binding tests passed
+not-autohandled: remote-source (left for the handler; still unacknowledged)
+ok - serialized remote binding crosses fm-on through addressed-home capture and retirement
+
+all extension-binding tests passed
+not-autohandled: example-file (left for the handler; still unacknowledged)
+ok - the shipped file-signal package is a runnable end-to-end external adapter
+not-autohandled: example-symlinked (left for the handler; still unacknowledged)
+ok - a home reached through a symlinked ancestor captures external evidence normally
+ok - handshake execution rejects and reaps foreground descendants
+
+all extension-binding tests passed
+ok - real deadline stalled
+ok - real deadline invoke
+ok - real deadline suspended-stall
+ok - real deadline startup
+ok - real deadline handshake
+ok - real deadline launch
+ok - invoke, handshake, readiness and release survive suspension while awake stalls time out
+
+all extension-binding tests passed
+ok - independent extension conformance sections complete through isolated public homes
+
+all extension-binding tests passed

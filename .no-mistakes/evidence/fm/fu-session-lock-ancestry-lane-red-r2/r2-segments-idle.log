@@ -1,0 +1,6 @@
+=== segments solo on idle host (load 0.13) ===
+seg=lifecycle-flow rc=0 duration=32.0s
+seg=lifecycle-order rc=0 duration=7.6s
+seg=remote-lifecycle rc=0 duration=9.1s
+seg=example rc=0 duration=11.6s
+seg=deadlines rc=0 duration=9.9s

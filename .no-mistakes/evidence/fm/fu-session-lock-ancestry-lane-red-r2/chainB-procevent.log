@@ -1,0 +1,3 @@
+=== fm-procevent (target) ===
+Terminated                 timeout 340 bash tests/fm-procevent.test.sh 2>&1 | tail -30
+pipe-exit=124

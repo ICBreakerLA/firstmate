@@ -1,0 +1,11 @@
+=== fm-extension-binding solo (target) ===
+ok - unknown extension conformance section selectors fail before setup
+ok - the section coordinator propagates ordered failures and bounded cleanup
+not-autohandled: flow-source (left for the handler; still unacknowledged)
+ok - one external adapter registers, invokes, captures unhandled evidence, classifies, and terminally retires end to end
+ok - inner result.silent host crash releases the parent lifecycle lock before terminal retry
+ok - local binding retirement requires its exact identity and disables invocation
+ok - ownerless readiness recovers only dead exact-token groups and refuses unsafe or unproved ownership
+ok - reconcile durably announces cleanup uncertainty once and recovers both extension sources
+not ok - an isolated extension conformance section failed
+exit=1

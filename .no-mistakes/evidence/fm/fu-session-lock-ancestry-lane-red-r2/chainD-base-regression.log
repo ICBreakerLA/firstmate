@@ -1,0 +1,22 @@
+=== target suite against BASE lib.sh (expect fail: helper absent) ===
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 140: fm_test_parent_adopted: command not found
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 144: fm_test_parent_adopted: command not found
+not ok - an orphan released by its launcher's exit was not reported adopted (ppid 1)
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 40: 3855380 Killed                     sleep 300 > /dev/null 2>&1
+/tmp/fm-base-9916e6e8/tests/fm-test-parent-adopted.test.sh: line 40: 3855387 Killed                     "$1" -c 'echo "$$" > "$1"; sleep 300 >/dev/null 2>&1 & echo "$!" > "$2"; while :; do sleep 0.2; done' launcher "$TMP_ROOT/$2.parent" "$TMP_ROOT/$2.child" > /dev/null 2>&1
+pipe-exit=1

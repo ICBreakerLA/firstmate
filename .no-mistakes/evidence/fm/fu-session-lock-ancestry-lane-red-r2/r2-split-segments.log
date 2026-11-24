@@ -1,0 +1,3 @@
+=== split segments solo, idle host ===
+seg=lifecycle-flow rc=0 duration=13.2s
+seg=lifecycle-orphan-readiness rc=0 duration=22.3s

@@ -1,0 +1,13 @@
+=== contention compare: HEAD shape vs fixed shape, 1 and 2 spinners (pid-kill) ===
+shape=tmp-prefix-shape spinners=1 rc=1 duration=36.2s load=1.93
+not ok - an isolated extension conformance section failed
+/bin/bash: line 2: 3363317 Killed                     timeout 130 bash -c 'loadx=1; while [ "$loadx" -eq 1 ]; do :; done' > /dev/null
+shape=tmp-prefix-shape spinners=2 rc=0 duration=81.5s load=3.47
+all extension-binding tests passed
+/bin/bash: line 2: 3378602 Killed                     timeout 130 bash -c 'loadx=1; while [ "$loadx" -eq 1 ]; do :; done' > /dev/null
+/bin/bash: line 2: 3378603 Killed                     timeout 130 bash -c 'loadx=1; while [ "$loadx" -eq 1 ]; do :; done' > /dev/null
+shape=fm-extension-binding.test spinners=1 rc=0 duration=92.5s load=2.61
+all extension-binding tests passed
+/bin/bash: line 2: 3408008 Killed                     timeout 130 bash -c 'loadx=1; while [ "$loadx" -eq 1 ]; do :; done' > /dev/null
+shape=fm-extension-binding.test spinners=2 rc=0 duration=78.8s load=3.03
+all extension-binding tests passed

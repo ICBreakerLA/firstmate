@@ -1,0 +1,3 @@
+=== fm-test-run.test.sh (target) ===
+Terminated                 timeout 240 bash tests/fm-test-run.test.sh 2>&1 | tail -30
+pipe-exit=124

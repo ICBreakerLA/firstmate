@@ -1,0 +1,7 @@
+=== fm-supervision-host ===
+Terminated                 timeout 240 bash tests/fm-supervision-host.test.sh 2>&1 | tail -10
+pipe-exit=124
+
+=== fm-supervision-host-hook ===
+Terminated                 timeout 120 bash tests/fm-supervision-host-hook.test.sh 2>&1 | tail -6
+pipe-exit=124

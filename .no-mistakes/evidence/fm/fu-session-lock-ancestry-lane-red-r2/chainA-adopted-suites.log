@@ -1,0 +1,90 @@
+=== fm-test-parent-adopted (target) ===
+1..8
+ok - a process still parented to its launcher is not adopted
+ok - a process parented by a plain live daemon is not adopted
+ok - an orphan released by its launcher's exit is adopted
+ok - a process parented by an init-named adopter that is not pid 1 is adopted
+ok - a process parented by a Relay-named adopter is adopted
+ok - skipped: this kernel exposes no Child_subreaper field in /proc/<pid>/status, so the flag check cannot run
+ok - a child attached to its live daemon is adopted only when that daemon exits
+ok - skipped: this kernel exposes no Child_subreaper field in /proc/<pid>/status, so the flag check cannot run
+FM_TEST_COMPLETE
+tests/fm-test-parent-adopted.test.sh: line 40: 3834013 Killed                     sleep 300 > /dev/null 2>&1
+tests/fm-test-parent-adopted.test.sh: line 40: 3834062 Killed                     "$1" -c 'echo "$$" > "$1"; sleep 300 >/dev/null 2>&1 & echo "$!" > "$2"; while :; do sleep 0.2; done' launcher "$TMP_ROOT/$2.parent" "$TMP_ROOT/$2.child" > /dev/null 2>&1
+tests/fm-test-parent-adopted.test.sh: line 40: 3834167 Killed                     "$1" -c 'echo "$$" > "$1"; sleep 300 >/dev/null 2>&1 & echo "$!" > "$2"; while :; do sleep 0.2; done' launcher "$TMP_ROOT/$2.parent" "$TMP_ROOT/$2.child" > /dev/null 2>&1
+tests/fm-test-parent-adopted.test.sh: line 40: 3834201 Killed                     "$1" -c 'echo "$$" > "$1"; sleep 300 >/dev/null 2>&1 & echo "$!" > "$2"; while :; do sleep 0.2; done' launcher "$TMP_ROOT/$2.parent" "$TMP_ROOT/$2.child" > /dev/null 2>&1
+tests/fm-test-parent-adopted.test.sh: line 40: 3834233 Killed                     python3 - "$TMP_ROOT/sub.child" > /dev/null 2>&1 <<'PY'
+import ctypes, subprocess, sys, time
+libc = ctypes.CDLL("libc.so.6")
+if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+    sys.exit(1)
+child = subprocess.Popen(["sleep", "300"])
+with open(sys.argv[1], "w") as fh:
+    fh.write(str(child.pid))
+time.sleep(600)
+PY
+
+tests/fm-test-parent-adopted.test.sh: line 40: 3834234 Killed                     python3 - "$TMP_ROOT/ctrl.child" > /dev/null 2>&1 <<'PY'
+import subprocess, sys, time
+child = subprocess.Popen(["sleep", "300"])
+with open(sys.argv[1], "w") as fh:
+    fh.write(str(child.pid))
+time.sleep(600)
+PY
+
+tests/fm-test-parent-adopted.test.sh: line 40: 3834363 Killed                     python3 - "$TMP_ROOT/h.subchild" > /dev/null 2>&1 <<'PY'
+import ctypes, subprocess, sys, time
+libc = ctypes.CDLL("libc.so.6")
+if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+    sys.exit(1)
+child = subprocess.Popen(["sleep", "300"])
+with open(sys.argv[1], "w") as fh:
+    fh.write(str(child.pid))
+time.sleep(600)
+PY
+
+tests/fm-test-parent-adopted.test.sh: line 40: 3834364 Killed                     python3 - "$TMP_ROOT/h.ctrlchild" > /dev/null 2>&1 <<'PY'
+import subprocess, sys, time
+child = subprocess.Popen(["sleep", "300"])
+with open(sys.argv[1], "w") as fh:
+    fh.write(str(child.pid))
+time.sleep(600)
+PY
+
+exit=0
+
+=== fm-session-lock-ancestry (target) ===
+ok - session-lock: a live version-named session holding the lock is not mistaken for a stale owner
+ok - session-lock: a trusted same-session id keeps owning a recycled background chain, and nothing weaker does
+ok - session-lock: a trusted id anchors the lock on the model-loop process, anything else on the outermost pid
+ok - session-lock: a Windows session is identified from its published pid across the severed parent link
+ok - session-lock: a published Windows pid is confirmed against the process table before it is trusted
+ok - session-lock: a tagged Windows pid is never resolved against the Cygwin process table
+ok - session-lock: a published identity is accepted by every gate that reads the lock
+ok - session-lock: a live tagged lock holder is a live foreign owner to a second Windows session
+ok - session-lock: fm-lock.sh protects valid tagged owners and reclaims dead or malformed records
+ok - session-lock: a published Windows Claude pid is accepted only with its session id
+ok - session-lock: a Windows /clear keeps the lock and re-keys its session id
+ok - session-lock: a Windows-tagged lock stays inert off Windows
+ok - session-lock: a task lease follows a live tagged lock holder and goes stale when it exits
+ok - session-lock: a harness in the local process table resolves untagged when ps has no -o option
+ok - session-lock e2e: a version-named session claims the home and arms supervision
+ok - session-lock e2e: a session parented by a harness-named daemon claims the home and arms supervision
+ok - session-lock e2e: a version-named session under a harness-named daemon keeps its own lock
+ok - session-lock e2e: a background session keeps its lock and its supervision across a recycled helper chain and a same-process session-id change
+ok - session-lock: a same-session confirmation waits for the claim lock and refreshes a re-keyed id
+ok - session-lock: a waiting confirmation does not steal another session's lock
+ok - session-lock: a failed lock write restores the previous sidecar
+ok - session-lock: a failed lock write removes a newly created sidecar
+ok - session-lock: a verified reclaim keeps the new sidecar beside the new pid
+ok - session-lock: a re-anchor keeps both supervision actors' task leases live
+ok - session-lock: a re-anchor during a rewake turn keeps the mid-turn auto-arm proof healthy
+
+=== fm-remote-job-orphan-reap (target) ===
+ok - the Linux start path puts the whole worker tree in its own process group
+ok - removing the state root and killing the recorded worker pid leaves the tree running, orphaned
+ok - a worker whose code root still exists is never reaped
+ok - a worker stops its whole tree once its code root is pruned
+ok - a dry run reports the abandoned worker and signals nothing
+ok - the reaper stops an abandoned worker's whole tree
+ok - the reaper is idempotent

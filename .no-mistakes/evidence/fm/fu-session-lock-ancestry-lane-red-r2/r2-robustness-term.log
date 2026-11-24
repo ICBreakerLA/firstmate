@@ -1,0 +1,7 @@
+=== fixed all-mode 3rd run (robustness) ===
+all3 rc=1 duration=40.1s
+=== TERM mid-lane cleanup check ===
+suite exited rc=143 after TERM
+leftover suite processes: 3
+ok - local binding retirement requires its exact identity and disables invocation
+ok - ownerless readiness recovers only dead exact-token groups and refuses unsafe or unproved ownership

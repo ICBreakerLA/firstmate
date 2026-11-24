@@ -1,0 +1,3 @@
+=== fixed shape, 8 spinners (heavy contention) ===
+fixed spinners=8 rc=1 duration=42.6s load=5.31
+not ok - an isolated extension conformance section failed

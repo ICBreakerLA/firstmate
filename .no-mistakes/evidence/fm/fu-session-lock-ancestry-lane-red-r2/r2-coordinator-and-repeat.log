@@ -1,0 +1,10 @@
+=== coordinator segment after fix ===
+probes rc=0 duration=4.5s
+ok - the section coordinator propagates ordered failures and bounded cleanup
+
+all coordinator tests passed
+=== all-mode repeat 2, idle host ===
+all2 rc=0 duration=77.5s
+ok - independent extension conformance sections complete through isolated public homes
+
+all extension-binding tests passed

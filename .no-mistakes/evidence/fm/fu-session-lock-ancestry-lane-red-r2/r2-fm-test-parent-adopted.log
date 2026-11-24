@@ -1,0 +1,52 @@
+1..8
+ok - a process still parented to its launcher is not adopted
+ok - a process parented by a plain live daemon is not adopted
+ok - an orphan released by its launcher's exit is adopted
+ok - a process parented by an init-named adopter that is not pid 1 is adopted
+ok - a process parented by a Relay-named adopter is adopted
+ok - skipped: this kernel exposes no Child_subreaper field in /proc/<pid>/status, so the flag check cannot run
+ok - a child attached to its live daemon is adopted only when that daemon exits
+ok - skipped: this kernel exposes no Child_subreaper field in /proc/<pid>/status, so the flag check cannot run
+FM_TEST_COMPLETE
+tests/fm-test-parent-adopted.test.sh: line 40: 3580779 Killed                     sleep 300 > /dev/null 2>&1
+tests/fm-test-parent-adopted.test.sh: line 40: 3580840 Killed                     "$1" -c 'echo "$$" > "$1"; sleep 300 >/dev/null 2>&1 & echo "$!" > "$2"; while :; do sleep 0.2; done' launcher "$TMP_ROOT/$2.parent" "$TMP_ROOT/$2.child" > /dev/null 2>&1
+tests/fm-test-parent-adopted.test.sh: line 40: 3580969 Killed                     "$1" -c 'echo "$$" > "$1"; sleep 300 >/dev/null 2>&1 & echo "$!" > "$2"; while :; do sleep 0.2; done' launcher "$TMP_ROOT/$2.parent" "$TMP_ROOT/$2.child" > /dev/null 2>&1
+tests/fm-test-parent-adopted.test.sh: line 40: 3581009 Killed                     "$1" -c 'echo "$$" > "$1"; sleep 300 >/dev/null 2>&1 & echo "$!" > "$2"; while :; do sleep 0.2; done' launcher "$TMP_ROOT/$2.parent" "$TMP_ROOT/$2.child" > /dev/null 2>&1
+tests/fm-test-parent-adopted.test.sh: line 40: 3581047 Killed                     python3 - "$TMP_ROOT/sub.child" > /dev/null 2>&1 <<'PY'
+import ctypes, subprocess, sys, time
+libc = ctypes.CDLL("libc.so.6")
+if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+    sys.exit(1)
+child = subprocess.Popen(["sleep", "300"])
+with open(sys.argv[1], "w") as fh:
+    fh.write(str(child.pid))
+time.sleep(600)
+PY
+
+tests/fm-test-parent-adopted.test.sh: line 40: 3581048 Killed                     python3 - "$TMP_ROOT/ctrl.child" > /dev/null 2>&1 <<'PY'
+import subprocess, sys, time
+child = subprocess.Popen(["sleep", "300"])
+with open(sys.argv[1], "w") as fh:
+    fh.write(str(child.pid))
+time.sleep(600)
+PY
+
+tests/fm-test-parent-adopted.test.sh: line 40: 3581153 Killed                     python3 - "$TMP_ROOT/h.ctrlchild" > /dev/null 2>&1 <<'PY'
+import subprocess, sys, time
+child = subprocess.Popen(["sleep", "300"])
+with open(sys.argv[1], "w") as fh:
+    fh.write(str(child.pid))
+time.sleep(600)
+PY
+
+tests/fm-test-parent-adopted.test.sh: line 40: 3581152 Killed                     python3 - "$TMP_ROOT/h.subchild" > /dev/null 2>&1 <<'PY'
+import ctypes, subprocess, sys, time
+libc = ctypes.CDLL("libc.so.6")
+if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+    sys.exit(1)
+child = subprocess.Popen(["sleep", "300"])
+with open(sys.argv[1], "w") as fh:
+    fh.write(str(child.pid))
+time.sleep(600)
+PY
+

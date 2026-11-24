@@ -1,0 +1,8 @@
+=== all-mode solo, idle host ===
+all rc=0 duration=66.3s
+ok - invoke, handshake, readiness and release survive suspension while awake stalls time out
+
+all extension-binding tests passed
+ok - independent extension conformance sections complete through isolated public homes
+
+all extension-binding tests passed

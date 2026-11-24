@@ -1,0 +1,8 @@
+=== fm-record-export solo (intent-named, not in diff) ===
+ok - teardown archive holds the task producer lock through source enumeration and commit
+ok - teardown archive treats absent status and inbox records as a complete capture
+ok - teardown archive refuses malformed generations, unknown artifacts, symlinks, and non-regular files
+ok - record export retention mirrors 30 completed days and prunes only owned committed generations
+ok - presentation, wake, classification, and snapshot readers leave the export root cold
+ALL TESTS PASSED
+pipe-exit=0

@@ -1,0 +1,21 @@
+=== binding all (idle, target) ===
+ok - local binding retirement requires its exact identity and disables invocation
+ok - ownerless readiness recovers only dead exact-token groups and refuses unsafe or unproved ownership
+ok - reconcile durably announces cleanup uncertainty once and recovers both extension sources
+not ok - an isolated extension conformance section failed
+pipe-exit=1
+
+=== fm-test-run.test.sh (idle) ===
+Terminated                 timeout 270 bash tests/fm-test-run.test.sh 2>&1 | tail -4
+pipe-exit=124
+
+=== fm-supervision-host.test.sh ===
+Terminated                 timeout 560 bash tests/fm-supervision-host.test.sh 2>&1 | tail -6
+pipe-exit=124
+
+=== fm-supervision-host-hook.test.sh ===
+ok - host+hook: the next park takes over the cycle a main-only pass-through left, so one arm owns it
+ok - host+hook: a park stopped mid take-over leaves the take-over to the next park
+ok - host+hook: a successor that cannot be recorded is stopped, and main's next turn end arms a fresh cycle
+FM_TEST_COMPLETE
+pipe-exit=0

@@ -325,10 +325,11 @@ PY
     ctrl_child=$(cat "$TMP_ROOT/h.ctrlchild")
     pid_is_numeric "$ctrl_child" && track "$ctrl_child"
   fi
-  # Capability skips, read from the live control parent the same way test_f
-  # reads them: a stripped kernel that exposes no field, and a kernel that
-  # refuses the prctl, are skips, not verdicts on the helper.
-  if ! grep -q '^Child_subreaper:' "/proc/$ctrl/status" 2>/dev/null; then
+  # Capability skips, read from the live flagged fixture parent with the
+  # same read the helper itself performs: a kernel that emits no flag line
+  # for the flag-set fixture, and a kernel that refuses the prctl, are
+  # skips, not verdicts on the helper.
+  if ! grep -q '^Child_subreaper:[[:space:]]*1$' "/proc/$sub/status" 2>/dev/null; then
     pass "skipped: this kernel exposes no Child_subreaper field in /proc/<pid>/status, so the flag check cannot run"
     return
   fi

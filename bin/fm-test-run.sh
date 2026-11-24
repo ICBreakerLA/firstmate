@@ -2745,7 +2745,15 @@ trap cleanup_run EXIT
 # whole run, so every suite that needs it runs instead of gate-skipping; the
 # exported FM_TEST_TASKS_AXI_BIN lets child test runs reuse it. A failed install
 # stops the run before any suite starts.
-if ! command -v tasks-axi >/dev/null 2>&1; then
+# The provisioning belongs to a tree that owns the pin (tests/fm-test-run.test.sh
+# and friends copy this runner into minimal fixture trees); a copied runner in a
+# tree without the helper and the pin files stays inert, exactly like a --list
+# run: those trees run no suite that needs tasks-axi, and dying on the missing
+# helper made the fixture suites red on every host without a system tasks-axi.
+if ! command -v tasks-axi >/dev/null 2>&1 &&
+  [ -r "$ROOT/tests/tasks-axi-helpers.sh" ] &&
+  [ -r "$ROOT/bin/sbx-tasks-axi/package.json" ] &&
+  [ -r "$ROOT/bin/sbx-tasks-axi/package-lock.json" ]; then
   # shellcheck source=tests/tasks-axi-helpers.sh
   . "$ROOT/tests/tasks-axi-helpers.sh" || die "could not load tests/tasks-axi-helpers.sh"
   log "installing the pinned tasks-axi once for this run"

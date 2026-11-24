@@ -161,7 +161,7 @@ The upstream workflow retained per-PR supersession and kept only the newest of c
 
 [CONTRIBUTING.md](../CONTRIBUTING.md) owns the local test policy and common entry points.
 `bin/fm-test-run.sh --help` owns exact lane names, selection flags, and bounded `--jobs` mechanics.
-The gate's `commands.test` runs `--check-coverage` and then each portable lane with `--exclude-family live-harness-optin --exclude-family hc-pinned` under `FM_LIVE=0`, so a gate round exercises no live guard, live Herdr session, release download, or real hc binary.
+The gate's `commands.test` runs `--check-coverage` and then each portable lane under `FM_LIVE=0` with the live-harness opt-in and hc-pinned families excluded and any surviving `tasks-axi` skip failing the lane ([configuration.md "Gate defaults"](configuration.md#gate-defaults-no-mistakesyaml) owns the pinned invocation), so a gate round exercises no live guard, live Herdr session, release download, or real hc binary.
 The hermetic `tests/fm-backend-hc.test.sh` remains in the portable serial lane.
 
 ## Gate execution bounds

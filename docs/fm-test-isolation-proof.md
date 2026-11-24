@@ -244,7 +244,7 @@ Both proof runs above were taken while the machine carried a five-minute load av
 
 This family is the residual set that used to sit in `unclassified`, and it exists because the catch-all itself must never be admitted.
 `unclassified` is the family map's `*)` arm, so admitting it would silently grant concurrency to every test added afterwards, which is exactly the population with no proof.
-`standalone` enumerates its 28 members instead, and `unclassified` stays the always-serial home for anything nobody has classified yet.
+`standalone` enumerates its members in the `bin/fm-test-run.sh` family map instead, and `unclassified` stays the always-serial home for anything nobody has classified yet.
 `tests/fm-test-run.test.sh` covers that split behaviorally: two `standalone` members run concurrently while an unmapped basename is refused under `--jobs` and still runs serially.
 
 Two scripts left the residual set rather than joining it.

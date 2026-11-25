@@ -468,9 +468,9 @@ run_extension_section_lanes() {
   section_result_root=$(mktemp -d "$TMP_ROOT/section-lanes.XXXXXX") || return 1
   total=${#sections[@]}
   # Sixteen selectors are validated here. The bounded aggregate keeps its
-  # required end-to-end bind/invoke/capture/retirement, registration lock-order,
-  # remote, and shipped example lanes; the other conformance cuts remain
-  # independently selectable.
+  # required end-to-end bind/invoke/capture/retirement, ownerless readiness
+  # recovery, registration lock-order, remote, and shipped example lanes; the
+  # other conformance cuts remain independently selectable.
   maximum_sections=16
   [ "$total" -le "$maximum_sections" ] || return 64
   launched=0
@@ -584,18 +584,6 @@ if [ "$extension_segment" = all ] || [ "$extension_segment" = coordinator ]; the
   assert_contains "$unknown_segment_out" "unknown extension-binding segment: typo" "an unknown section selector was not rejected"
   assert_not_contains "$unknown_segment_out" "all extension-binding tests passed" "an unknown section selector reported success"
   pass "unknown extension conformance section selectors fail before setup"
-  if [ "$extension_segment" = all ]; then
-    (
-      trap - EXIT HUP INT
-      trap 'terminate_section_lanes; exit 143' TERM
-      # Serialize the heavy aggregate sections: one lane runs at a time, each
-      # owning the full section bound from its own launch, so a section never
-      # shares the host with another lane's chain of fixture processes.
-      FM_EXTENSION_BINDING_LANE_CONCURRENCY=1 \
-        run_extension_section_lanes lifecycle-flow lifecycle-order remote-lifecycle example deadlines
-    ) &
-    section_coordinator_pid=$!
-  fi
   coordinator_probe="$TMP_ROOT/coordinator-probe"
   mkdir -p "$coordinator_probe"
   coordinator_ready="$coordinator_probe/ready"
@@ -662,6 +650,24 @@ if [ "$extension_segment" = all ] || [ "$extension_segment" = coordinator ]; the
   if [ "$extension_segment" = coordinator ]; then
     printf '\nall coordinator tests passed\n'
     exit 0
+  fi
+  # Launch the heavy sections only after the probe group has fully run to
+  # completion in the foreground. Each lane then owns the full section bound
+  # from its own launch with no suite-side load on the host: probe lanes
+  # sharing the host with a heavy lane ate its margin on the four-core gate
+  # host, so the aggregate was red in the gate lanes while every segment run
+  # alone stayed green.
+  if [ "$extension_segment" = all ]; then
+    (
+      trap - EXIT HUP INT
+      trap 'terminate_section_lanes; exit 143' TERM
+      # Serialize the heavy aggregate sections: one lane runs at a time, each
+      # owning the full section bound from its own launch, so a section never
+      # shares the host with another lane's chain of fixture processes.
+      FM_EXTENSION_BINDING_LANE_CONCURRENCY=1 \
+        run_extension_section_lanes lifecycle-flow lifecycle-orphan-readiness lifecycle-order remote-lifecycle example deadlines
+    ) &
+    section_coordinator_pid=$!
   fi
   wait "$section_coordinator_pid" || fail "an isolated extension conformance section failed"
   section_coordinator_pid=
@@ -1431,7 +1437,18 @@ pass "one external adapter registers, invokes, captures unhandled evidence, clas
 FM_HOME="$H_FLOW" "$PROCEVENT" register-extension ext-flow crash-silent-source --config-ref crash-silent >/dev/null
 FM_HOME="$H_FLOW" "$PROCEVENT" start crash-silent-source > "$TMP_ROOT/crash-silent-start.out" 2>&1 &
 crash_silent_start_pid=$!
-for _ in $(seq 1 400); do
+# A loaded host stretches the crashed runner's recovery past any fixed
+# iteration budget, exactly as it stretches the recovered orphan runners'
+# verdicts, so this poll owns the lane's remaining bound from now instead of
+# counting sleeps measured on a quiet host.
+crash_silent_wait_seconds=$EXTENSION_SECTION_LANE_MAX_SECONDS
+if [ -n "${FM_EXTENSION_BINDING_LANE_DEADLINE_EPOCH:-}" ]; then
+  crash_silent_remaining=$((FM_EXTENSION_BINDING_LANE_DEADLINE_EPOCH - $(date +%s) - 3))
+  [ "$crash_silent_remaining" -ge "$crash_silent_wait_seconds" ] || crash_silent_wait_seconds=$crash_silent_remaining
+  [ "$crash_silent_wait_seconds" -ge 1 ] || crash_silent_wait_seconds=1
+fi
+crash_silent_deadline=$((SECONDS + crash_silent_wait_seconds))
+while [ "$SECONDS" -lt "$crash_silent_deadline" ]; do
   if [ -f "$TMP_ROOT/claims/crash-silent-source.claim" ]; then
     # The successful crash-recovery path may release this durable claim between
     # the observation above and this best-effort cleanup PID read.
@@ -2229,7 +2246,7 @@ assert_absent "$H_INVOCATION_CLEANUP/config/extensions.d/org.example.invocation-
 pass "host-crash recovery retires only after exact invocation-group extinction"
 fi
 
-if section_enabled lifecycle-flow lifecycle-orphan-readiness; then
+if section_enabled lifecycle-orphan-readiness; then
 # Ownerless readiness records have no source selector or signalling authority.
 # Use only private fixture groups, and keep an unrelated live PID as a reuse case.
 P_INVOCATION_CLEANUP="$PACKAGES/orphan-cleanup"

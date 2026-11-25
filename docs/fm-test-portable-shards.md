@@ -53,6 +53,8 @@ The T3 Code backend suites carry the slowest successful Ubuntu samples from CI r
 
 The new `tests/fm-remote-herdr-identity.test.sh` serial hint is provisionally 6158 ms, from a successful local macOS arm64 `bin/fm-test-run.sh` sample on 2026-11-08. Replace it with an Ubuntu timing-artifact maximum at the next measured refresh; this is not whole-shard CI timing evidence.
 
+The 2026-11-24 `tests/fm-test-parent-adopted.test.sh` serial hint is a provisional modeled budget of 1200 ms, above the slower of two `bin/fm-test-run.sh` samples (884 ms and 1044 ms) on this Linux host, until a later measured refresh replaces it with an Ubuntu timing-artifact maximum.
+
 ## Parallel lanes
 
 The two parallel lanes use longest-processing-time assignment over those hints.
@@ -161,7 +163,7 @@ The upstream workflow retained per-PR supersession and kept only the newest of c
 
 [CONTRIBUTING.md](../CONTRIBUTING.md) owns the local test policy and common entry points.
 `bin/fm-test-run.sh --help` owns exact lane names, selection flags, and bounded `--jobs` mechanics.
-The gate's `commands.test` runs `--check-coverage` and then each portable lane with `--exclude-family live-harness-optin --exclude-family hc-pinned` under `FM_LIVE=0`, so a gate round exercises no live guard, live Herdr session, release download, or real hc binary.
+The gate's `commands.test` runs `--check-coverage` and then each portable lane under `FM_LIVE=0` with the live-harness opt-in and hc-pinned families excluded and any surviving `tasks-axi` skip failing the lane ([configuration.md "Gate defaults"](configuration.md#gate-defaults-no-mistakesyaml) owns the pinned invocation), so a gate round exercises no live guard, live Herdr session, release download, or real hc binary.
 The hermetic `tests/fm-backend-hc.test.sh` remains in the portable serial lane.
 
 ## Gate execution bounds

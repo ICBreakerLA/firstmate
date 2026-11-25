@@ -919,8 +919,12 @@ make_primary_home() {  # <dir>
   cat > "$dir/session.sh" <<'SH'
 #!/usr/bin/env bash
 if [ "${FM_FIXTURE_ORPHAN_HERE:-0}" = 1 ]; then
+  # The shared helper is read inside a subshell: sourcing tests/lib.sh purges
+  # ambient firstmate home variables from the sourcing shell, and this fixture
+  # runs on FM_HOME. The subshell keeps that purge from touching the fixture.
   i=0
-  while [ "$i" -lt 200 ] && [ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')" != 1 ]; do
+  # shellcheck disable=SC1090
+  while [ "$i" -lt 200 ] && ! ( . "$FM_TEST_LIB" && fm_test_parent_adopted "$$" ); do
     sleep 0.05
     i=$((i + 1))
   done
@@ -933,7 +937,8 @@ SH
   cat > "$dir/daemon.sh" <<'SH'
 #!/usr/bin/env bash
 i=0
-while [ "$i" -lt 200 ] && [ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')" != 1 ]; do
+# shellcheck disable=SC1090
+while [ "$i" -lt 200 ] && ! ( . "$FM_TEST_LIB" && fm_test_parent_adopted "$$" ); do
   sleep 0.05
   i=$((i + 1))
 done
@@ -945,18 +950,23 @@ SH
 }
 
 # Start the fixture tree detached from this suite's own process tree: the
-# launcher exits immediately, so the tree is reparented to init and the ancestry
-# walk terminates inside the fixture. Returns once the hook has recorded its exit
-# code.
+# launcher exits immediately, so the tree is adopted away from it by the
+# launching session's subreaper (here a WSL relay under /init on the host,
+# plain pid 1 in a sandbox) - fm_test_parent_adopted's parent-chain walk
+# reports it adopted once the chain reaches pid 1 without touching this
+# suite's ancestry - and the walk terminates inside the fixture. Returns
+# once the hook has recorded its exit code.
 run_fixture_tree() {  # <dir> <session-bin> [<daemon-bin>]
   local dir=$1 session_bin=$2 daemon_bin=${3:-} i
   if [ -n "$daemon_bin" ]; then
     env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID \
       FM_HOME="$dir" FM_SESSION_BIN="$session_bin" FM_FIXTURE_ORPHAN_HERE=0 \
+      FM_TEST_LIB="$ROOT/tests/lib.sh" \
       bash -c '"$0" "$1" &' "$daemon_bin" "$dir/daemon.sh"
   else
     env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID \
       FM_HOME="$dir" FM_FIXTURE_ORPHAN_HERE=1 \
+      FM_TEST_LIB="$ROOT/tests/lib.sh" \
       bash -c '"$0" "$1" &' "$session_bin" "$dir/session.sh"
   fi
   i=0
@@ -1057,7 +1067,8 @@ make_background_session_home() {  # <dir>
   cat > "$dir/frontend.sh" <<'SH'
 #!/usr/bin/env bash
 i=0
-while [ "$i" -lt 200 ] && [ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')" != 1 ]; do
+# shellcheck disable=SC1090
+while [ "$i" -lt 200 ] && ! ( . "$FM_TEST_LIB" && fm_test_parent_adopted "$$" ); do
   sleep 0.05
   i=$((i + 1))
 done
@@ -1196,7 +1207,7 @@ test_e2e_background_session_keeps_its_lock_across_a_recycled_chain() {
   make_background_session_home "$dir"
   env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID \
     FM_HOME="$dir" FM_FIXTURE_CLAUDE="$NAMED_CLAUDE" FM_POLL=1 FM_HEARTBEAT=999999 \
-    FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=0 \
+    FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=0 FM_TEST_LIB="$ROOT/tests/lib.sh" \
     bash -c '"$0" "$1" &' "$NAMED_CLAUDE" "$dir/frontend.sh"
   wait_for_file "$dir/state/frontend-lock.rc" "the front-end's lock result"
   wait_for_file "$dir/state/spare-pid" "the bg-spare"
@@ -1217,15 +1228,16 @@ test_e2e_background_session_keeps_its_lock_across_a_recycled_chain() {
   grep -qx "$frontend" "$dir/state/phase-1/ancestry" || fail "the healthy chain did not reach the front-end"
   expect_phase_owned "$dir" 1 2 "$frontend" "healthy chain"
 
-  # Recycle the bridge: the daemon ends, the pty-host is reparented to init, and
+  # Recycle the bridge: the daemon ends, the pty-host is adopted away from its
+  # tree by the host's adopter (fm_test_parent_adopted names who counts), and
   # the front-end that holds the lock stays alive.
   kill -TERM "$daemon"
   i=0
-  while [ "$i" -lt 200 ] && { kill -0 "$daemon" 2>/dev/null || [ "$(ps -o ppid= -p "$ptyhost" 2>/dev/null | tr -d ' ')" != 1 ]; }; do
+  while [ "$i" -lt 200 ] && { kill -0 "$daemon" 2>/dev/null || ! fm_test_parent_adopted "$ptyhost"; }; do
     sleep 0.05
     i=$((i + 1))
   done
-  [ "$(ps -o ppid= -p "$ptyhost" 2>/dev/null | tr -d ' ')" = 1 ] || fail "the pty-host was not reparented to init after the daemon ended"
+  fm_test_parent_adopted "$ptyhost" || fail "the pty-host was not reparented away from its tree after the daemon ended (ppid $(ps -o ppid= -p "$ptyhost" 2>/dev/null | tr -d ' '))"
   kill -0 "$frontend" 2>/dev/null || fail "the front-end died with the daemon, so the recycled case cannot be exercised"
 
   # Phases 2-4: before the spare proves anything, a different id, the right id

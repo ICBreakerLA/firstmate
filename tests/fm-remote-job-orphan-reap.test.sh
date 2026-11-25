@@ -39,8 +39,6 @@ alive() { kill -0 "$1" 2>/dev/null; }
 
 pgid_of() { ps -p "$1" -o pgid= 2>/dev/null | tr -d '[:space:]'; }
 
-ppid_of() { ps -p "$1" -o ppid= 2>/dev/null | tr -d '[:space:]'; }
-
 # Wait up to <seconds> for <pid> to exit; 0 when it did.
 wait_gone() { # <pid> <seconds>
   local pid=$1 deadline=$(( $(date +%s) + $2 ))
@@ -67,25 +65,18 @@ wait_child() { # <pid> <seconds>
   return 1
 }
 
-# True when <pid>'s parent is a reaper for orphaned processes: init itself, or
-# a subreaper systemd registers one hop below init (PR_SET_CHILD_SUBREAPER,
-# e.g. `systemd --user`) - a live host's per-user manager adopts orphans there
-# instead of letting them reach real init, and that is just as orphaned for
-# this fixture's purpose.
-is_orphaned() { # <pid>
-  local parent
-  parent=$(ppid_of "$1")
-  case "$parent" in ''|*[!0-9]*) return 1 ;; esac
-  [ "$parent" = 1 ] && return 0
-  [ "$(ppid_of "$parent")" = 1 ]
-}
-
-# Wait up to <seconds> for <pid> to be reparented to an orphan reaper (see
-# is_orphaned) after its launching shell exits; 0 when it does.
+# Wait up to <seconds> for <pid> to be reparented to an adopter process after
+# its launching shell exits; 0 when it does. The shared fm_test_parent_adopted
+# helper in tests/lib.sh owns the accept set: pid 1 on a plain host, an
+# init-named parent (WSL2's /init), a WSL2 per-session relay named Relay(<pid>)
+# sitting under /init, and a PR_SET_CHILD_SUBREAPER process (the systemd user
+# manager that adopts orphans one hop below init on a live host). The old
+# `parent-of-parent is pid 1` shape went red against the measured host relay
+# chain, whose relay sits under /init under its own pid.
 wait_orphaned() { # <pid> <seconds>
   local pid=$1 deadline=$(( $(date +%s) + $2 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    is_orphaned "$pid" && return 0
+    fm_test_parent_adopted "$pid" && return 0
     sleep 0.1
   done
   return 1
@@ -155,7 +146,7 @@ SERVE=$(serving_child "$WORKER")
 pass "the Linux start path puts the whole worker tree in its own process group"
 
 wait_orphaned "$WORKER" 5 ||
-  fail "the fixture worker is not orphaned to init, so this case does not reproduce the leak"
+  fail "the fixture worker is not orphaned to an adopter process, so this case does not reproduce the leak"
 
 # The exact teardown shape that leaked in production: a fixture cleanup removes
 # the worker's state root and then stops only the single recorded worker pid -

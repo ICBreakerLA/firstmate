@@ -467,7 +467,7 @@ family_for_basename() {
     fm-project-origin.test.sh|fm-public-followup.test.sh|fm-quota-choose.test.sh|\
     fm-remote-entrypoint.test.sh|fm-remote-secondmate-parent-binding.test.sh|\
     fm-send-remote-delivery.test.sh|fm-spawn-pool-base-freshen.test.sh|\
-    fm-test-fixture-cleanup.test.sh|fm-test-fixtures.test.sh|\
+    fm-test-fixture-cleanup.test.sh|fm-test-fixtures.test.sh|fm-test-parent-adopted.test.sh|\
     fm-voice-relay.test.sh|fm-wake-drain-open-decisions-cursor.test.sh|\
     fm-wake-drain-open-decisions.test.sh|fm-wake-drain-outcome-backstop.test.sh)
       printf '%s\n' standalone
@@ -1008,6 +1008,7 @@ tests/fm-test-fixture-cleanup.test.sh 866
 tests/fm-test-fixtures.test.sh 1802
 tests/fm-test-isolation-proof.test.sh 2866
 tests/fm-test-linux.test.sh 1500
+tests/fm-test-parent-adopted.test.sh 1200
 tests/fm-test-tap-verify.test.sh 1000
 tests/fm-timeout-lib.test.sh 10750
 tests/fm-tmux-agent-liveness.test.sh 3770
@@ -2744,7 +2745,15 @@ trap cleanup_run EXIT
 # whole run, so every suite that needs it runs instead of gate-skipping; the
 # exported FM_TEST_TASKS_AXI_BIN lets child test runs reuse it. A failed install
 # stops the run before any suite starts.
-if ! command -v tasks-axi >/dev/null 2>&1; then
+# The provisioning belongs to a tree that owns the pin (tests/fm-test-run.test.sh
+# and friends copy this runner into minimal fixture trees); a copied runner in a
+# tree without the helper and the pin files stays inert, exactly like a --list
+# run: those trees run no suite that needs tasks-axi, and dying on the missing
+# helper made the fixture suites red on every host without a system tasks-axi.
+if ! command -v tasks-axi >/dev/null 2>&1 &&
+  [ -r "$ROOT/tests/tasks-axi-helpers.sh" ] &&
+  [ -r "$ROOT/bin/sbx-tasks-axi/package.json" ] &&
+  [ -r "$ROOT/bin/sbx-tasks-axi/package-lock.json" ]; then
   # shellcheck source=tests/tasks-axi-helpers.sh
   . "$ROOT/tests/tasks-axi-helpers.sh" || die "could not load tests/tasks-axi-helpers.sh"
   log "installing the pinned tasks-axi once for this run"

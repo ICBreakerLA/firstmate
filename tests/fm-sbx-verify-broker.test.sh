@@ -65,6 +65,16 @@ new_world() {
   : >"$LOG"
   export STUB_LOG="$LOG"
   unset STUB_EXIT
+  # The broker's sandbox poll runs `sbx ls -q`. Test sandbox names are
+  # fabricated, so the suite owns the sandbox inventory it polls: the stub
+  # lists only the worlds' task sandboxes. Without it, a host that has the
+  # real sbx cli reports every test sandbox as gone on the 5s tick.
+  cat >"$FAKEBIN/sbx" <<SH
+#!/usr/bin/env bash
+cat "$FAKEBIN/sbx-presence" 2>/dev/null
+SH
+  chmod +x "$FAKEBIN/sbx"
+  : >"$FAKEBIN/sbx-presence"
   task_dirs t1
 }
 
@@ -74,6 +84,7 @@ task_dirs() { # <id>: sets TID REQ RES HOST for another task in the same world
   REQ="$STATE/$TID.sbx-verify/req"
   RES="$STATE/$TID.sbx-verify/res"
   HOST="$STATE/$TID.sbx-verify/host"
+  printf 'sbx-%s\n' "$TID" >>"$FAKEBIN/sbx-presence"
 }
 
 free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }

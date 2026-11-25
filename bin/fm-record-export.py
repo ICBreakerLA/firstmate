@@ -985,8 +985,8 @@ def seam_hook(phase: str) -> None:
     if os.environ.get("FM_TEST_SEAM") == "1" and (hook := os.environ.get("FM_RECORD_EXPORT_TEST_HOOK", "")):
         try:
             subprocess.run([hook, phase], check=False, timeout=30)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"warning: record export test seam {phase} hook failed to run: {exc}", file=sys.stderr)
 
 
 def archive_task(home: str, config: str, data: str, state: str, task: str) -> None:

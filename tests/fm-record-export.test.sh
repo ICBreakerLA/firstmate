@@ -597,7 +597,7 @@ test_archive_retry_removes_stale_files_from_a_partial_generation() {
 }
 
 test_archive_revalidates_sources_immediately_before_publication() {
-  local home export_root archive archive_pid rc=0 wait_count=0 index
+  local home export_root archive hook rc=0 index
   home=$(make_home archive-final-revalidate)
   export_root="$TMP_ROOT/export-archive-final-revalidate"
   printf '%s\n' "$export_root" > "$home/config/record-export-root"
@@ -612,19 +612,25 @@ test_archive_revalidates_sources_immediately_before_publication() {
     index=$((index + 1))
   done
 
-  run_export "$home" archive-task task-a > "$home/archive.out" 2> "$home/archive.err" &
-  archive_pid=$!
-  while [ -e "$archive/inbox/00000.msg" ]; do
-    kill -0 "$archive_pid" 2>/dev/null || break
-    wait_count=$((wait_count + 1))
-    [ "$wait_count" -le 1000 ] || break
-    sleep 0.01
-  done
-  [ ! -e "$archive/inbox/00000.msg" ] \
-    || { wait "$archive_pid" || true; fail "archive did not begin replacing its stale partial generation"; }
-  printf 'changed after final comparison\n' >> "$home/state/task-a.status"
-  wait "$archive_pid" || rc=$?
+  # The append must land before the final source comparison, so the seam
+  # runs it there: an append timed against the exporter's
+  # remove->revalidate->rename span closes before the append lands on
+  # fast hosts, so the commit went through and the test was a race probe,
+  # not an assertion.
+  hook="$home/seam-hook.sh"
+  cat >"$hook" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = before-revalidate ] || exit 0
+[ -n "${FM_TEST_REVALIDATE_TARGET:-}" ] || exit 0
+printf 'changed after final comparison\n' >> "$FM_TEST_REVALIDATE_TARGET"
+SH
+  chmod +x "$hook"
+  FM_RECORD_EXPORT_TEST_HOOK="$hook" \
+  FM_TEST_REVALIDATE_TARGET="$home/state/task-a.status" \
+    run_export "$home" archive-task task-a > "$home/archive.out" 2> "$home/archive.err" || rc=$?
   [ "$rc" -ne 0 ] || fail "archive committed after a source changed during stale-generation replacement"
+  assert_grep 'changed after final comparison' "$home/state/task-a.status" \
+    "the seam append never reached the live source"
   assert_absent "$archive/manifest.v1.json" "archive committed a manifest after its final source comparison"
   assert_present "$home/state/task-a.meta" "final comparison race removed live metadata"
   pass "teardown archive revalidates sources immediately before publication"

@@ -618,15 +618,12 @@ test_archive_revalidates_sources_immediately_before_publication() {
   # fast hosts, so the commit went through and the test was a race probe,
   # not an assertion.
   hook="$home/seam-hook.sh"
-  cat >"$hook" <<'SH'
+  cat >"$hook" <<SH
 #!/usr/bin/env bash
-[ "${1:-}" = before-revalidate ] || exit 0
-[ -n "${FM_TEST_REVALIDATE_TARGET:-}" ] || exit 0
-printf 'changed after final comparison\n' >> "$FM_TEST_REVALIDATE_TARGET"
+printf 'changed after final comparison\n' >> "$home/state/task-a.status"
 SH
   chmod +x "$hook"
   FM_RECORD_EXPORT_TEST_HOOK="$hook" \
-  FM_TEST_REVALIDATE_TARGET="$home/state/task-a.status" \
     run_export "$home" archive-task task-a > "$home/archive.out" 2> "$home/archive.err" || rc=$?
   [ "$rc" -ne 0 ] || fail "archive committed after a source changed during stale-generation replacement"
   assert_grep 'changed after final comparison' "$home/state/task-a.status" \

@@ -4,6 +4,11 @@
 The shell wrapper owns the public command line and task-lock integration.
 This helper owns configured path traversal, the dedicated-root marker, exact
 live snapshots, archive transactions, strict manifests, and durability.
+
+Environment (tests): with FM_TEST_SEAM=1, FM_RECORD_EXPORT_TEST_HOOK is run
+immediately before the final source comparison that gates an archive
+publication, letting a test change a source exactly inside the revalidation
+window instead of racing the transaction's timing.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import time
 import uuid
@@ -975,6 +981,16 @@ def prune_archives(archive_fd: int) -> None:
             os.close(task_fd)
 
 
+def seam_hook() -> None:
+    if os.environ.get("FM_TEST_SEAM") == "1" and (hook := os.environ.get("FM_RECORD_EXPORT_TEST_HOOK", "")):
+        try:
+            completed = subprocess.run([hook], check=False, timeout=30)
+            if completed.returncode != 0:
+                print(f"warning: record export test seam hook failed: exit {completed.returncode}", file=sys.stderr)
+        except Exception as exc:
+            print(f"warning: record export test seam hook failed: {exc}", file=sys.stderr)
+
+
 def archive_task(home: str, config: str, data: str, state: str, task: str) -> None:
     safe_component(task, "task id for record export archive")
     configured_root = read_config(config)
@@ -1029,6 +1045,7 @@ def archive_task(home: str, config: str, data: str, state: str, task: str) -> No
                         fail("record export archive task directory changed before publication")
                     if existing_fd >= 0:
                         remove_tree_at(task_fd, spawn_gen)
+                    seam_hook()
                     revalidate_archive_sources(state_fd, task, sources, entries)
                     os.rename(stage_name, spawn_gen, src_dir_fd=task_fd, dst_dir_fd=task_fd)
                     os.fsync(task_fd)

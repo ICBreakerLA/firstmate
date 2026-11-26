@@ -1570,6 +1570,7 @@ test_housekeeping_overdue_queue_failure_resume_discards() {
   local event route dir state fakebin task win pane statusf original_enqueue original_append undated
   original_enqueue=$(declare -f escalate_add)
   for event in working paused; do
+    # shellcheck disable=SC2031 # route is only read in the subshell, so the parent keeps the loop's own value.
     for route in housekeeping signal stale; do
       (
         dir=$(make_supercase "overdue-resume-$event-$route")
@@ -1589,12 +1590,14 @@ test_housekeeping_overdue_queue_failure_resume_discards() {
         fixture() { PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$win" FM_FAKE_TMUX_CAPTURE="$pane" \
           FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_PAUSE_UNDATED_MAX_SECS=$undated FM_ESCALATE_BATCH_SECS=999999 "$@"; }
         original_append=$(declare -f fm_wake_status_append_self_announced)
+        # shellcheck disable=SC2329 # Runtime override called indirectly by housekeeping in the sourced wake library.
         escalate_add() { return 1; }
         fixture housekeeping "$state"
         [ -e "$state/.paused-overdue-$task" ] || fail "failed queue lost the overdue marker"
         undated=86400
         printf '%s: worker changed wait\n' "$event" >> "$statusf"
         eval "$original_enqueue"
+        # shellcheck disable=SC2329 # Runtime override called indirectly by the sourced wake library's status append.
         fm_wake_status_append_self_announced() { return 2; }
         case "$route" in
           housekeeping) fixture housekeeping "$state" ;;
